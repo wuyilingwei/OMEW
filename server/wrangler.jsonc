@@ -1,0 +1,28 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "openmew-server",
+  "main": "src/api.ts",
+  "compatibility_date": "2026-08-18",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "ROOM_DO", "class_name": "RoomDO" },
+      { "name": "STRONGHOLD_DO", "class_name": "StrongholdDO" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["RoomDO", "StrongholdDO"] }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "openmew",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
