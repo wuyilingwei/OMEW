@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import type { ChatMessage } from '../types/models'
+import AvatarBadge from './AvatarBadge.vue'
 
 defineProps<{ message: ChatMessage }>()
 </script>
 
 <template>
   <div class="message-row" :class="{ 'message-row--mine': message.mine }">
+    <AvatarBadge class="message-row__avatar" :seed="message.avatar" :size="36" />
     <div class="message-bubble" :class="{ 'message-bubble--mine': message.mine }">
       <div v-if="!message.mine" class="message-bubble__author">{{ message.author }}</div>
       <div class="message-bubble__content">{{ message.content }}</div>
@@ -17,11 +19,18 @@ defineProps<{ message: ChatMessage }>()
 <style scoped>
 .message-row {
   display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
   justify-content: flex-start;
 }
 
 .message-row--mine {
+  flex-direction: row-reverse;
   justify-content: flex-end;
+}
+
+.message-row__avatar {
+  margin-bottom: 0.1rem;
 }
 
 .message-bubble {

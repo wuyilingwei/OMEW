@@ -9,7 +9,6 @@ defineProps<{ channel: ChannelSummary }>()
 
 <template>
   <section class="chat-pane">
-    <div class="chat-pane__header">{{ channel.name }}</div>
     <div class="chat-pane__messages">
       <MessageBubble v-for="message in mockMessages" :key="message.id" :message="message" />
     </div>
@@ -26,14 +25,6 @@ defineProps<{ channel: ChannelSummary }>()
   min-height: 0;
   display: flex;
   flex-direction: column;
-}
-
-.chat-pane__header {
-  flex: 0 0 auto;
-  padding: 0.75rem 1rem;
-  color: var(--text-primary);
-  font-weight: 600;
-  border-bottom: 1px solid var(--stroke-divider);
 }
 
 .chat-pane__messages {
