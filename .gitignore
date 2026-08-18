@@ -1,0 +1,9 @@
+# local audit workspace, not part of the distribution
+agents/
+
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+*.log
+.DS_Store
