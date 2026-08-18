@@ -27,18 +27,21 @@ defineProps<{ message: ChatMessage }>()
 .message-bubble {
   max-width: 60%;
   padding: 0.5rem 0.75rem;
-  border-radius: var(--radius-sm);
-  background: rgb(var(--colors-background-receive-msg));
-  color: rgb(var(--colors-receive-msg));
+  border-radius: 8px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-stroke);
+  color: var(--text-primary);
 }
 
 .message-bubble--mine {
-  background: rgb(var(--colors-background-sent-msg));
+  background: var(--accent-base);
+  border-color: transparent;
+  color: var(--accent-text);
 }
 
 .message-bubble__author {
   font-size: 0.75rem;
-  color: rgb(var(--colors-msg));
+  color: var(--text-secondary);
   margin-bottom: 0.15rem;
 }
 
@@ -47,10 +50,18 @@ defineProps<{ message: ChatMessage }>()
   line-height: 1.4;
 }
 
+.message-bubble--mine .message-bubble__content {
+  color: inherit;
+}
+
 .message-bubble__time {
   font-size: 0.7rem;
-  color: rgb(var(--colors-body));
+  color: var(--text-tertiary);
   margin-top: 0.2rem;
   text-align: right;
+}
+
+.message-bubble--mine .message-bubble__time {
+  color: var(--accent-text-secondary);
 }
 </style>

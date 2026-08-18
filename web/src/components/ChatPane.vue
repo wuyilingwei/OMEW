@@ -1,17 +1,21 @@
 <script setup lang="ts">
 import { mockMessages } from '../data/mock'
+import type { ChannelSummary } from '../types/models'
+import { WinButton } from '../vendor/winui'
 import MessageBubble from './MessageBubble.vue'
+
+defineProps<{ channel: ChannelSummary }>()
 </script>
 
 <template>
   <section class="chat-pane">
-    <div class="chat-pane__header">综合讨论</div>
+    <div class="chat-pane__header">{{ channel.name }}</div>
     <div class="chat-pane__messages">
       <MessageBubble v-for="message in mockMessages" :key="message.id" :message="message" />
     </div>
     <div class="chat-pane__compose">
       <div class="chat-pane__input" contenteditable="false">说点什么…</div>
-      <button class="chat-pane__send" type="button">发送</button>
+      <WinButton Style="AccentButtonStyle" class="chat-pane__send">发送</WinButton>
     </div>
   </section>
 </template>
@@ -27,9 +31,9 @@ import MessageBubble from './MessageBubble.vue'
 .chat-pane__header {
   flex: 0 0 auto;
   padding: 0.75rem 1rem;
-  background: rgb(var(--colors-background-darker));
-  color: rgb(var(--colors-emphasis));
+  color: var(--text-primary);
   font-weight: 600;
+  border-bottom: 1px solid var(--stroke-divider);
 }
 
 .chat-pane__messages {
@@ -40,7 +44,6 @@ import MessageBubble from './MessageBubble.vue'
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
-  background: rgb(var(--colors-background-lighter));
 }
 
 .chat-pane__compose {
@@ -49,30 +52,21 @@ import MessageBubble from './MessageBubble.vue'
   align-items: center;
   gap: 0.5rem;
   padding: 0.75rem 1rem;
-  background: rgb(var(--colors-background-morelighter));
+  background: var(--layer-default);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border-top: 1px solid var(--stroke-divider);
 }
 
 .chat-pane__input {
   flex: 1 1 auto;
   min-height: 40px;
   padding: 0.5rem 0.75rem;
-  border-radius: var(--radius-xs);
-  background: rgb(var(--colors-background-lighter));
-  color: rgb(var(--colors-body));
+  border-radius: 4px;
+  background: var(--ctrl-fill-default);
+  border: 1px solid var(--ctrl-border);
+  color: var(--text-secondary);
   display: flex;
   align-items: center;
-}
-
-.chat-pane__send {
-  border: none;
-  border-radius: var(--radius-xs);
-  padding: 0.5rem 1rem;
-  background: rgb(var(--colors-primary));
-  color: rgb(var(--colors-gray-900));
-  font-weight: 500;
-}
-
-.chat-pane__send:hover {
-  background: rgb(var(--colors-primary-darker));
 }
 </style>

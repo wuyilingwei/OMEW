@@ -5,17 +5,24 @@ export interface StrongholdNode {
   active: boolean
 }
 
-export interface Topic {
+export interface TopicGroup {
   id: string
   name: string
+}
+
+export interface Post {
+  id: string
+  topicGroupId: string
+  title: string
+  preview: string
+  cover?: string
+  author: string
+  timestamp: string
 }
 
 export interface ChannelSummary {
   id: string
   name: string
-  preview: string
-  timestamp: string
-  unread: number
   active: boolean
 }
 
