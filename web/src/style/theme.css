@@ -1,0 +1,111 @@
+/* semantic color tokens, bare RGB triplets for rgb(var(--x) / alpha) usage */
+
+:root {
+  --colors-background-regular: 248 249 250;
+  --colors-background-lighter: 255 255 255;
+  --colors-background-morelighter: 255 255 255;
+  --colors-background-gray: 235 236 238;
+  --colors-background-darker: 232 233 236;
+  --colors-background-light: 250 250 251;
+  --colors-background-hover: 240 241 243;
+  --colors-background-heading: 250 250 251;
+  --colors-background-dialog: 255 255 255;
+  --colors-background-msg: 225 226 229;
+  --colors-background-receive-msg: 240 241 243;
+  --colors-background-sent-msg: 223 231 248;
+  --colors-background-comment: 236 237 239;
+  --colors-background-reply: 240 241 243;
+  --colors-background-selected-comment: 225 226 229;
+
+  --colors-emphasis: 66 66 66;
+  --colors-msg: 51 51 51;
+  --colors-receive-msg: 23 23 23;
+  --colors-caption: 51 51 51;
+  --colors-body: 130 130 130;
+  --colors-disabled: 130 130 130;
+
+  --colors-primary: 52 91 172;
+  --colors-primary-darker: 43 74 141;
+
+  --colors-gray-50: 250 250 250;
+  --colors-gray-100: 244 244 245;
+  --colors-gray-200: 228 228 231;
+  --colors-gray-400: 161 161 170;
+  --colors-gray-500: 113 113 122;
+  --colors-gray-700: 63 63 70;
+  --colors-gray-900: 24 24 27;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --colors-background-regular: 33 33 33;
+    --colors-background-lighter: 43 43 43;
+    --colors-background-morelighter: 55 55 55;
+    --colors-background-gray: 60 60 60;
+    --colors-background-darker: 25 25 25;
+    --colors-background-light: 45 45 45;
+    --colors-background-hover: 43 43 43;
+    --colors-background-heading: 45 45 45;
+    --colors-background-dialog: 55 55 55;
+    --colors-background-msg: 100 100 100;
+    --colors-background-receive-msg: 80 80 80;
+    --colors-background-sent-msg: 120 120 120;
+    --colors-background-comment: 60 60 60;
+    --colors-background-reply: 80 80 80;
+    --colors-background-selected-comment: 100 100 100;
+
+    --colors-emphasis: 230 230 230;
+    --colors-msg: 235 235 235;
+    --colors-receive-msg: 255 255 255;
+    --colors-caption: 235 235 235;
+    --colors-body: 200 200 200;
+    --colors-disabled: 200 200 200;
+
+    --colors-primary: 114 148 218;
+    --colors-primary-darker: 154 178 228;
+
+    --colors-gray-50: 60 60 60;
+    --colors-gray-100: 110 110 110;
+    --colors-gray-200: 140 140 140;
+    --colors-gray-400: 240 240 240;
+    --colors-gray-500: 250 250 250;
+    --colors-gray-700: 245 245 245;
+    --colors-gray-900: 255 255 255;
+  }
+}
+
+:root[data-theme="dark"] {
+  --colors-background-regular: 33 33 33;
+  --colors-background-lighter: 43 43 43;
+  --colors-background-morelighter: 55 55 55;
+  --colors-background-gray: 60 60 60;
+  --colors-background-darker: 25 25 25;
+  --colors-background-light: 45 45 45;
+  --colors-background-hover: 43 43 43;
+  --colors-background-heading: 45 45 45;
+  --colors-background-dialog: 55 55 55;
+  --colors-background-msg: 100 100 100;
+  --colors-background-receive-msg: 80 80 80;
+  --colors-background-sent-msg: 120 120 120;
+  --colors-background-comment: 60 60 60;
+  --colors-background-reply: 80 80 80;
+  --colors-background-selected-comment: 100 100 100;
+
+  --colors-emphasis: 230 230 230;
+  --colors-msg: 235 235 235;
+  --colors-receive-msg: 255 255 255;
+  --colors-caption: 235 235 235;
+  --colors-body: 200 200 200;
+  --colors-disabled: 200 200 200;
+
+  --colors-primary: 114 148 218;
+  --colors-primary-darker: 154 178 228;
+
+  --colors-gray-50: 60 60 60;
+  --colors-gray-100: 110 110 110;
+  --colors-gray-200: 140 140 140;
+  --colors-gray-400: 240 240 240;
+  --colors-gray-500: 250 250 250;
+  --colors-gray-700: 245 245 245;
+  --colors-gray-900: 255 255 255;
+}

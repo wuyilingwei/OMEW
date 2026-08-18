@@ -1,0 +1,43 @@
+/* layout tuning variables, kept on body so they stay adjustable at runtime */
+body {
+  --left-width: 26%;
+  --right-width: 17%;
+  --rail-width: 64px;
+  --topbar-height: 56px;
+  --topic-bar-height: 55px;
+  --topic-bar-expanded-height: 500px;
+  --feed-cover-height: 12rem;
+
+  --radius-lg: 20px;
+  --radius-md: 15px;
+  --radius-sm: 10px;
+  --radius-xs: 5px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: rgb(var(--colors-background-regular));
+  color: rgb(var(--colors-receive-msg));
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+img {
+  max-width: 100%;
+  display: block;
+}
