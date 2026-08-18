@@ -2,14 +2,15 @@
 import type { ChatMessage } from '../types/models'
 import AvatarBadge from './AvatarBadge.vue'
 
-defineProps<{ message: ChatMessage }>()
+defineProps<{ message: ChatMessage; grouped?: boolean }>()
 </script>
 
 <template>
-  <div class="message-row" :class="{ 'message-row--mine': message.mine }">
-    <AvatarBadge class="message-row__avatar" :seed="message.avatar" :size="36" />
+  <div class="message-row" :class="{ 'message-row--mine': message.mine, 'message-row--grouped': grouped }">
+    <AvatarBadge v-if="!grouped" class="message-row__avatar" :seed="message.avatar" :size="36" />
+    <div v-else class="message-row__avatar-spacer" aria-hidden="true"></div>
     <div class="message-bubble" :class="{ 'message-bubble--mine': message.mine }">
-      <div v-if="!message.mine" class="message-bubble__author">{{ message.author }}</div>
+      <div v-if="!message.mine && !grouped" class="message-bubble__author">{{ message.author }}</div>
       <div class="message-bubble__content">{{ message.content }}</div>
       <div class="message-bubble__time">{{ message.timestamp }}</div>
     </div>
@@ -22,6 +23,17 @@ defineProps<{ message: ChatMessage }>()
   align-items: flex-end;
   gap: 0.5rem;
   justify-content: flex-start;
+  /* spacing rhythm: a new speaker gets a clear gap, consecutive messages
+     from the same speaker (same author + same mine state) sit close together */
+  margin-top: 0.9rem;
+}
+
+.message-row:first-child {
+  margin-top: 0;
+}
+
+.message-row--grouped {
+  margin-top: 0.15rem;
 }
 
 .message-row--mine {
@@ -32,6 +44,13 @@ defineProps<{ message: ChatMessage }>()
 
 .message-row__avatar {
   margin-bottom: 0.1rem;
+}
+
+.message-row__avatar-spacer {
+  /* keeps grouped rows aligned with ungrouped ones once the avatar is hidden;
+     matches AvatarBadge's rendered size (36px) passed above */
+  flex: 0 0 auto;
+  width: 36px;
 }
 
 .message-bubble {

@@ -200,7 +200,7 @@ async function generateInviteCodes() {
 .admin-settings {
   height: 100%;
   overflow-y: auto;
-  padding: calc(var(--topbar-height) + 1.5rem) 1.5rem 2rem;
+  padding: 1.5rem 1.5rem 2rem;
   display: flex;
   flex-direction: column;
   align-items: center;

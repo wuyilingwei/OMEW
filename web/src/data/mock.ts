@@ -119,4 +119,9 @@ export const mockMessages: ChatMessage[] = [
   { id: 'm4', author: 'Aki', avatar: 'Aki', content: '频道下拉切换起来顺手多了', timestamp: '10:02', mine: false },
   { id: 'm5', author: '我', avatar: '我', content: '对，之前那条横向标签栏确实别扭', timestamp: '10:05', mine: true },
   { id: 'm6', author: 'Rin', avatar: 'Rin', content: '进度已经同步到看板了', timestamp: '10:24', mine: false },
+  { id: 'm7', author: 'Rin', avatar: 'Rin', content: '卡片都按优先级排好了，麻烦大家有空看一眼', timestamp: '10:25', mine: false },
+  { id: 'm8', author: '我', avatar: '我', content: '看到了，稍后过一遍', timestamp: '10:31', mine: true },
+  { id: 'm9', author: '我', avatar: '我', content: '这两张卡我先认领', timestamp: '10:31', mine: true },
+  { id: 'm10', author: '我', avatar: '我', content: '完成会同步进度', timestamp: '10:32', mine: true },
+  { id: 'm11', author: 'Aki', avatar: 'Aki', content: '辛苦，我这边卡片也补了几张', timestamp: '10:40', mine: false },
 ]

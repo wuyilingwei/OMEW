@@ -1,23 +1,54 @@
 <script setup lang="ts">
-import { mockChannels } from '../data/mock'
-import { useChannel } from '../composables/useChannel'
-import { useShellView } from '../composables/useShellView'
+import { computed } from 'vue'
+import { useAuth } from '../composables/useAuth'
 import { useStronghold } from '../composables/useStronghold'
-import type { ChannelSummary } from '../types/models'
-import ChannelList from './ChannelList.vue'
+import { useStrongholdMembers } from '../composables/useStrongholdMembers'
+import { useTheme } from '../composables/useTheme'
+import { WinButton, WinDropDownButton } from '../vendor/winui'
+import AvatarBadge from './AvatarBadge.vue'
 
+const emit = defineEmits<{ 'open-admin-settings': []; 'open-panel': ['members' | 'settings'] }>()
+
+const { mode, cycleTheme } = useTheme()
+const auth = useAuth()
 const { currentNode } = useStronghold()
-const { selectedChannel, selectChannel } = useChannel()
-const { setView } = useShellView()
+const { myRole } = useStrongholdMembers()
 
-function onSelectChannel(channel: ChannelSummary) {
-  selectChannel(channel)
-  setView('chat')
+const modeLabel: Record<string, string> = {
+  system: '跟随系统',
+  light: '亮色',
+  dark: '暗色',
+}
+
+const canManage = computed(() => myRole.value === 'owner' || myRole.value === 'mod')
+
+const userMenu = computed(() => ({
+  Items: [
+    ...(auth.isAdmin.value ? [{ Text: '节点设置', Value: 'settings' }] : []),
+    { Text: '登出', Value: 'logout' },
+  ],
+}))
+
+function onUserMenuSelect(item: { Value: string }) {
+  if (item.Value === 'settings') emit('open-admin-settings')
+  else if (item.Value === 'logout') auth.logout()
 }
 </script>
 
 <template>
   <aside class="right-column">
+    <div class="right-column__topbar">
+      <WinButton Style="SubtleButtonStyle" class="right-column__theme-btn" @Click="cycleTheme">
+        主题：{{ modeLabel[mode] }}
+      </WinButton>
+      <WinDropDownButton v-if="auth.isAuthenticated.value" :Flyout="userMenu" @Select="onUserMenuSelect">
+        <span class="right-column__user">
+          <AvatarBadge :seed="auth.user.value?.username ?? ''" :size="24" />
+          <span class="right-column__username">{{ auth.user.value?.username }}</span>
+        </span>
+      </WinDropDownButton>
+    </div>
+
     <div class="right-column__stronghold">
       <img class="right-column__cover" :src="currentNode.cover" :alt="currentNode.name" />
       <div class="right-column__stronghold-body">
@@ -25,9 +56,19 @@ function onSelectChannel(channel: ChannelSummary) {
         <p class="right-column__stronghold-description">{{ currentNode.description }}</p>
       </div>
     </div>
-    <div class="right-column__channels">
-      <h3 class="right-column__channels-title">频道</h3>
-      <ChannelList :channels="mockChannels" :selected="selectedChannel" @select="onSelectChannel" />
+
+    <div class="right-column__actions">
+      <WinButton Style="DefaultButtonStyle" class="right-column__action" @Click="emit('open-panel', 'members')">
+        成员列表
+      </WinButton>
+      <WinButton
+        v-if="canManage"
+        Style="DefaultButtonStyle"
+        class="right-column__action"
+        @Click="emit('open-panel', 'settings')"
+      >
+        据点设置
+      </WinButton>
     </div>
   </aside>
 </template>
@@ -44,6 +85,32 @@ function onSelectChannel(channel: ChannelSummary) {
   background: var(--app-bg);
   border-left: 1px solid var(--stroke-divider);
   overflow-y: auto;
+}
+
+.right-column__topbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.right-column__theme-btn {
+  font-size: 0.8rem;
+}
+
+.right-column__user {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.right-column__username {
+  font-size: 0.85rem;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .right-column__stronghold {
@@ -84,25 +151,15 @@ function onSelectChannel(channel: ChannelSummary) {
   color: var(--text-secondary);
 }
 
-.right-column__channels {
+.right-column__actions {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
-  padding: 0.75rem 0.5rem;
-  border-radius: var(--radius-sm);
-  background: var(--card-bg);
-  border: 1px solid var(--card-stroke);
-  backdrop-filter: blur(20px) saturate(160%);
-  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  gap: 0.5rem;
 }
 
-.right-column__channels-title {
-  margin: 0 0.1rem 0.15rem;
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--text-tertiary);
-  text-transform: uppercase;
+.right-column__action {
+  width: 100%;
+  justify-content: center;
 }
 
 @media (max-width: 768px) {

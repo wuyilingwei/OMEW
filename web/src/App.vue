@@ -2,19 +2,27 @@
 import { ref, watch } from 'vue'
 import AdminSettings from './components/AdminSettings.vue'
 import AuthGate from './components/AuthGate.vue'
+import ColumnResizer from './components/ColumnResizer.vue'
 import LeftColumn from './components/LeftColumn.vue'
 import MiddleColumn from './components/MiddleColumn.vue'
 import MobileNavBar from './components/MobileNavBar.vue'
 import NodeRail from './components/NodeRail.vue'
 import PostModal from './components/PostModal.vue'
 import RightColumn from './components/RightColumn.vue'
-import TopBar from './components/TopBar.vue'
+import StrongholdPanel from './components/StrongholdPanel.vue'
 import { useAuth } from './composables/useAuth'
+import { LEFT_WIDTH_DEFAULT, LEFT_WIDTH_KEY, RIGHT_WIDTH_DEFAULT, RIGHT_WIDTH_KEY } from './composables/useColumnResize'
 import { useShellView } from './composables/useShellView'
 
 const auth = useAuth()
-const view = ref<'app' | 'admin'>('app')
+const view = ref<'app' | 'admin' | 'stronghold-panel'>('app')
+const strongholdPanelTab = ref<'members' | 'settings'>('members')
 const { activeView } = useShellView()
+
+function openStrongholdPanel(tab: 'members' | 'settings') {
+  strongholdPanelTab.value = tab
+  view.value = 'stronghold-panel'
+}
 
 watch(auth.isAuthenticated, (authenticated) => {
   if (!authenticated) view.value = 'app'
@@ -23,18 +31,29 @@ watch(auth.isAuthenticated, (authenticated) => {
 
 <template>
   <div class="shell">
-    <TopBar @open-settings="view = 'admin'" />
-
     <AuthGate v-if="!auth.isAuthenticated.value" />
 
     <AdminSettings v-else-if="view === 'admin'" @close="view = 'app'" />
+
+    <StrongholdPanel
+      v-else-if="view === 'stronghold-panel'"
+      :initial-tab="strongholdPanelTab"
+      @close="view = 'app'"
+    />
 
     <template v-else>
       <div class="shell__body" :data-view="activeView">
         <NodeRail />
         <LeftColumn />
+        <ColumnResizer :var-name="'--left-width'" :storage-key="LEFT_WIDTH_KEY" :default-percent="LEFT_WIDTH_DEFAULT" />
         <MiddleColumn />
-        <RightColumn />
+        <ColumnResizer
+          :var-name="'--right-width'"
+          :storage-key="RIGHT_WIDTH_KEY"
+          :default-percent="RIGHT_WIDTH_DEFAULT"
+          invert
+        />
+        <RightColumn @open-admin-settings="view = 'admin'" @open-panel="openStrongholdPanel" />
       </div>
       <MobileNavBar />
       <PostModal />
@@ -52,7 +71,6 @@ watch(auth.isAuthenticated, (authenticated) => {
   display: flex;
   flex-direction: row;
   height: 100%;
-  padding-top: var(--topbar-height);
 }
 
 @media (max-width: 768px) {
