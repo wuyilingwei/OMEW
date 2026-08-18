@@ -1,0 +1,75 @@
+/* native input + token reskin for credential/settings forms (auth, admin) —
+   kept as plain elements rather than vendored controls, see winui-web skill:
+   correctness-critical form fields stay native-but-reskinned. */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.field__label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.field input,
+.field textarea {
+  font: inherit;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--ctrl-border);
+  background: var(--ctrl-fill-secondary);
+  color: var(--text-primary);
+  transition: background var(--fast-duration) var(--fast-out-slow-in), border-color var(--fast-duration);
+}
+
+.field input::placeholder,
+.field textarea::placeholder {
+  color: var(--text-tertiary);
+}
+
+.field input:focus,
+.field textarea:focus {
+  outline: none;
+  border-color: var(--accent-base);
+  background: var(--ctrl-fill-input-active, var(--ctrl-fill-secondary));
+}
+
+.field__hint {
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+}
+
+.field__error {
+  font-size: 0.78rem;
+  color: var(--SystemFillColorCriticalBrush);
+}
+
+.notice {
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  border: 1px solid transparent;
+}
+
+.notice--caution {
+  background: var(--SystemFillColorCautionBackgroundBrush);
+  border-color: var(--SystemFillColorCautionBrush);
+  color: var(--text-primary);
+}
+
+.notice--info {
+  background: var(--SystemFillColorAttentionBackgroundBrush);
+  border-color: var(--SystemFillColorAttentionBrush);
+  color: var(--text-primary);
+}
+
+.notice--error {
+  background: var(--SystemFillColorCriticalBackgroundBrush);
+  border-color: var(--SystemFillColorCriticalBrush);
+  color: var(--text-primary);
+}

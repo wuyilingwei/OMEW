@@ -1,0 +1,81 @@
+// Client-side ownership key: an Ed25519 keypair generated in the browser at
+// registration time. The private key never leaves the client in plaintext —
+// it's encrypted with a key the user's ownership passphrase derives, and only
+// the public key + the encrypted envelope are sent to the server.
+//
+// Envelope format (JSON, sent as the `ownership_ciphertext` string):
+//   v            envelope version, currently 1
+//   kdf          "argon2id"
+//   kdfParams    { t, m (KiB), p, dkLen } passed to argon2id
+//   salt         base64, 16 random bytes, unique per key
+//   cipher       "AES-256-GCM"
+//   nonce        base64, 12 random bytes (AES-GCM IV)
+//   ciphertext   base64, AES-GCM(secretKey) with the auth tag appended
+//
+// KDF params (t:2, m:19456 KiB, p:1) are OWASP's argon2id "low-memory"
+// recommendation — chosen because this runs synchronously-ish in the
+// browser's main thread and needs to stay under ~1s, not because memory is
+// actually constrained.
+import { ed25519 } from '@noble/curves/ed25519.js'
+import { argon2idAsync } from '@noble/hashes/argon2.js'
+import { randomBytes } from '@noble/hashes/utils.js'
+
+const KDF_PARAMS = { t: 2, m: 19456, p: 1, dkLen: 32 } as const
+
+export interface OwnershipEnvelope {
+  v: 1
+  kdf: 'argon2id'
+  kdfParams: typeof KDF_PARAMS
+  salt: string
+  cipher: 'AES-256-GCM'
+  nonce: string
+  ciphertext: string
+}
+
+export interface OwnershipKeyResult {
+  pubkeyBase64: string
+  envelope: OwnershipEnvelope
+}
+
+function toBase64(bytes: Uint8Array): string {
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary)
+}
+
+export async function generateOwnershipKey(passphrase: string): Promise<OwnershipKeyResult> {
+  const { secretKey, publicKey } = ed25519.keygen()
+  const salt = randomBytes(16)
+  const derived = await argon2idAsync(passphrase, salt, KDF_PARAMS)
+  const aesKey = await crypto.subtle.importKey('raw', derived, 'AES-GCM', false, ['encrypt'])
+  const nonce = randomBytes(12)
+  const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, aesKey, secretKey)
+
+  return {
+    pubkeyBase64: toBase64(publicKey),
+    envelope: {
+      v: 1,
+      kdf: 'argon2id',
+      kdfParams: KDF_PARAMS,
+      salt: toBase64(salt),
+      cipher: 'AES-256-GCM',
+      nonce: toBase64(nonce),
+      ciphertext: toBase64(new Uint8Array(encrypted)),
+    },
+  }
+}
+
+export function envelopeToCiphertextField(envelope: OwnershipEnvelope): string {
+  return JSON.stringify(envelope)
+}
+
+export function downloadOwnershipBackup(pubkeyBase64: string, envelope: OwnershipEnvelope, username: string) {
+  const payload = { pubkey: pubkeyBase64, ...envelope }
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `openmew-ownership-key-${username}.json`
+  link.click()
+  URL.revokeObjectURL(url)
+}
