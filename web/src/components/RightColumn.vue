@@ -16,14 +16,17 @@
   flex-direction: column;
   gap: 0.75rem;
   padding: 1rem;
-  background: rgb(var(--colors-background-regular));
-  border-left: 1px solid rgb(var(--colors-background-gray));
+  background: var(--app-bg);
+  border-left: 1px solid var(--stroke-divider);
   overflow-y: auto;
 }
 
 .right-column__card {
   height: 120px;
-  border-radius: var(--radius-md);
-  background: rgb(var(--colors-background-lighter));
+  border-radius: 8px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-stroke);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
 }
 </style>

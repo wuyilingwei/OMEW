@@ -4,8 +4,6 @@ body {
   --right-width: 17%;
   --rail-width: 64px;
   --topbar-height: 56px;
-  --topic-bar-height: 55px;
-  --topic-bar-expanded-height: 500px;
   --feed-cover-height: 12rem;
 
   --radius-lg: 20px;
@@ -16,6 +14,9 @@ body {
 
 * {
   box-sizing: border-box;
+  /* vendored theme.css sets a blanket user-select: none for its own app
+     shell; this is a content app, restore normal text selection */
+  user-select: auto;
 }
 
 html,
@@ -26,7 +27,7 @@ body,
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif;
   background: rgb(var(--colors-background-regular));
   color: rgb(var(--colors-receive-msg));
 }

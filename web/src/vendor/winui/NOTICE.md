@@ -1,0 +1,61 @@
+# NOTICE
+
+This directory contains source vendored from **WinUIonWeb**
+(https://github.com/Furry-Xiyi/WinUIonWeb), a clean-room Vue 3
+reimplementation of Microsoft WinUI 3 controls. Not affiliated with or
+endorsed by Microsoft.
+
+- Author/repo: Furry-Xiyi/WinUIonWeb
+- License: GPL-3.0 (verified via `GET /repos/Furry-Xiyi/WinUIonWeb` -> `license.spdx_id`)
+- Snapshot: `master` branch, commit `06027b62ece0` (latest commit touching
+  `WinUIonWeb/src/components` at the time of vendoring)
+- Files copied verbatim, no modifications:
+  - `components/WinButton.vue`
+  - `components/WinDropDownButton.vue`
+  - `components/WinMenuFlyout.vue` (transitive dep of WinDropDownButton)
+  - `components/WinScrollViewer.vue` (transitive dep of WinMenuFlyout)
+  - `components/WinTextBlock.vue` (transitive dep of WinMenuFlyout)
+  - `components/i18n/index.ts` (transitive dep of WinTextBlock)
+  - `components/Strings/en-US/Resources.ts` (transitive dep of i18n/index.ts)
+  - `components/Strings/zh-CN/Resources.ts` (transitive dep of i18n/index.ts)
+  - `styles/theme.css` (full Fluent token layer, light + dark)
+  - `styles/animations.css` (needed for `WinDropDownButton`'s chevron
+    animation and `WinMenuFlyout`'s open/close motion — not optional here,
+    contrary to the common case where a control's `<style>` block is
+    self-contained)
+
+Only `WinButton` and `WinDropDownButton` are re-exported from `index.ts` for
+consumption; the rest is internal plumbing pulled in by the dependency
+closure and is not meant to be imported directly.
+
+## Licensing compatibility
+
+Host project (OpenMew) is licensed AGPL-3.0. The FSF treats GPLv3 and AGPLv3
+as compatible for combination; the combined work is distributed under the
+host project's license (AGPL-3.0). The vendored files themselves remain
+GPL-3.0 as authored upstream — see `LICENSE` in this directory for the full
+text.
+
+## Icon font — intentionally not vendored
+
+Upstream's `assets/Fonts/SEGOEICONS.TTF` is a Microsoft-proprietary font and
+is not redistributed here. None of the vendored files need it for the way
+they're used in this project:
+
+- `WinButton` and `WinDropDownButton`'s own chevron glyph render via an
+  inline SVG `mask` in `animations.css`, not the icon font.
+- `WinMenuFlyout` does reference icon-font private-use codepoints
+  (`\uE974`, `\uE73E`, `\uE915`) for submenu chevrons and toggle/radio check
+  glyphs, but only when an item's kind is `MenuFlyoutSubItem`,
+  `SplitMenuFlyoutItem`, `ToggleMenuFlyoutItem`, or `RadioMenuFlyoutItem`.
+  This project only feeds it flat `MenuFlyoutItem` entries (channel names),
+  so those code paths are never reached. If a future change adds
+  nested/toggle menu items, add the same icon-font escape hatch used
+  elsewhere in this codebase before doing so, rather than shipping a
+  missing-glyph box.
+
+## Not vendored
+
+Everything else in WinUIonWeb (the other ~85 components, the icon font, the
+demo gallery app) was left out — only the dependency closure needed for the
+channel-switcher dropdown was pulled in, per the project's vendoring policy.

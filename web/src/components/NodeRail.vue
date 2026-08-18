@@ -29,7 +29,10 @@ import { mockNodes } from '../data/mock'
   align-items: center;
   gap: 0.75rem;
   padding: 0.75rem 0;
-  background: rgb(var(--colors-background-darker));
+  background: var(--card-bg-secondary);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border-right: 1px solid var(--stroke-divider);
   overflow-y: auto;
 }
 
@@ -42,8 +45,8 @@ import { mockNodes } from '../data/mock'
   justify-content: center;
   font-size: 0.75rem;
   font-weight: 700;
-  background: rgb(var(--colors-primary));
-  color: rgb(var(--colors-gray-900));
+  background: var(--accent-base);
+  color: var(--accent-text);
   margin-bottom: 0.5rem;
 }
 
@@ -63,20 +66,21 @@ import { mockNodes } from '../data/mock'
   height: 40px;
   border-radius: 50%;
   border: 2px solid transparent;
-  background: rgb(var(--colors-background-lighter));
-  color: rgb(var(--colors-body));
+  background: var(--ctrl-fill-secondary);
+  color: var(--text-secondary);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 0.85rem;
+  transition: background var(--fast-duration) var(--fast-out-slow-in);
 }
 
 .node-rail__item:hover {
-  background: rgb(var(--colors-background-hover));
+  background: var(--ctrl-fill-tertiary);
 }
 
 .node-rail__item--active {
-  border-color: rgb(var(--colors-primary));
-  color: rgb(var(--colors-receive-msg));
+  border-color: var(--accent-base);
+  color: var(--text-primary);
 }
 </style>

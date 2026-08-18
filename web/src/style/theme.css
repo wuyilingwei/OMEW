@@ -109,3 +109,26 @@
   --colors-gray-700: 245 245 245;
   --colors-gray-900: 255 255 255;
 }
+
+/* Fluent accent bridge: converge the semantic --colors-primary* tokens
+   above with the vendored WinUIonWeb theme.css accent tokens, so vendored
+   controls (WinButton, WinDropDownButton, ...) and hand-styled surfaces
+   share one accent color instead of two independently-themed ones.
+   --colors-primary already resolves to #345BAC (light) / #7294DA (dark)
+   through the three-state block above and through useTheme's .theme-light
+   / .theme-dark class toggle, so this one rule (matched against all three
+   selectors vendored theme.css itself uses for its own light/dark
+   overrides) is enough to track all three theme states without
+   duplicating light/dark blocks here.
+   --accent-text is deliberately left alone: vendored theme.css already
+   flips it white-on-light / black-on-dark for its own default accent, and
+   that same flip happens to give the correct contrast for this brand
+   accent too (verified: #345BAC needs white text, #7294DA needs black). */
+:root,
+html.theme-light,
+html.theme-dark {
+  --accent-base: rgb(var(--colors-primary));
+  --accent-hover: rgb(var(--colors-primary) / 0.9);
+  --accent-pressed: rgb(var(--colors-primary) / 0.8);
+  --accent-aa-fill: rgb(var(--colors-primary-darker));
+}

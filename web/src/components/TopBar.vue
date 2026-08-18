@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useTheme } from '../composables/useTheme'
+import { WinButton } from '../vendor/winui'
 
 const { mode, cycleTheme } = useTheme()
 
@@ -13,9 +14,9 @@ const modeLabel: Record<string, string> = {
 <template>
   <header class="top-bar">
     <span class="top-bar__title">OpenMew</span>
-    <button class="top-bar__theme-btn" type="button" @click="cycleTheme">
+    <WinButton Style="SubtleButtonStyle" class="top-bar__theme-btn" @Click="cycleTheme">
       主题：{{ modeLabel[mode] }}
-    </button>
+    </WinButton>
   </header>
 </template>
 
@@ -31,27 +32,20 @@ const modeLabel: Record<string, string> = {
   align-items: center;
   justify-content: center;
   gap: 1rem;
-  background: rgb(var(--colors-background-regular));
-  border-bottom: 1px solid rgb(var(--colors-background-gray));
+  background: var(--layer-default);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border-bottom: 1px solid var(--stroke-divider);
 }
 
 .top-bar__title {
   font-weight: 600;
-  color: rgb(var(--colors-receive-msg));
+  color: var(--text-primary);
 }
 
 .top-bar__theme-btn {
   position: absolute;
   right: 1rem;
-  border: none;
-  border-radius: var(--radius-xs);
-  padding: 0.4rem 0.75rem;
-  background: rgb(var(--colors-background-receive-msg));
-  color: rgb(var(--colors-receive-msg));
   font-size: 0.85rem;
-}
-
-.top-bar__theme-btn:hover {
-  background: rgb(var(--colors-background-hover));
 }
 </style>
