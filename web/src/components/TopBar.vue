@@ -94,4 +94,16 @@ function onUserMenuSelect(item: { Value: string }) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+@media (max-width: 768px) {
+  /* 居中标题会被右侧动作区压住,窄屏改左对齐 */
+  .top-bar {
+    justify-content: flex-start;
+    padding-left: 1rem;
+  }
+
+  .top-bar__username {
+    max-width: 72px;
+  }
+}
 </style>
