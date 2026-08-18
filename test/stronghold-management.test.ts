@@ -13,7 +13,7 @@ import {
   sessionToken,
 } from "./helpers";
 
-// task 016: stronghold-level settings (allow_message_edit/allow_message_retract/
+// Stronghold-level settings (allow_message_edit/allow_message_retract/
 // edit_window_secs), member/ban/transfer management, and the RoomDO edit/retract
 // gating those settings drive. Member/ban/transfer suites mint session tokens
 // directly (bypassing /api/register - see helpers.sessionToken) since they only

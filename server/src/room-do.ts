@@ -23,6 +23,15 @@ const BATCH_WINDOW_MS = 80;
 const HISTORY_DEFAULT_LIMIT = 50;
 const HISTORY_MAX_LIMIT = 200;
 const RESYNC_GAP_LIMIT = 500;
+const POSTS_DEFAULT_LIMIT = 20;
+const POSTS_MAX_LIMIT = 100;
+const POST_TITLE_MAX = 64;
+const PREVIEW_LEN = 80;
+
+// proposal S4.5: bump broadcasts are throttled per post, not merged with the
+// generic item batch window above - a reply still gets its own item.create batch
+// entry, bump is a separate absolute-snapshot side channel.
+const BUMP_THROTTLE_MS = 2_000;
 
 const RATE_LIMIT_CAPACITY = 20;
 const RATE_LIMIT_REFILL_PER_SEC = 5;
@@ -50,13 +59,13 @@ type ItemRow = {
 };
 
 interface PendingEntry {
-  // null = the write originated over HTTP (task 016 edit/retract endpoints),
+  // null = the write originated over HTTP (edit/retract endpoints),
   // there is no sender connection to exclude from the fan-out.
   senderWs: WebSocket | null;
   frame: Record<string, unknown>;
 }
 
-// task 016: author self-edit/retract outcome. Reuses the item.update / item.delete
+// Author self-edit/retract outcome. Reuses the item.update / item.delete
 // broadcast shapes (m0-protocol namespacing, S5.4) - "edit"/"retract" describe the
 // operation, not a new wire frame type.
 export type EditOutcome = { ok: true; seq: number } | { ok: false; code: string; message: string };
@@ -66,6 +75,12 @@ export class RoomDO extends DurableObject<Env> {
   private pendingBatch: PendingEntry[] = [];
   private batchTimer: ReturnType<typeof setTimeout> | null = null;
   private rateBuckets = new Map<string, { tokens: number; last: number }>();
+  // proposal S4.5: per-post bump throttle state. bumpTimers only holds an entry
+  // while a flush is pending (scheduled on the first reply, cleared on flush) -
+  // same "timer only exists while something's queued" rule as batchTimer above,
+  // so an idle section room doesn't stay artificially awake.
+  private bumpTimers = new Map<number, ReturnType<typeof setTimeout>>();
+  private lastBumpAt = new Map<number, number>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -93,6 +108,13 @@ export class RoomDO extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS dedupe_local (origin TEXT, client_id TEXT, seq INTEGER, ts INTEGER, PRIMARY KEY(origin, client_id));
       CREATE TABLE IF NOT EXISTS dedupe_fed (origin TEXT, envelope_id TEXT, ts INTEGER, PRIMARY KEY(origin, envelope_id));
       CREATE TABLE IF NOT EXISTS subscription (peer TEXT PRIMARY KEY, expires_at INTEGER);
+      CREATE TABLE IF NOT EXISTS post_index (
+        post_seq INTEGER PRIMARY KEY,
+        last_reply_seq INTEGER NOT NULL,
+        reply_count INTEGER NOT NULL DEFAULT 0,
+        bumped_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_post_index_bumped ON post_index(bumped_at DESC, post_seq DESC);
     `);
     sql.exec(`INSERT OR IGNORE INTO meta (key, value) VALUES ('next_seq', 1)`);
   }
@@ -108,7 +130,7 @@ export class RoomDO extends DurableObject<Env> {
     return row.seq;
   }
 
-  // ---- edit-policy snapshot (task 016) ---------------------------------------
+  // ---- edit-policy snapshot ---------------------------------------------------
   // StrongholdDO pushes {allow_message_edit, allow_message_retract, edit_window_secs}
   // here on every config change (DO-to-DO, fire-and-forget); three extra `meta` rows
   // piggyback on the table that already exists for next_seq rather than opening a
@@ -282,6 +304,29 @@ export class RoomDO extends DurableObject<Env> {
     }
 
     const roomKind = attachment.room.split("/")[1]; // "ch" | "sec"
+    const isTopLevel = parentSeq == null;
+
+    // Section-real (proposal S4.5 / S5.4): kind stays {post, reply} everywhere -
+    // the channel/section split is a body-shape + threading matrix, not a new kind.
+    // A channel's flat chat MUST NOT carry post/reply structure (no title, no
+    // parent); a section's top-level item MUST be a real titled post, and anything
+    // under a post MUST be a reply.
+    if (roomKind === "ch") {
+      if (kind !== "post" || !isTopLevel || typeof b.title === "string") {
+        this.sendError(ws, "OMEW_KIND_INVALID_FOR_ROOM", "channels only accept plain messages");
+        return;
+      }
+    } else if (isTopLevel) {
+      const title = typeof b.title === "string" ? b.title.trim() : "";
+      if (kind !== "post" || !title || title.length > POST_TITLE_MAX || typeof b.text !== "string" || !b.text) {
+        this.sendError(ws, "OMEW_KIND_INVALID_FOR_ROOM", `sections require a titled post (title <= ${POST_TITLE_MAX} chars, text required)`);
+        return;
+      }
+    } else if (kind !== "reply") {
+      this.sendError(ws, "OMEW_KIND_INVALID_FOR_ROOM", "sections only accept replies under a post");
+      return;
+    }
+
     const requiredBit = parentSeq != null
       ? DENY_SECTION_REPLY
       : roomKind === "sec"
@@ -323,7 +368,12 @@ export class RoomDO extends DurableObject<Env> {
     const ts = Date.now();
     const seq = this.allocateSeq();
     rootSeq = rootSeq ?? seq;
-    const bodyJson = JSON.stringify(body);
+
+    // Section post: preview is derived server-side and folded into the stored
+    // body (proposal S4.5) so list reads never need to recompute it.
+    const isSectionPost = roomKind === "sec" && isTopLevel;
+    const finalBody: unknown = isSectionPost ? { ...b, preview: (b.text as string).slice(0, PREVIEW_LEN) } : body;
+    const bodyJson = JSON.stringify(finalBody);
     this.ctx.storage.sql.exec(
       "INSERT INTO item (seq, parent_seq, root_seq, actor, origin, client_id, kind, ts, body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       seq, parentSeq, rootSeq, attachment.actor, HOME_ORIGIN, clientId, kind, ts, bodyJson
@@ -333,11 +383,28 @@ export class RoomDO extends DurableObject<Env> {
       HOME_ORIGIN, clientId, seq, ts
     );
 
+    if (isSectionPost) {
+      this.ctx.storage.sql.exec(
+        "INSERT INTO post_index (post_seq, last_reply_seq, reply_count, bumped_at) VALUES (?, ?, 0, ?)",
+        seq, seq, ts
+      );
+    } else if (roomKind === "sec" && !isTopLevel) {
+      // Sort/bump index updates synchronously and always (absolute, idempotent);
+      // only the broadcast of that state is throttled, in scheduleBump below.
+      this.ctx.storage.sql.exec(
+        "INSERT INTO post_index (post_seq, last_reply_seq, reply_count, bumped_at) VALUES (?, ?, 1, ?) " +
+          "ON CONFLICT(post_seq) DO UPDATE SET last_reply_seq = excluded.last_reply_seq, " +
+          "reply_count = post_index.reply_count + 1, bumped_at = excluded.bumped_at",
+        rootSeq, seq, ts
+      );
+      this.scheduleBump(rootSeq);
+    }
+
     this.sendAck(ws, { status: "ok", client_id: clientId, seq });
     this.enqueueBroadcast(ws, {
       type: "item.create",
       seq, parent_seq: parentSeq, root_seq: rootSeq,
-      actor: attachment.actor, kind, ts, body,
+      actor: attachment.actor, kind, ts, body: finalBody,
     });
     this.reportTip(attachment.room, seq);
   }
@@ -374,8 +441,8 @@ export class RoomDO extends DurableObject<Env> {
     this.sendAck(ws, result.seq == null ? { status: "ok", target_seq: targetSeq } : { status: "ok", target_seq: targetSeq, seq: result.seq });
   }
 
-  // task 016: HTTP entry points for the same edit/retract operations (api.ts),
-  // for clients that aren't holding the room's WS open. Core logic and the
+  // HTTP entry points for the same edit/retract operations (api.ts), for clients
+  // that aren't holding the room's WS open. Core logic and the
   // item.update/item.delete broadcast are shared with the WS frame handlers above.
   async editItem(actor: string, roomRef: string, targetSeq: number, content: unknown): Promise<EditOutcome> {
     return this.performEdit(actor, roomRef, targetSeq, content, null);
@@ -589,7 +656,7 @@ export class RoomDO extends DurableObject<Env> {
   // S4.3/S5.2: commit already happened by the time this is called; ack was already
   // sent synchronously above. This only queues the fan-out to everyone else, batched
   // in a window that exists solely while there is something pending to flush.
-  // senderWs is null for HTTP-originated writes (task 016 edit/retract endpoints) -
+  // senderWs is null for HTTP-originated writes (edit/retract endpoints) -
   // there is no sender connection to exclude, every connected socket gets the frame.
   private enqueueBroadcast(senderWs: WebSocket | null, frame: Record<string, unknown>): void {
     this.pendingBatch.push({ senderWs, frame });
@@ -617,6 +684,57 @@ export class RoomDO extends DurableObject<Env> {
         return typeof seq === "number" && seq > max ? seq : max;
       }, -1);
       if (maxSeq >= 0) this.bumpLastSeq(ws, maxSeq);
+    }
+  }
+
+  // ---- bump throttle (proposal S4.5) -----------------------------------------
+  // Trailing throttle per post_seq: at most one broadcast every BUMP_THROTTLE_MS.
+  // The flush always reads fresh state off post_index/item, so it's an absolute
+  // snapshot (LWW) regardless of how many replies coalesced into it - never an
+  // accumulated delta.
+
+  private scheduleBump(postSeq: number): void {
+    if (this.bumpTimers.has(postSeq)) return; // already queued, will pick up latest state when it fires
+    const last = this.lastBumpAt.get(postSeq) ?? 0;
+    const delay = Math.max(0, BUMP_THROTTLE_MS - (Date.now() - last));
+    const timer = setTimeout(() => this.flushBump(postSeq), delay);
+    this.bumpTimers.set(postSeq, timer);
+  }
+
+  private flushBump(postSeq: number): void {
+    this.bumpTimers.delete(postSeq);
+    const tomb = this.ctx.storage.sql.exec<{ seq: number }>("SELECT seq FROM tombstone WHERE seq = ?", postSeq).toArray();
+    if (tomb.length > 0) return; // post retracted meanwhile - nothing to bump.
+    const idx = this.ctx.storage.sql
+      .exec<{ last_reply_seq: number; reply_count: number; bumped_at: number }>(
+        "SELECT last_reply_seq, reply_count, bumped_at FROM post_index WHERE post_seq = ?", postSeq
+      )
+      .toArray()[0];
+    if (!idx) return;
+    const post = this.ctx.storage.sql.exec<{ body: string }>("SELECT body FROM item WHERE seq = ?", postSeq).toArray()[0];
+    let preview = "";
+    if (post) {
+      try {
+        preview = (JSON.parse(post.body) as { preview?: string }).preview ?? "";
+      } catch {
+        // malformed stored body should never happen; drop preview rather than throw.
+      }
+    }
+    this.lastBumpAt.set(postSeq, Date.now());
+    const frame = {
+      type: "item.bump",
+      post_seq: postSeq,
+      last_reply_seq: idx.last_reply_seq,
+      reply_count: idx.reply_count,
+      preview,
+      ts: idx.bumped_at,
+    };
+    for (const ws of this.ctx.getWebSockets()) {
+      try {
+        ws.send(JSON.stringify(frame));
+      } catch {
+        continue;
+      }
     }
   }
 
@@ -675,5 +793,113 @@ export class RoomDO extends DurableObject<Env> {
         body: JSON.parse(r.edit_body ?? r.body),
         edited_at: r.edited_at ?? undefined,
       }));
+  }
+
+  // ---- section posts RPC (proposal S4.5) ---------------------------------------
+
+  // Sorted by bumped_at desc (most recently active thread first), composite
+  // (bumped_at, post_seq) cursor so a tie at the same millisecond still paginates
+  // deterministically.
+  async listPosts(after: string | null, limit?: number): Promise<{ posts: unknown[]; next_cursor: string | null }> {
+    const cappedLimit = Math.max(1, Math.min(limit || POSTS_DEFAULT_LIMIT, POSTS_MAX_LIMIT));
+    let cursorBumpedAt = Number.MAX_SAFE_INTEGER;
+    let cursorSeq = Number.MAX_SAFE_INTEGER;
+    if (after) {
+      const [atPart, seqPart] = after.split(":");
+      const at = Number(atPart);
+      const seq = Number(seqPart);
+      if (Number.isFinite(at) && Number.isFinite(seq)) {
+        cursorBumpedAt = at;
+        cursorSeq = seq;
+      }
+    }
+
+    const rows = this.ctx.storage.sql
+      .exec<{ post_seq: number; last_reply_seq: number; reply_count: number; bumped_at: number; actor: string; ts: number; body: string }>(
+        `SELECT p.post_seq, p.last_reply_seq, p.reply_count, p.bumped_at, i.actor, i.ts, i.body
+         FROM post_index p
+         JOIN item i ON i.seq = p.post_seq
+         LEFT JOIN tombstone t ON t.seq = p.post_seq
+         WHERE t.seq IS NULL AND (p.bumped_at < ? OR (p.bumped_at = ? AND p.post_seq < ?))
+         ORDER BY p.bumped_at DESC, p.post_seq DESC LIMIT ?`,
+        cursorBumpedAt, cursorBumpedAt, cursorSeq, cappedLimit + 1
+      )
+      .toArray();
+
+    const hasMore = rows.length > cappedLimit;
+    const page = rows.slice(0, cappedLimit);
+    const posts = page.map((r) => {
+      const body = JSON.parse(r.body) as { title?: string; cover?: string; preview?: string };
+      return {
+        post_seq: r.post_seq,
+        actor: r.actor,
+        created_at: r.ts,
+        title: body.title ?? "",
+        cover: body.cover ?? null,
+        preview: body.preview ?? "",
+        last_reply_seq: r.last_reply_seq,
+        reply_count: r.reply_count,
+        bumped_at: r.bumped_at,
+      };
+    });
+    const last = page[page.length - 1];
+    const next_cursor = hasMore && last ? `${last.bumped_at}:${last.post_seq}` : null;
+    return { posts, next_cursor };
+  }
+
+  // Post detail + seq-anchored reply page (same before/limit idiom as getHistory).
+  async getPost(postSeq: number, before: number | null, limit?: number): Promise<{ post: unknown; replies: unknown[]; next_before: number | null } | null> {
+    const postRows = this.ctx.storage.sql
+      .exec<ItemRow & { tomb_seq: number | null }>(
+        "SELECT i.*, t.seq AS tomb_seq FROM item i LEFT JOIN tombstone t ON t.seq = i.seq WHERE i.seq = ?",
+        postSeq
+      )
+      .toArray();
+    const postRow = postRows[0];
+    if (!postRow || postRow.tomb_seq != null || postRow.kind !== "post" || postRow.parent_seq != null) {
+      return null;
+    }
+    const idx = this.ctx.storage.sql
+      .exec<{ last_reply_seq: number; reply_count: number; bumped_at: number }>(
+        "SELECT last_reply_seq, reply_count, bumped_at FROM post_index WHERE post_seq = ?", postSeq
+      )
+      .toArray()[0];
+    const body = JSON.parse(postRow.body) as { title?: string; text?: string; cover?: string; preview?: string };
+    const post = {
+      post_seq: postSeq,
+      actor: postRow.actor,
+      created_at: postRow.ts,
+      title: body.title ?? "",
+      text: body.text ?? "",
+      cover: body.cover ?? null,
+      preview: body.preview ?? "",
+      last_reply_seq: idx?.last_reply_seq ?? postSeq,
+      reply_count: idx?.reply_count ?? 0,
+      bumped_at: idx?.bumped_at ?? postRow.ts,
+    };
+
+    const cappedLimit = Math.max(1, Math.min(limit || HISTORY_DEFAULT_LIMIT, HISTORY_MAX_LIMIT));
+    const replyRows = before == null
+      ? this.ctx.storage.sql
+          .exec<ItemRow & { tomb_seq: number | null }>(
+            `SELECT i.*, t.seq AS tomb_seq FROM item i LEFT JOIN tombstone t ON t.seq = i.seq
+             WHERE i.root_seq = ? AND i.parent_seq IS NOT NULL ORDER BY i.seq DESC LIMIT ?`,
+            postSeq, cappedLimit
+          )
+          .toArray()
+      : this.ctx.storage.sql
+          .exec<ItemRow & { tomb_seq: number | null }>(
+            `SELECT i.*, t.seq AS tomb_seq FROM item i LEFT JOIN tombstone t ON t.seq = i.seq
+             WHERE i.root_seq = ? AND i.parent_seq IS NOT NULL AND i.seq < ? ORDER BY i.seq DESC LIMIT ?`,
+            postSeq, before, cappedLimit
+          )
+          .toArray();
+
+    const replies = replyRows
+      .filter((r) => r.tomb_seq == null)
+      .map((r) => ({ seq: r.seq, actor: r.actor, ts: r.ts, body: JSON.parse(r.body) }));
+    const lastRow = replyRows[replyRows.length - 1];
+    const next_before = replyRows.length === cappedLimit && lastRow ? lastRow.seq : null;
+    return { post, replies, next_before };
   }
 }

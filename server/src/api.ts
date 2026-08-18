@@ -6,6 +6,7 @@ import {
   typeToKind,
   type Role,
   type RoomTokenClaims,
+  type RoomType,
   type SessionTokenClaims,
   type StrongholdTokenClaims,
 } from "./types";
@@ -461,8 +462,113 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     return json(await stub.listMembers());
   }
 
-  // ---- stronghold settings & member management (task 016) --------------------------
-  // New /api/stronghold/* surface: flat {error:CODE} shape, matching /api/register et
+  // ---- stronghold + room creation, join/leave, my-strongholds --------------------
+  // Same /api/* flat {error:CODE} shape as the settings/member surface below.
+  // Distinct from the /stronghold/* dev-convenience routes further up: those take
+  // an explicit id/res_id and full capability/position controls; these generate
+  // ids and default to a bare {name, type} so a real client can create things
+  // without inventing a slug.
+
+  if (method === "POST" && path === "/api/strongholds") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!name) return apiError(400, "MALFORMED");
+    const visibility = body.visibility === "private" ? "private" : "public";
+    const description = asOptionalString(body.description);
+
+    const id = generateResId();
+    const stub = env.STRONGHOLD_DO.getByName(id);
+    const config = await stub.initConfig(id, name, visibility, actor, description);
+    // Every stronghold starts with one real channel and one real section - tips
+    // and room lookups work immediately, no separate "register this room" step.
+    await stub.createRoom("lobby", "channel", "大厅", ["text"], false);
+    await stub.createRoom("posts", "section", "帖子", ["text"], false);
+    return json(toApiConfig(config), 201);
+  }
+
+  m = match("/api/stronghold/:id/rooms", path);
+  if (m && method === "POST") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const requester = await stub.getMember(actor);
+    if (!requester || requester.banned_at) return apiError(403, "FORBIDDEN");
+    if (requester.role !== "owner" && requester.role !== "mod") return apiError(403, "FORBIDDEN");
+
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!name) return apiError(400, "MALFORMED");
+    const type: RoomType = body.type === "section" ? "section" : "channel";
+
+    const resId = generateResId();
+    const room = await stub.createRoom(resId, type, name, ["text"], false);
+    return json(room, 201);
+  }
+
+  m = match("/api/stronghold/:id/join", path);
+  if (m && method === "POST") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const config = await stub.getConfig();
+    if (!config) return apiError(404, "NOT_FOUND");
+
+    const existing = await stub.getMember(actor);
+    if (existing) {
+      if (existing.banned_at) return apiError(403, "FORBIDDEN");
+      const profiles = await actorProfiles(env, [actor]);
+      return json(toMemberEntry(existing, profiles.get(actor)));
+    }
+    // §7.2/§9 placeholder: private strongholds need a join_request flow (M6-era
+    // federation feature); until then this is the explicit "not implemented yet"
+    // signal rather than a silent 403 FORBIDDEN.
+    if (config.visibility === "private") return apiError(403, "JOIN_REQUIRES_APPLICATION");
+
+    const member = await stub.addMember(actor, "member", 0, false);
+    const profiles = await actorProfiles(env, [actor]);
+    return json(toMemberEntry(member, profiles.get(actor)), 201);
+  }
+
+  m = match("/api/stronghold/:id/leave", path);
+  if (m && method === "POST") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const member = await stub.getMember(actor);
+    if (!member) return apiError(404, "NOT_FOUND");
+    if (member.role === "owner") return apiError(400, "OWNER_MUST_TRANSFER");
+    await stub.removeMember(actor);
+    return new Response(null, { status: 204, headers: cors() });
+  }
+
+  if (method === "GET" && path === "/api/me/strongholds") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const { results } = await env.DB.prepare("SELECT stronghold_id FROM stronghold_member_index WHERE actor = ?")
+      .bind(actor)
+      .all<{ stronghold_id: string }>();
+    const nodes = await Promise.all(
+      results.map(async (row) => {
+        const stub = env.STRONGHOLD_DO.getByName(row.stronghold_id);
+        const [config, rooms] = await Promise.all([stub.getConfig(), stub.listRooms()]);
+        if (!config) return null;
+        return {
+          id: config.id,
+          name: config.name,
+          cover: config.cover,
+          rooms: rooms.map((room) => ({ id: room.res_id, name: room.name, type: room.type })),
+        };
+      })
+    );
+    return json(nodes.filter((n): n is NonNullable<typeof n> => n != null));
+  }
+
+  // ---- stronghold settings & member management --------------------------------
+  // /api/stronghold/* surface: flat {error:CODE} shape, matching /api/register et
   // al. above - distinct from the /stronghold/* dev-convenience routes above it, which
   // are untouched and keep serving stronghold/room creation, WS tokens and upgrades.
 
@@ -667,8 +773,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     return json(toApiConfig(updated));
   }
 
-  // ---- room item edit/retract (task 016 - "edit"/"retract" HTTP entry points; the
-  // WS frame types stay item.update/item.delete per m0-protocol S5.4 namespacing) ----
+  // ---- room item edit/retract ("edit"/"retract" HTTP entry points; the WS frame
+  // types stay item.update/item.delete per m0-protocol S5.4 namespacing) ----------
 
   m = match("/api/stronghold/:id/rooms/:resId/items/:seq", path);
   if (m && method === "PATCH") {
@@ -708,7 +814,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     return json({ seq: result.seq, target_seq: seq });
   }
 
-  // ---- user profile lookup (task 016; 登录可读) --------------------------------------
+  // ---- user profile lookup (登录可读) --------------------------------------------
 
   m = match("/api/users/:actor", path);
   if (m && method === "GET") {
@@ -817,6 +923,51 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     return json({ items });
   }
 
+  // ---- section posts -------------------------------------------------------------
+  // Reads only: posting/replying goes through the existing WS item.create entry
+  // point (RoomDO.handleItemCreate), gated there by the channel/section kind
+  // matrix - see room-do.ts.
+
+  m = match("/api/stronghold/:id/rooms/:resId/posts", path);
+  if (m && method === "GET") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const strongholdStub = env.STRONGHOLD_DO.getByName(m.id!);
+    const member = await strongholdStub.getMember(actor);
+    if (!member || member.banned_at) return apiError(403, "FORBIDDEN");
+    const room = await strongholdStub.getRoom(m.resId!);
+    if (!room) return apiError(404, "NOT_FOUND");
+    if (room.type !== "section") return apiError(400, "ROOM_NOT_SECTION");
+
+    const roomRef = `${m.id!}/${typeToKind(room.type)}/${m.resId!}`;
+    const roomStub = env.ROOM_DO.getByName(roomRef);
+    const after = url.searchParams.get("after");
+    const limit = url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined;
+    return json(await roomStub.listPosts(after, limit));
+  }
+
+  m = match("/api/stronghold/:id/rooms/:resId/posts/:seq", path);
+  if (m && method === "GET") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const strongholdStub = env.STRONGHOLD_DO.getByName(m.id!);
+    const member = await strongholdStub.getMember(actor);
+    if (!member || member.banned_at) return apiError(403, "FORBIDDEN");
+    const room = await strongholdStub.getRoom(m.resId!);
+    if (!room) return apiError(404, "NOT_FOUND");
+    if (room.type !== "section") return apiError(400, "ROOM_NOT_SECTION");
+    const seq = Number(m.seq);
+    if (!Number.isFinite(seq)) return apiError(400, "MALFORMED");
+
+    const roomRef = `${m.id!}/${typeToKind(room.type)}/${m.resId!}`;
+    const roomStub = env.ROOM_DO.getByName(roomRef);
+    const before = url.searchParams.has("before") ? Number(url.searchParams.get("before")) : null;
+    const limit = url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined;
+    const result = await roomStub.getPost(seq, before, limit);
+    if (!result) return apiError(404, "NOT_FOUND");
+    return json(result);
+  }
+
   return errorResponse(404, "OMEW_NOT_FOUND", "no such route");
 }
 
@@ -832,7 +983,14 @@ function asOptionalNumber(v: unknown): number | undefined {
   return typeof v === "number" ? v : undefined;
 }
 
-// ---- task 016: stronghold settings & member management helpers -------------------
+// Stronghold/room creation via /api/* doesn't take a client-supplied id/res_id
+// (unlike the /stronghold/* dev-convenience routes) - generate one that always
+// satisfies RES_ID_RE.
+function generateResId(): string {
+  return crypto.randomUUID().replace(/-/g, "").slice(0, 20);
+}
+
+// ---- stronghold settings & member management helpers -----------------------------
 
 // DO storage keeps allow_message_edit/allow_message_retract as 0/1 (SqlStorageValue
 // convention, matches restricted/archived elsewhere in this codebase) - coerce to
