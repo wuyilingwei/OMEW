@@ -1,0 +1,1197 @@
+{
+  "meta": {
+    "protocol_version": 1,
+    "spec_file": "docs/m0-protocol-draft.md",
+    "generator": "scripts/gen-vectors.mjs",
+    "generated_note": "All timestamps are fixed constants, not wall-clock. All key material is deterministically derived TEST ONLY material (see scripts/gen-vectors.mjs testSeed/testNonceBytes/testUuidV7). Do not reuse any key, nonce or id from this file outside conformance testing.",
+    "jcs_implementation": "Self-implemented: recursive key-sorted clone (UTF-16 code unit order) followed by native JSON.stringify, relying on V8 already implementing RFC 8785-compatible ECMA-262 number/string serialization for the JSON-integer-only, ASCII-plus-escaped-control-char content used throughout these vectors. See the comment block in scripts/gen-vectors.mjs for the full justification.",
+    "signature_algorithm": "Ed25519 (RFC 8032) via node:crypto (WebCrypto algorithm identifier \"Ed25519\"; NODE-ED25519 is not used)",
+    "domain_prefixes": {
+      "event": "openmew/event/v1",
+      "instanceDescriptor": "openmew/instance-descriptor/v1",
+      "userProfile": "openmew/user-profile/v1",
+      "assertion": "openmew/assertion/v1",
+      "keyRotation": "openmew/key-rotation/v1",
+      "keyRevocation": "openmew/key-revocation/v1",
+      "request": "openmew/request/v1",
+      "ownership": "openmew/ownership/v1",
+      "migrationClaim": "openmew/migration-claim/v1"
+    }
+  },
+  "keys": {
+    "a.example#key-1": {
+      "instance": "a.example",
+      "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+      "public_key": "XaHw8L8EyAb4rfaQMAgvWXt8AiWh_ZrWBjIDxCiIdhA",
+      "role": "instance signing key"
+    },
+    "a.example#key-2": {
+      "instance": "a.example",
+      "key_id": "c32Hwuke-2S_3QcmzbECng",
+      "public_key": "Zzts36TlPe4WuwpPVp-UNcE3-lDPuIj8AqTYpL-RuRI",
+      "role": "instance signing key (rotation gen 2)"
+    },
+    "a.example#key-3": {
+      "instance": "a.example",
+      "key_id": "P4Iv0tZ58S48ugVXIwMB1w",
+      "public_key": "KkNVwdpcDfyeWA1jT4sZ-BqFAZ2g81N29As3Pf3jDqs",
+      "role": "instance signing key (rotation gen 3)"
+    },
+    "b.example#key-1": {
+      "instance": "b.example",
+      "key_id": "-lkZYaKrWWheYiiuN73A7g",
+      "public_key": "A6RigMlZmE92iEV9t8qMze15XyaOaQ4xBwZX3iPhiGo",
+      "role": "instance signing key"
+    },
+    "c.example#key-1": {
+      "instance": "c.example",
+      "key_id": "oqv4jKLgrKE7Zg_QC5B1Ug",
+      "public_key": "bfGI2lHkWvm3vWv8acH5hC8MfIKTO-QSD-Aq2lWdNdc",
+      "role": "instance signing key"
+    },
+    "d.example#key-1": {
+      "instance": "d.example",
+      "key_id": "_aLgCH2Tbf31v8-pDxZlFA",
+      "public_key": "TkccFIql5qn2hCC_DtYjUQ9yqqhoiioAHYbw1VQvbb8",
+      "role": "instance signing key"
+    },
+    "@alice:a.example#ownership-1": {
+      "actor": "@alice:a.example",
+      "key_id": "VLdTNz7O27kJHcWTAZCz2g",
+      "public_key": "MYDJzZYV14aDcacOmtFZoz4nGZxo7wu0fx4wdhNgdJU",
+      "role": "ownership key generation 1"
+    },
+    "@alice:a.example#ownership-2": {
+      "actor": "@alice:a.example",
+      "key_id": "lUEy_4GaYq8Zi12uFghQeA",
+      "public_key": "I5vLXAhm73R4mUqQ50r_7pGbGS1KuW25tlXjpLtsN-4",
+      "role": "ownership key generation 2"
+    },
+    "@alice:a.example#ownership-3": {
+      "actor": "@alice:a.example",
+      "key_id": "j9w44fnQfxofHlsaCCZZtw",
+      "public_key": "BkLdAVlwp3l3wpr_C2SmUYqywKmt94IwYfqiNu7vQBA",
+      "role": "ownership key generation 3 (chain tail)"
+    }
+  },
+  "vectors": [
+    {
+      "id": "TV-01",
+      "title": "最小 item.create,纯 ASCII text",
+      "spec_refs": [
+        "§2.1",
+        "§2.2",
+        "§2.3",
+        "§2.4"
+      ],
+      "cases": [
+        {
+          "case_id": "TV-01",
+          "description": "Minimal item.create envelope, ASCII-only body.text, signed by home a.example.",
+          "domain_prefix": "openmew/event/v1",
+          "object": {
+            "v": 1,
+            "id": "4e373e4c-fb21-75d5-a501-e0ac9de2ced2",
+            "type": "item.create",
+            "origin": "a.example",
+            "room": "sh01/ch/general",
+            "actor": "@alice:a.example",
+            "seq": 1,
+            "ts": 1755000000000,
+            "payload": {
+              "client_id": "1a5bd6d5-7a77-4477-a58d-89996bd8b260",
+              "kind": "post",
+              "body": {
+                "text": "Hello, OpenMew!"
+              }
+            },
+            "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+            "sig": "yPCdRvXve0HRBns36qT6XvF0EPe1osyPQzE97BH-WuxZZ66ms-urgwZsMIsCj359DoSKGKI4JBJCEa2D6yWZDw"
+          },
+          "canonical_jcs_hex": "7b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2234653337336534632d666232312d373564352d613530312d653061633964653263656432222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22626f6479223a7b2274657874223a2248656c6c6f2c204f70656e4d657721227d2c22636c69656e745f6964223a2231613562643664352d376137372d343437372d613538642d383939393662643862323630222c226b696e64223a22706f7374227d2c22726f6f6d223a22736830312f63682f67656e6572616c222c22736571223a312c227473223a313735353030303030303030302c2274797065223a226974656d2e637265617465222c2276223a317d",
+          "signing_input_hex": "6f70656e6d65772f6576656e742f7631007b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2234653337336534632d666232312d373564352d613530312d653061633964653263656432222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22626f6479223a7b2274657874223a2248656c6c6f2c204f70656e4d657721227d2c22636c69656e745f6964223a2231613562643664352d376137372d343437372d613538642d383939393662643862323630222c226b696e64223a22706f7374227d2c22726f6f6d223a22736830312f63682f67656e6572616c222c22736571223a312c227473223a313735353030303030303030302c2274797065223a226974656d2e637265617465222c2276223a317d",
+          "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+          "public_key": "XaHw8L8EyAb4rfaQMAgvWXt8AiWh_ZrWBjIDxCiIdhA",
+          "signature": "yPCdRvXve0HRBns36qT6XvF0EPe1osyPQzE97BH-WuxZZ66ms-urgwZsMIsCj359DoSKGKI4JBJCEa2D6yWZDw",
+          "expected": "valid"
+        }
+      ]
+    },
+    {
+      "id": "TV-02",
+      "title": "含 objects.users sideload",
+      "spec_refs": [
+        "§2.1",
+        "§7.4"
+      ],
+      "cases": [
+        {
+          "case_id": "TV-02",
+          "description": "item.create carrying an objects.users profile-summary sideload for the author.",
+          "domain_prefix": "openmew/event/v1",
+          "object": {
+            "v": 1,
+            "id": "37b0cf3f-67e4-7c43-8b85-169a50d75d7a",
+            "type": "item.create",
+            "origin": "a.example",
+            "room": "sh01/ch/general",
+            "actor": "@alice:a.example",
+            "seq": 2,
+            "ts": 1755000001000,
+            "payload": {
+              "client_id": "b900040b-4156-47f2-bdb4-65df623d6c73",
+              "kind": "post",
+              "body": {
+                "text": "sideload carries my profile summary"
+              }
+            },
+            "objects": {
+              "users": [
+                {
+                  "actor": "@alice:a.example",
+                  "profile_version": 3,
+                  "display_name": "Alice",
+                  "avatar": "omew://a.example/media/yD3BOa77BfWlV1dcWUovvv9pwxSyaKkxHI8IccJqkb8",
+                  "ownership_key": {
+                    "key_id": "VLdTNz7O27kJHcWTAZCz2g",
+                    "public_key": "MYDJzZYV14aDcacOmtFZoz4nGZxo7wu0fx4wdhNgdJU",
+                    "created_at": 1754913600000
+                  }
+                }
+              ]
+            },
+            "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+            "sig": "-yDcygmy8pxyXRzCqXR1tyWIc_e99p1P93qhKHLAeEgZXcYp3CWy24I0HgmB9gtkK_gFIz16QN4GI-KzjKbBAg"
+          },
+          "canonical_jcs_hex": "7b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2233376230636633662d363765342d376334332d386238352d313639613530643735643761222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f626a65637473223a7b227573657273223a5b7b226163746f72223a2240616c6963653a612e6578616d706c65222c22617661746172223a226f6d65773a2f2f612e6578616d706c652f6d656469612f794433424f6137374266576c5631646357556f767676397077785379614b6b784849384963634a716b6238222c22646973706c61795f6e616d65223a22416c696365222c226f776e6572736869705f6b6579223a7b22637265617465645f6174223a313735343931333630303030302c226b65795f6964223a22564c64544e7a374f32376b4a48635754415a437a3267222c227075626c69635f6b6579223a224d59444a7a5a5956313461446361634f6d74465a6f7a346e475a786f377775306678347764684e67644a55227d2c2270726f66696c655f76657273696f6e223a337d5d7d2c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22626f6479223a7b2274657874223a22736964656c6f61642063617272696573206d792070726f66696c652073756d6d617279227d2c22636c69656e745f6964223a2262393030303430622d343135362d343766322d626462342d363564663632336436633733222c226b696e64223a22706f7374227d2c22726f6f6d223a22736830312f63682f67656e6572616c222c22736571223a322c227473223a313735353030303030313030302c2274797065223a226974656d2e637265617465222c2276223a317d",
+          "signing_input_hex": "6f70656e6d65772f6576656e742f7631007b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2233376230636633662d363765342d376334332d386238352d313639613530643735643761222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f626a65637473223a7b227573657273223a5b7b226163746f72223a2240616c6963653a612e6578616d706c65222c22617661746172223a226f6d65773a2f2f612e6578616d706c652f6d656469612f794433424f6137374266576c5631646357556f767676397077785379614b6b784849384963634a716b6238222c22646973706c61795f6e616d65223a22416c696365222c226f776e6572736869705f6b6579223a7b22637265617465645f6174223a313735343931333630303030302c226b65795f6964223a22564c64544e7a374f32376b4a48635754415a437a3267222c227075626c69635f6b6579223a224d59444a7a5a5956313461446361634f6d74465a6f7a346e475a786f377775306678347764684e67644a55227d2c2270726f66696c655f76657273696f6e223a337d5d7d2c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22626f6479223a7b2274657874223a22736964656c6f61642063617272696573206d792070726f66696c652073756d6d617279227d2c22636c69656e745f6964223a2262393030303430622d343135362d343766322d626462342d363564663632336436633733222c226b696e64223a22706f7374227d2c22726f6f6d223a22736830312f63682f67656e6572616c222c22736571223a322c227473223a313735353030303030313030302c2274797065223a226974656d2e637265617465222c2276223a317d",
+          "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+          "public_key": "XaHw8L8EyAb4rfaQMAgvWXt8AiWh_ZrWBjIDxCiIdhA",
+          "signature": "-yDcygmy8pxyXRzCqXR1tyWIc_e99p1P93qhKHLAeEgZXcYp3CWy24I0HgmB9gtkK_gFIz16QN4GI-KzjKbBAg",
+          "expected": "valid"
+        }
+      ]
+    },
+    {
+      "id": "TV-03",
+      "title": "含非 ASCII 正文(CJK + emoji + 组合字符),校验 NFC 与 JCS 转义",
+      "spec_refs": [
+        "§1.3",
+        "§2.2",
+        "§3.2"
+      ],
+      "cases": [
+        {
+          "case_id": "TV-03",
+          "description": "body.text mixes NFC-normalized CJK, an astral-plane emoji (surrogate pair), control characters requiring \\n/\\t escaping, a literal quote and backslash, and a literal U+2028 that JCS leaves unescaped.",
+          "domain_prefix": "openmew/event/v1",
+          "object": {
+            "v": 1,
+            "id": "da0d6b01-c1ee-7a08-8a9c-53fe27eb51d5",
+            "type": "item.create",
+            "origin": "a.example",
+            "room": "sh01/ch/general",
+            "actor": "@alice:a.example",
+            "seq": 3,
+            "ts": 1755000002000,
+            "payload": {
+              "client_id": "7061fa01-c600-4ae8-b3c5-3defce2cf25c",
+              "kind": "post",
+              "body": {
+                "text": "café naïve 你好，世界 🎉\nline2\ttabbed \"quoted\" back\\slash unescaped-line-separator"
+              }
+            },
+            "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+            "sig": "KPjVBxihOWa1X9PeRAf3dmc1bYin23LckHB3oFTdjN_ecDAsOjEpaSRAEd5TQUADcpiYg0Xf4EbZmhI3Cw8NBQ"
+          },
+          "canonical_jcs_hex": "7b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2264613064366230312d633165652d376130382d386139632d353366653237656235316435222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22626f6479223a7b2274657874223a22636166c3a9206e61c3af766520e4bda0e5a5bdefbc8ce4b896e7958c20f09f8e895c6e6c696e65325c74746162626564205c2271756f7465645c22206261636b5c5c736c617368e280a8756e657363617065642d6c696e652d736570617261746f72227d2c22636c69656e745f6964223a2237303631666130312d633630302d346165382d623363352d336465666365326366323563222c226b696e64223a22706f7374227d2c22726f6f6d223a22736830312f63682f67656e6572616c222c22736571223a332c227473223a313735353030303030323030302c2274797065223a226974656d2e637265617465222c2276223a317d",
+          "signing_input_hex": "6f70656e6d65772f6576656e742f7631007b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2264613064366230312d633165652d376130382d386139632d353366653237656235316435222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22626f6479223a7b2274657874223a22636166c3a9206e61c3af766520e4bda0e5a5bdefbc8ce4b896e7958c20f09f8e895c6e6c696e65325c74746162626564205c2271756f7465645c22206261636b5c5c736c617368e280a8756e657363617065642d6c696e652d736570617261746f72227d2c22636c69656e745f6964223a2237303631666130312d633630302d346165382d623363352d336465666365326366323563222c226b696e64223a22706f7374227d2c22726f6f6d223a22736830312f63682f67656e6572616c222c22736571223a332c227473223a313735353030303030323030302c2274797065223a226974656d2e637265617465222c2276223a317d",
+          "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+          "public_key": "XaHw8L8EyAb4rfaQMAgvWXt8AiWh_ZrWBjIDxCiIdhA",
+          "signature": "KPjVBxihOWa1X9PeRAf3dmc1bYin23LckHB3oFTdjN_ecDAsOjEpaSRAEd5TQUADcpiYg0Xf4EbZmhI3Cw8NBQ",
+          "expected": "valid",
+          "notes": "Verifies against NFC(text) === text (illustrative unicode-normalize check only; the protocol does not mandate receiver-side rejection of non-NFC body text, only writer-side NFC production)."
+        }
+      ]
+    },
+    {
+      "id": "TV-04",
+      "title": "含媒体对象与 omew:// 引用",
+      "spec_refs": [
+        "§1.6",
+        "§2.1"
+      ],
+      "cases": [
+        {
+          "case_id": "TV-04",
+          "description": "item.create with one body.media entry referencing omew://a.example/media/YtyTcl4bAaNyvpe-Hv2OQxdhOvJ1XmCvWLvLtElzNf4.",
+          "domain_prefix": "openmew/event/v1",
+          "object": {
+            "v": 1,
+            "id": "5e110cdc-a0e0-71b5-99ed-480439ba2204",
+            "type": "item.create",
+            "origin": "a.example",
+            "room": "sh01/ch/general",
+            "actor": "@alice:a.example",
+            "seq": 4,
+            "ts": 1755000003000,
+            "payload": {
+              "client_id": "61a64e3b-1be3-4c1f-986c-f624061c2bbe",
+              "kind": "post",
+              "body": {
+                "text": "screenshot attached",
+                "media": [
+                  {
+                    "ref": "omew://a.example/media/YtyTcl4bAaNyvpe-Hv2OQxdhOvJ1XmCvWLvLtElzNf4",
+                    "mime": "image/png",
+                    "size": 123456,
+                    "width": 800,
+                    "height": 600,
+                    "blurhash": "LKO2?U%2Tw=w]~RBVZRi};RPxuwH",
+                    "alt": "A sample screenshot"
+                  }
+                ]
+              }
+            },
+            "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+            "sig": "qB9VklGe2VodVIS8p8UWjl8lLev96mtMZ-om-yAlatWtBpeAoDPgC35J6lmbRAactDPxIiszK1CnTB6fm3YzDg"
+          },
+          "canonical_jcs_hex": "7b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2235653131306364632d613065302d373162352d393965642d343830343339626132323034222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22626f6479223a7b226d65646961223a5b7b22616c74223a22412073616d706c652073637265656e73686f74222c22626c757268617368223a224c4b4f323f55253254773d775d7e5242565a52697d3b525078757748222c22686569676874223a3630302c226d696d65223a22696d6167652f706e67222c22726566223a226f6d65773a2f2f612e6578616d706c652f6d656469612f59747954636c346241614e797670652d4876324f517864684f764a31586d4376574c764c74456c7a4e6634222c2273697a65223a3132333435362c227769647468223a3830307d5d2c2274657874223a2273637265656e73686f74206174746163686564227d2c22636c69656e745f6964223a2236316136346533622d316265332d346331662d393836632d663632343036316332626265222c226b696e64223a22706f7374227d2c22726f6f6d223a22736830312f63682f67656e6572616c222c22736571223a342c227473223a313735353030303030333030302c2274797065223a226974656d2e637265617465222c2276223a317d",
+          "signing_input_hex": "6f70656e6d65772f6576656e742f7631007b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2235653131306364632d613065302d373162352d393965642d343830343339626132323034222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22626f6479223a7b226d65646961223a5b7b22616c74223a22412073616d706c652073637265656e73686f74222c22626c757268617368223a224c4b4f323f55253254773d775d7e5242565a52697d3b525078757748222c22686569676874223a3630302c226d696d65223a22696d6167652f706e67222c22726566223a226f6d65773a2f2f612e6578616d706c652f6d656469612f59747954636c346241614e797670652d4876324f517864684f764a31586d4376574c764c74456c7a4e6634222c2273697a65223a3132333435362c227769647468223a3830307d5d2c2274657874223a2273637265656e73686f74206174746163686564227d2c22636c69656e745f6964223a2236316136346533622d316265332d346331662d393836632d663632343036316332626265222c226b696e64223a22706f7374227d2c22726f6f6d223a22736830312f63682f67656e6572616c222c22736571223a342c227473223a313735353030303030333030302c2274797065223a226974656d2e637265617465222c2276223a317d",
+          "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+          "public_key": "XaHw8L8EyAb4rfaQMAgvWXt8AiWh_ZrWBjIDxCiIdhA",
+          "signature": "qB9VklGe2VodVIS8p8UWjl8lLev96mtMZ-om-yAlatWtBpeAoDPgC35J6lmbRAactDPxIiszK1CnTB6fm3YzDg",
+          "expected": "valid"
+        }
+      ]
+    },
+    {
+      "id": "TV-05",
+      "title": "含未知扩展字段,验证签名覆盖与不剥离",
+      "spec_refs": [
+        "§2.1",
+        "§2.3",
+        "§13.2"
+      ],
+      "cases": [
+        {
+          "case_id": "TV-05a",
+          "description": "item.create with an unknown top-level field x_vendor_debug; signature covers it.",
+          "domain_prefix": "openmew/event/v1",
+          "object": {
+            "v": 1,
+            "id": "aba810dd-baf2-7ec5-a4f9-1bb377970133",
+            "type": "item.create",
+            "origin": "a.example",
+            "room": "sh01/ch/general",
+            "actor": "@alice:a.example",
+            "seq": 5,
+            "ts": 1755000004000,
+            "payload": {
+              "client_id": "249a290a-fe7d-49a5-aab7-cf25261819b0",
+              "kind": "post",
+              "body": {
+                "text": "carries an unknown top-level extension field"
+              }
+            },
+            "x_vendor_debug": {
+              "trace_id": "abc123",
+              "hint": "unspecified by v1"
+            },
+            "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+            "sig": "W0iVZzk9RVB6HtfyRN8Few54h3XpXWnuAvmhGFEj1opPJc5rkx7GEKqbpwDry2ZcNbLYx26ZGPHF8iUnyE1tBQ"
+          },
+          "canonical_jcs_hex": "7b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2261626138313064642d626166322d376563352d613466392d316262333737393730313333222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22626f6479223a7b2274657874223a226361727269657320616e20756e6b6e6f776e20746f702d6c6576656c20657874656e73696f6e206669656c64227d2c22636c69656e745f6964223a2232343961323930612d666537642d343961352d616162372d636632353236313831396230222c226b696e64223a22706f7374227d2c22726f6f6d223a22736830312f63682f67656e6572616c222c22736571223a352c227473223a313735353030303030343030302c2274797065223a226974656d2e637265617465222c2276223a312c22785f76656e646f725f6465627567223a7b2268696e74223a22756e737065636966696564206279207631222c2274726163655f6964223a22616263313233227d7d",
+          "signing_input_hex": "6f70656e6d65772f6576656e742f7631007b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2261626138313064642d626166322d376563352d613466392d316262333737393730313333222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22626f6479223a7b2274657874223a226361727269657320616e20756e6b6e6f776e20746f702d6c6576656c20657874656e73696f6e206669656c64227d2c22636c69656e745f6964223a2232343961323930612d666537642d343961352d616162372d636632353236313831396230222c226b696e64223a22706f7374227d2c22726f6f6d223a22736830312f63682f67656e6572616c222c22736571223a352c227473223a313735353030303030343030302c2274797065223a226974656d2e637265617465222c2276223a312c22785f76656e646f725f6465627567223a7b2268696e74223a22756e737065636966696564206279207631222c2274726163655f6964223a22616263313233227d7d",
+          "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+          "public_key": "XaHw8L8EyAb4rfaQMAgvWXt8AiWh_ZrWBjIDxCiIdhA",
+          "signature": "W0iVZzk9RVB6HtfyRN8Few54h3XpXWnuAvmhGFEj1opPJc5rkx7GEKqbpwDry2ZcNbLYx26ZGPHF8iUnyE1tBQ",
+          "expected": "valid"
+        },
+        {
+          "case_id": "TV-05b",
+          "description": "MUST-fail: verifying the TV-05a signature against the envelope with x_vendor_debug stripped (simulating a relay that drops unknown fields) MUST fail, because the field was signature-covered.",
+          "domain_prefix": "openmew/event/v1",
+          "object": {
+            "v": 1,
+            "id": "aba810dd-baf2-7ec5-a4f9-1bb377970133",
+            "type": "item.create",
+            "origin": "a.example",
+            "room": "sh01/ch/general",
+            "actor": "@alice:a.example",
+            "seq": 5,
+            "ts": 1755000004000,
+            "payload": {
+              "client_id": "249a290a-fe7d-49a5-aab7-cf25261819b0",
+              "kind": "post",
+              "body": {
+                "text": "carries an unknown top-level extension field"
+              }
+            },
+            "key_id": "aWSFGSK3vFR5mRZHPFa5UQ"
+          },
+          "canonical_jcs_hex": "7b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2261626138313064642d626166322d376563352d613466392d316262333737393730313333222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22626f6479223a7b2274657874223a226361727269657320616e20756e6b6e6f776e20746f702d6c6576656c20657874656e73696f6e206669656c64227d2c22636c69656e745f6964223a2232343961323930612d666537642d343961352d616162372d636632353236313831396230222c226b696e64223a22706f7374227d2c22726f6f6d223a22736830312f63682f67656e6572616c222c22736571223a352c227473223a313735353030303030343030302c2274797065223a226974656d2e637265617465222c2276223a317d",
+          "signing_input_hex": "6f70656e6d65772f6576656e742f7631007b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2261626138313064642d626166322d376563352d613466392d316262333737393730313333222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22626f6479223a7b2274657874223a226361727269657320616e20756e6b6e6f776e20746f702d6c6576656c20657874656e73696f6e206669656c64227d2c22636c69656e745f6964223a2232343961323930612d666537642d343961352d616162372d636632353236313831396230222c226b696e64223a22706f7374227d2c22726f6f6d223a22736830312f63682f67656e6572616c222c22736571223a352c227473223a313735353030303030343030302c2274797065223a226974656d2e637265617465222c2276223a317d",
+          "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+          "public_key": "XaHw8L8EyAb4rfaQMAgvWXt8AiWh_ZrWBjIDxCiIdhA",
+          "signature": "W0iVZzk9RVB6HtfyRN8Few54h3XpXWnuAvmhGFEj1opPJc5rkx7GEKqbpwDry2ZcNbLYx26ZGPHF8iUnyE1tBQ",
+          "expected": "reject",
+          "reject_reason": "signature_mismatch_after_field_stripped"
+        }
+      ]
+    },
+    {
+      "id": "TV-06",
+      "title": "键序颠倒的等价输入,验证 JCS 输出一致",
+      "spec_refs": [
+        "§2.2 (JCS)"
+      ],
+      "cases": [
+        {
+          "case_id": "TV-06a",
+          "description": "Envelope with fields in the field-table order (docs §2.1).",
+          "domain_prefix": "openmew/event/v1",
+          "object": {
+            "v": 1,
+            "id": "e215dcb5-5dad-7644-8a52-7b799899fe0c",
+            "type": "item.create",
+            "origin": "a.example",
+            "room": "sh01/ch/general",
+            "actor": "@alice:a.example",
+            "seq": 6,
+            "ts": 1755000005000,
+            "payload": {
+              "client_id": "dedfc216-1647-40af-9019-d42f643fd45b",
+              "kind": "post",
+              "body": {
+                "text": "key order must not affect canonical bytes"
+              }
+            },
+            "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+            "sig": "i9SK7zZyqa2tgaRhOeHV4Q5uHUN0qVUpbkAZVJy3mQi8v_mM7S_bfHRdnC93VF7-Ygd3jJB8QF_WnQCtj2q9Dw"
+          },
+          "canonical_jcs_hex": "7b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2265323135646362352d356461642d373634342d386135322d376237393938393966653063222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22626f6479223a7b2274657874223a226b6579206f72646572206d757374206e6f74206166666563742063616e6f6e6963616c206279746573227d2c22636c69656e745f6964223a2264656466633231362d313634372d343061662d393031392d643432663634336664343562222c226b696e64223a22706f7374227d2c22726f6f6d223a22736830312f63682f67656e6572616c222c22736571223a362c227473223a313735353030303030353030302c2274797065223a226974656d2e637265617465222c2276223a317d",
+          "signing_input_hex": "6f70656e6d65772f6576656e742f7631007b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2265323135646362352d356461642d373634342d386135322d376237393938393966653063222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22626f6479223a7b2274657874223a226b6579206f72646572206d757374206e6f74206166666563742063616e6f6e6963616c206279746573227d2c22636c69656e745f6964223a2264656466633231362d313634372d343061662d393031392d643432663634336664343562222c226b696e64223a22706f7374227d2c22726f6f6d223a22736830312f63682f67656e6572616c222c22736571223a362c227473223a313735353030303030353030302c2274797065223a226974656d2e637265617465222c2276223a317d",
+          "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+          "public_key": "XaHw8L8EyAb4rfaQMAgvWXt8AiWh_ZrWBjIDxCiIdhA",
+          "signature": "i9SK7zZyqa2tgaRhOeHV4Q5uHUN0qVUpbkAZVJy3mQi8v_mM7S_bfHRdnC93VF7-Ygd3jJB8QF_WnQCtj2q9Dw",
+          "expected": "valid"
+        },
+        {
+          "case_id": "TV-06b",
+          "description": "Same logical envelope, keys inserted in reverse order; MUST produce byte-identical JCS output and signature.",
+          "domain_prefix": "openmew/event/v1",
+          "object": {
+            "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+            "payload": {
+              "body": {
+                "text": "key order must not affect canonical bytes"
+              },
+              "kind": "post",
+              "client_id": "dedfc216-1647-40af-9019-d42f643fd45b"
+            },
+            "ts": 1755000005000,
+            "seq": 6,
+            "actor": "@alice:a.example",
+            "room": "sh01/ch/general",
+            "origin": "a.example",
+            "type": "item.create",
+            "id": "e215dcb5-5dad-7644-8a52-7b799899fe0c",
+            "v": 1,
+            "sig": "i9SK7zZyqa2tgaRhOeHV4Q5uHUN0qVUpbkAZVJy3mQi8v_mM7S_bfHRdnC93VF7-Ygd3jJB8QF_WnQCtj2q9Dw"
+          },
+          "canonical_jcs_hex": "7b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2265323135646362352d356461642d373634342d386135322d376237393938393966653063222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22626f6479223a7b2274657874223a226b6579206f72646572206d757374206e6f74206166666563742063616e6f6e6963616c206279746573227d2c22636c69656e745f6964223a2264656466633231362d313634372d343061662d393031392d643432663634336664343562222c226b696e64223a22706f7374227d2c22726f6f6d223a22736830312f63682f67656e6572616c222c22736571223a362c227473223a313735353030303030353030302c2274797065223a226974656d2e637265617465222c2276223a317d",
+          "signing_input_hex": "6f70656e6d65772f6576656e742f7631007b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2265323135646362352d356461642d373634342d386135322d376237393938393966653063222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22626f6479223a7b2274657874223a226b6579206f72646572206d757374206e6f74206166666563742063616e6f6e6963616c206279746573227d2c22636c69656e745f6964223a2264656466633231362d313634372d343061662d393031392d643432663634336664343562222c226b696e64223a22706f7374227d2c22726f6f6d223a22736830312f63682f67656e6572616c222c22736571223a362c227473223a313735353030303030353030302c2274797065223a226974656d2e637265617465222c2276223a317d",
+          "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+          "public_key": "XaHw8L8EyAb4rfaQMAgvWXt8AiWh_ZrWBjIDxCiIdhA",
+          "signature": "i9SK7zZyqa2tgaRhOeHV4Q5uHUN0qVUpbkAZVJy3mQi8v_mM7S_bfHRdnC93VF7-Ygd3jJB8QF_WnQCtj2q9Dw",
+          "expected": "valid"
+        }
+      ]
+    },
+    {
+      "id": "TV-07",
+      "title": "会话断言(openmew/assertion/v1 域分隔)",
+      "spec_refs": [
+        "§7.1",
+        "§7.2"
+      ],
+      "cases": [
+        {
+          "case_id": "TV-07",
+          "description": "Federation session assertion issued by a.example for @alice, audience b.example, exp-iat = 300s (max allowed).",
+          "domain_prefix": "openmew/assertion/v1",
+          "object": {
+            "v": 1,
+            "typ": "openmew.assertion.v1",
+            "iss": "a.example",
+            "sub": "@alice:a.example",
+            "aud": "b.example",
+            "jti": "6fded747-81bb-73c1-ae6f-2ee4515cb22b",
+            "iat": 1755000000,
+            "exp": 1755000300,
+            "profile_version": 3,
+            "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+            "sig": "m_K2W9SD7eVpu44mN_8PhgzHYU7KrF9g32fY3UQcUUjSvjlGutxH4A_e1plZCIR0Xx7_xzte37NB1X4gtzawDw"
+          },
+          "canonical_jcs_hex": "7b22617564223a22622e6578616d706c65222c22657870223a313735353030303330302c22696174223a313735353030303030302c22697373223a22612e6578616d706c65222c226a7469223a2236666465643734372d383162622d373363312d616536662d326565343531356362323262222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c2270726f66696c655f76657273696f6e223a332c22737562223a2240616c6963653a612e6578616d706c65222c22747970223a226f70656e6d65772e617373657274696f6e2e7631222c2276223a317d",
+          "signing_input_hex": "6f70656e6d65772f617373657274696f6e2f7631007b22617564223a22622e6578616d706c65222c22657870223a313735353030303330302c22696174223a313735353030303030302c22697373223a22612e6578616d706c65222c226a7469223a2236666465643734372d383162622d373363312d616536662d326565343531356362323262222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c2270726f66696c655f76657273696f6e223a332c22737562223a2240616c6963653a612e6578616d706c65222c22747970223a226f70656e6d65772e617373657274696f6e2e7631222c2276223a317d",
+          "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+          "public_key": "XaHw8L8EyAb4rfaQMAgvWXt8AiWh_ZrWBjIDxCiIdhA",
+          "signature": "m_K2W9SD7eVpu44mN_8PhgzHYU7KrF9g32fY3UQcUUjSvjlGutxH4A_e1plZCIR0Xx7_xzte37NB1X4gtzawDw",
+          "expected": "valid"
+        }
+      ]
+    },
+    {
+      "id": "TV-08",
+      "title": "轮换连续性签名链(三代密钥)",
+      "spec_refs": [
+        "§6.3",
+        "§6.4",
+        "§2.4"
+      ],
+      "keyset_chain": [
+        {
+          "instance": "a.example",
+          "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+          "public_key": "XaHw8L8EyAb4rfaQMAgvWXt8AiWh_ZrWBjIDxCiIdhA",
+          "created_at": 1752408000000,
+          "status": "retired",
+          "retired_at": 1754136000000
+        },
+        {
+          "instance": "a.example",
+          "key_id": "c32Hwuke-2S_3QcmzbECng",
+          "public_key": "Zzts36TlPe4WuwpPVp-UNcE3-lDPuIj8AqTYpL-RuRI",
+          "created_at": 1754136000000,
+          "prev_key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+          "continuity_sig": "C9oTXfSGEDmk8omKslzEdfawhfljVe9Kvu9km_3fIKZLtxcduAcMhfx9huUdvSBf_HUJzuYMTZA3NKuEA_OCAA",
+          "status": "retired",
+          "retired_at": 1755000000000
+        },
+        {
+          "instance": "a.example",
+          "key_id": "P4Iv0tZ58S48ugVXIwMB1w",
+          "public_key": "KkNVwdpcDfyeWA1jT4sZ-BqFAZ2g81N29As3Pf3jDqs",
+          "created_at": 1755000000000,
+          "prev_key_id": "c32Hwuke-2S_3QcmzbECng",
+          "continuity_sig": "YdCrSM-2jy4iaDAA5CKq2N4oKRXWjWzZ2vXdTPKdB1YYoyhZP5AuZ4OzfK_XGlFWCxxeJa8QCQ6hwQg8fEybAQ",
+          "status": "active"
+        }
+      ],
+      "cases": [
+        {
+          "case_id": "TV-08a",
+          "description": "Generation 2 key continuity signature, signed by generation-1 private key.",
+          "domain_prefix": "openmew/key-rotation/v1",
+          "object": {
+            "instance": "a.example",
+            "key_id": "c32Hwuke-2S_3QcmzbECng",
+            "public_key": "Zzts36TlPe4WuwpPVp-UNcE3-lDPuIj8AqTYpL-RuRI",
+            "created_at": 1754136000000,
+            "prev_key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+            "sig": "C9oTXfSGEDmk8omKslzEdfawhfljVe9Kvu9km_3fIKZLtxcduAcMhfx9huUdvSBf_HUJzuYMTZA3NKuEA_OCAA"
+          },
+          "canonical_jcs_hex": "7b22637265617465645f6174223a313735343133363030303030302c22696e7374616e6365223a22612e6578616d706c65222c226b65795f6964223a226333324877756b652d32535f3351636d7a6245436e67222c22707265765f6b65795f6964223a226157534647534b33764652356d525a48504661355551222c227075626c69635f6b6579223a225a7a74733336546c506534577577705056702d554e6345332d6c445075496a3841715459704c2d52755249227d",
+          "signing_input_hex": "6f70656e6d65772f6b65792d726f746174696f6e2f7631007b22637265617465645f6174223a313735343133363030303030302c22696e7374616e6365223a22612e6578616d706c65222c226b65795f6964223a226333324877756b652d32535f3351636d7a6245436e67222c22707265765f6b65795f6964223a226157534647534b33764652356d525a48504661355551222c227075626c69635f6b6579223a225a7a74733336546c506534577577705056702d554e6345332d6c445075496a3841715459704c2d52755249227d",
+          "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+          "public_key": "XaHw8L8EyAb4rfaQMAgvWXt8AiWh_ZrWBjIDxCiIdhA",
+          "signature": "C9oTXfSGEDmk8omKslzEdfawhfljVe9Kvu9km_3fIKZLtxcduAcMhfx9huUdvSBf_HUJzuYMTZA3NKuEA_OCAA",
+          "expected": "valid"
+        },
+        {
+          "case_id": "TV-08b",
+          "description": "Generation 3 key continuity signature, signed by generation-2 private key.",
+          "domain_prefix": "openmew/key-rotation/v1",
+          "object": {
+            "instance": "a.example",
+            "key_id": "P4Iv0tZ58S48ugVXIwMB1w",
+            "public_key": "KkNVwdpcDfyeWA1jT4sZ-BqFAZ2g81N29As3Pf3jDqs",
+            "created_at": 1755000000000,
+            "prev_key_id": "c32Hwuke-2S_3QcmzbECng",
+            "sig": "YdCrSM-2jy4iaDAA5CKq2N4oKRXWjWzZ2vXdTPKdB1YYoyhZP5AuZ4OzfK_XGlFWCxxeJa8QCQ6hwQg8fEybAQ"
+          },
+          "canonical_jcs_hex": "7b22637265617465645f6174223a313735353030303030303030302c22696e7374616e6365223a22612e6578616d706c65222c226b65795f6964223a225034497630745a35385334387567565849774d423177222c22707265765f6b65795f6964223a226333324877756b652d32535f3351636d7a6245436e67222c227075626c69635f6b6579223a224b6b4e5677647063446679655741316a5434735a2d427146415a326738314e32394173335066336a447173227d",
+          "signing_input_hex": "6f70656e6d65772f6b65792d726f746174696f6e2f7631007b22637265617465645f6174223a313735353030303030303030302c22696e7374616e6365223a22612e6578616d706c65222c226b65795f6964223a225034497630745a35385334387567565849774d423177222c22707265765f6b65795f6964223a226333324877756b652d32535f3351636d7a6245436e67222c227075626c69635f6b6579223a224b6b4e5677647063446679655741316a5434735a2d427146415a326738314e32394173335066336a447173227d",
+          "key_id": "c32Hwuke-2S_3QcmzbECng",
+          "public_key": "Zzts36TlPe4WuwpPVp-UNcE3-lDPuIj8AqTYpL-RuRI",
+          "signature": "YdCrSM-2jy4iaDAA5CKq2N4oKRXWjWzZ2vXdTPKdB1YYoyhZP5AuZ4OzfK_XGlFWCxxeJa8QCQ6hwQg8fEybAQ",
+          "expected": "valid"
+        },
+        {
+          "case_id": "TV-08c",
+          "description": "Event signed by retired generation-1 key, verified while now_ms <= retired_at + Q. MUST accept (docs §2.4/§6.3).",
+          "domain_prefix": "openmew/event/v1",
+          "object": {
+            "v": 1,
+            "id": "b1a22e31-e04a-735c-a885-0abc376fb1fc",
+            "type": "item.create",
+            "origin": "a.example",
+            "room": "sh01/ch/general",
+            "actor": "@alice:a.example",
+            "seq": 7,
+            "ts": 1754136001000,
+            "payload": {
+              "client_id": "4f7894d5-95fd-41e6-aae1-9a400706e1b0",
+              "kind": "post",
+              "body": {
+                "text": "signed by a key that is now retired"
+              }
+            },
+            "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+            "sig": "W9MZnrAt_3SYsYh3sTogMQRtmCLlx7s_SgcMPN0aCSovNPZ-j0bHK3vI0G18QUeZccddXdyLhL8GjcTW89YHBw"
+          },
+          "canonical_jcs_hex": "7b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2262316132326533312d653034612d373335632d613838352d306162633337366662316663222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22626f6479223a7b2274657874223a227369676e65642062792061206b65792074686174206973206e6f772072657469726564227d2c22636c69656e745f6964223a2234663738393464352d393566642d343165362d616165312d396134303037303665316230222c226b696e64223a22706f7374227d2c22726f6f6d223a22736830312f63682f67656e6572616c222c22736571223a372c227473223a313735343133363030313030302c2274797065223a226974656d2e637265617465222c2276223a317d",
+          "signing_input_hex": "6f70656e6d65772f6576656e742f7631007b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2262316132326533312d653034612d373335632d613838352d306162633337366662316663222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22626f6479223a7b2274657874223a227369676e65642062792061206b65792074686174206973206e6f772072657469726564227d2c22636c69656e745f6964223a2234663738393464352d393566642d343165362d616165312d396134303037303665316230222c226b696e64223a22706f7374227d2c22726f6f6d223a22736830312f63682f67656e6572616c222c22736571223a372c227473223a313735343133363030313030302c2274797065223a226974656d2e637265617465222c2276223a317d",
+          "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+          "public_key": "XaHw8L8EyAb4rfaQMAgvWXt8AiWh_ZrWBjIDxCiIdhA",
+          "signature": "W9MZnrAt_3SYsYh3sTogMQRtmCLlx7s_SgcMPN0aCSovNPZ-j0bHK3vI0G18QUeZccddXdyLhL8GjcTW89YHBw",
+          "expected": "valid",
+          "lifecycle_check": {
+            "key_status": "retired",
+            "retired_at": 1754136000000,
+            "grace_period_q_ms": 86400000,
+            "verify_at_ms": 1754222399000,
+            "expected_lifecycle_result": "accept"
+          }
+        },
+        {
+          "case_id": "TV-08d",
+          "description": "MUST-fail: same signature as TV-08c, but verified after now_ms > retired_at + Q. The Ed25519 signature itself is still cryptographically valid; rejection is a key-lifecycle policy decision (OMEW_KEY_UNKNOWN per docs §2.4), not a signature failure.",
+          "domain_prefix": "openmew/event/v1",
+          "object": {
+            "v": 1,
+            "id": "b1a22e31-e04a-735c-a885-0abc376fb1fc",
+            "type": "item.create",
+            "origin": "a.example",
+            "room": "sh01/ch/general",
+            "actor": "@alice:a.example",
+            "seq": 7,
+            "ts": 1754136001000,
+            "payload": {
+              "client_id": "4f7894d5-95fd-41e6-aae1-9a400706e1b0",
+              "kind": "post",
+              "body": {
+                "text": "signed by a key that is now retired"
+              }
+            },
+            "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+            "sig": "W9MZnrAt_3SYsYh3sTogMQRtmCLlx7s_SgcMPN0aCSovNPZ-j0bHK3vI0G18QUeZccddXdyLhL8GjcTW89YHBw"
+          },
+          "canonical_jcs_hex": "7b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2262316132326533312d653034612d373335632d613838352d306162633337366662316663222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22626f6479223a7b2274657874223a227369676e65642062792061206b65792074686174206973206e6f772072657469726564227d2c22636c69656e745f6964223a2234663738393464352d393566642d343165362d616165312d396134303037303665316230222c226b696e64223a22706f7374227d2c22726f6f6d223a22736830312f63682f67656e6572616c222c22736571223a372c227473223a313735343133363030313030302c2274797065223a226974656d2e637265617465222c2276223a317d",
+          "signing_input_hex": "6f70656e6d65772f6576656e742f7631007b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2262316132326533312d653034612d373335632d613838352d306162633337366662316663222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22626f6479223a7b2274657874223a227369676e65642062792061206b65792074686174206973206e6f772072657469726564227d2c22636c69656e745f6964223a2234663738393464352d393566642d343165362d616165312d396134303037303665316230222c226b696e64223a22706f7374227d2c22726f6f6d223a22736830312f63682f67656e6572616c222c22736571223a372c227473223a313735343133363030313030302c2274797065223a226974656d2e637265617465222c2276223a317d",
+          "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+          "public_key": "XaHw8L8EyAb4rfaQMAgvWXt8AiWh_ZrWBjIDxCiIdhA",
+          "signature": "W9MZnrAt_3SYsYh3sTogMQRtmCLlx7s_SgcMPN0aCSovNPZ-j0bHK3vI0G18QUeZccddXdyLhL8GjcTW89YHBw",
+          "expected": "reject",
+          "lifecycle_check": {
+            "key_status": "retired",
+            "retired_at": 1754136000000,
+            "grace_period_q_ms": 86400000,
+            "verify_at_ms": 1754222401000,
+            "expected_lifecycle_result": "reject",
+            "reject_code": "OMEW_KEY_UNKNOWN"
+          },
+          "reject_reason": "retired_key_grace_period_exceeded"
+        }
+      ]
+    },
+    {
+      "id": "TV-09",
+      "title": "边界整数(±(2^53 − 1))与超界拒绝",
+      "spec_refs": [
+        "§2.2"
+      ],
+      "cases": [
+        {
+          "case_id": "TV-09a",
+          "description": "seq = 2^53 - 1 (Number.MAX_SAFE_INTEGER), the protocol-mandated ceiling. MUST accept.",
+          "domain_prefix": "openmew/event/v1",
+          "object": {
+            "v": 1,
+            "id": "b039fc5e-20f9-7a88-b3d3-0fe9a4f0c0b4",
+            "type": "item.create",
+            "origin": "a.example",
+            "room": "sh01/ch/general",
+            "actor": "@alice:a.example",
+            "seq": 9007199254740991,
+            "ts": 1755000000000,
+            "payload": {
+              "client_id": "0ac34d0b-a568-44f0-a079-6c53deada806",
+              "kind": "post",
+              "body": {
+                "text": "seq at the protocol ceiling: 9007199254740991"
+              }
+            },
+            "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+            "sig": "oI3CUojzFH2zED04RzOBXjTTk48TgH-XH9RpOsk5rzf8Uny3kaBQ6Q6TxI-wTh_tBlsGVhUKLsVr1XnhcqhCAQ"
+          },
+          "canonical_jcs_hex": "7b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2262303339666335652d323066392d376138382d623364332d306665396134663063306234222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22626f6479223a7b2274657874223a22736571206174207468652070726f746f636f6c206365696c696e673a2039303037313939323534373430393931227d2c22636c69656e745f6964223a2230616333346430622d613536382d343466302d613037392d366335336465616461383036222c226b696e64223a22706f7374227d2c22726f6f6d223a22736830312f63682f67656e6572616c222c22736571223a393030373139393235343734303939312c227473223a313735353030303030303030302c2274797065223a226974656d2e637265617465222c2276223a317d",
+          "signing_input_hex": "6f70656e6d65772f6576656e742f7631007b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2262303339666335652d323066392d376138382d623364332d306665396134663063306234222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22626f6479223a7b2274657874223a22736571206174207468652070726f746f636f6c206365696c696e673a2039303037313939323534373430393931227d2c22636c69656e745f6964223a2230616333346430622d613536382d343466302d613037392d366335336465616461383036222c226b696e64223a22706f7374227d2c22726f6f6d223a22736830312f63682f67656e6572616c222c22736571223a393030373139393235343734303939312c227473223a313735353030303030303030302c2274797065223a226974656d2e637265617465222c2276223a317d",
+          "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+          "public_key": "XaHw8L8EyAb4rfaQMAgvWXt8AiWh_ZrWBjIDxCiIdhA",
+          "signature": "oI3CUojzFH2zED04RzOBXjTTk48TgH-XH9RpOsk5rzf8Uny3kaBQ6Q6TxI-wTh_tBlsGVhUKLsVr1XnhcqhCAQ",
+          "expected": "valid",
+          "integer_check": {
+            "value": 9007199254740991,
+            "is_safe_integer": true,
+            "expected": "accept"
+          }
+        },
+        {
+          "case_id": "TV-09b",
+          "description": "MUST-fail: seq = 2^53, one past the protocol ceiling of 2^53-1. Even though correctly signed (the Ed25519 signature below verifies), the envelope MUST still be rejected at the field-validation layer because the protocol range check is \"abs(value) <= 2^53-1\", not \"is exactly representable as a double\" -- signature validity alone is not sufficient for acceptance.",
+          "domain_prefix": "openmew/event/v1",
+          "object": {
+            "v": 1,
+            "id": "8535debb-e6f5-7198-9e1e-a44f2fb31174",
+            "type": "item.create",
+            "origin": "a.example",
+            "room": "sh01/ch/general",
+            "actor": "@alice:a.example",
+            "seq": 9007199254740992,
+            "ts": 1755000000001,
+            "payload": {
+              "client_id": "0ac34d0b-a568-44f0-a079-6c53deada806",
+              "kind": "post",
+              "body": {
+                "text": "seq at the protocol ceiling: 9007199254740991"
+              }
+            },
+            "key_id": "aWSFGSK3vFR5mRZHPFa5UQ"
+          },
+          "canonical_jcs_hex": "7b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2238353335646562622d653666352d373139382d396531652d613434663266623331313734222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22626f6479223a7b2274657874223a22736571206174207468652070726f746f636f6c206365696c696e673a2039303037313939323534373430393931227d2c22636c69656e745f6964223a2230616333346430622d613536382d343466302d613037392d366335336465616461383036222c226b696e64223a22706f7374227d2c22726f6f6d223a22736830312f63682f67656e6572616c222c22736571223a393030373139393235343734303939322c227473223a313735353030303030303030312c2274797065223a226974656d2e637265617465222c2276223a317d",
+          "signing_input_hex": "6f70656e6d65772f6576656e742f7631007b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2238353335646562622d653666352d373139382d396531652d613434663266623331313734222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22626f6479223a7b2274657874223a22736571206174207468652070726f746f636f6c206365696c696e673a2039303037313939323534373430393931227d2c22636c69656e745f6964223a2230616333346430622d613536382d343466302d613037392d366335336465616461383036222c226b696e64223a22706f7374227d2c22726f6f6d223a22736830312f63682f67656e6572616c222c22736571223a393030373139393235343734303939322c227473223a313735353030303030303030312c2274797065223a226974656d2e637265617465222c2276223a317d",
+          "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+          "public_key": "XaHw8L8EyAb4rfaQMAgvWXt8AiWh_ZrWBjIDxCiIdhA",
+          "signature": "2APJtjCOcENbFsefFK6eTWdRPMaIYqTJ-NikVsdq4zbRxMdnOwm3jZDe0B9fm__eGXry2U1oUIpnODHb6BndAw",
+          "expected": "reject",
+          "reject_reason": "integer_out_of_range",
+          "integer_check": {
+            "value": 9007199254740992,
+            "is_safe_integer": false,
+            "expected": "reject"
+          },
+          "representability_demo": {
+            "note": "Constructing 2^53+1 via raw JSON text and parsing it back demonstrates the representability cliff that motivates the +/-(2^53-1) ceiling: values above the ceiling can silently change value across independent JCS producers/consumers.",
+            "raw_json": "{\"seq\":9007199254740993}",
+            "intended_value": "9007199254740993",
+            "value_after_json_roundtrip": "9007199254740992",
+            "lossy": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "TV-10",
+      "title": "confusable localpart 碰撞样本集",
+      "spec_refs": [
+        "§1.4"
+      ],
+      "notes": "Illustrative ASCII-subset skeleton function (0->o, 1->l, rn->m) only, not the full UTS #39 table mandated by §1.4 for production implementations.",
+      "cases": [
+        {
+          "case_id": "TV-10a",
+          "description": "localpart \"oscar\" vs \"0scar\": skeleton \"oscar\" vs \"oscar\".",
+          "localpart_a": "oscar",
+          "localpart_b": "0scar",
+          "skeleton_a": "oscar",
+          "skeleton_b": "oscar",
+          "expected": "reject",
+          "reject_reason": "OMEW_NAME_CONFUSABLE"
+        },
+        {
+          "case_id": "TV-10b",
+          "description": "localpart \"mark\" vs \"rnark\": skeleton \"mark\" vs \"mark\".",
+          "localpart_a": "mark",
+          "localpart_b": "rnark",
+          "skeleton_a": "mark",
+          "skeleton_b": "mark",
+          "expected": "reject",
+          "reject_reason": "OMEW_NAME_CONFUSABLE"
+        },
+        {
+          "case_id": "TV-10c",
+          "description": "localpart \"cool\" vs \"c001\": skeleton \"cool\" vs \"cool\".",
+          "localpart_a": "cool",
+          "localpart_b": "c001",
+          "skeleton_a": "cool",
+          "skeleton_b": "cool",
+          "expected": "reject",
+          "reject_reason": "OMEW_NAME_CONFUSABLE"
+        },
+        {
+          "case_id": "TV-10d",
+          "description": "localpart \"oscar\" vs \"oscarx\": skeleton \"oscar\" vs \"oscarx\".",
+          "localpart_a": "oscar",
+          "localpart_b": "oscarx",
+          "skeleton_a": "oscar",
+          "skeleton_b": "oscarx",
+          "expected": "valid"
+        }
+      ]
+    },
+    {
+      "id": "TV-11",
+      "title": "实例描述符与用户档案文档签名(两个域分隔前缀)",
+      "spec_refs": [
+        "§6.1"
+      ],
+      "cases": [
+        {
+          "case_id": "TV-11a",
+          "description": "GET /.well-known/openmew/instance descriptor document, signed by the instance active key.",
+          "domain_prefix": "openmew/instance-descriptor/v1",
+          "object": {
+            "v": 1,
+            "instance": "a.example",
+            "name": "Example Instance A",
+            "software": "openmew",
+            "version": "0.1.0-m0",
+            "capabilities": [
+              "federation.session",
+              "federation.history",
+              "media.attachments"
+            ],
+            "public_strongholds": [
+              {
+                "id": "sh01",
+                "name": "Test Stronghold",
+                "description": "M0 vector fixture",
+                "member_count": 1,
+                "tags": []
+              }
+            ],
+            "known_peers": [
+              "b.example",
+              "c.example"
+            ],
+            "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+            "sig": "oLKilzxbSOW1sOPzZ7IuceZ-SzdNtOqR0GnhQ4e8Fb7oTHWYTnw6017tZm9QSzWGqOBzm4j6tWgPWb29uobyBg"
+          },
+          "canonical_jcs_hex": "7b226361706162696c6974696573223a5b2266656465726174696f6e2e73657373696f6e222c2266656465726174696f6e2e686973746f7279222c226d656469612e6174746163686d656e7473225d2c22696e7374616e6365223a22612e6578616d706c65222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226b6e6f776e5f7065657273223a5b22622e6578616d706c65222c22632e6578616d706c65225d2c226e616d65223a224578616d706c6520496e7374616e63652041222c227075626c69635f7374726f6e67686f6c6473223a5b7b226465736372697074696f6e223a224d3020766563746f722066697874757265222c226964223a2273683031222c226d656d6265725f636f756e74223a312c226e616d65223a2254657374205374726f6e67686f6c64222c2274616773223a5b5d7d5d2c22736f667477617265223a226f70656e6d6577222c2276223a312c2276657273696f6e223a22302e312e302d6d30227d",
+          "signing_input_hex": "6f70656e6d65772f696e7374616e63652d64657363726970746f722f7631007b226361706162696c6974696573223a5b2266656465726174696f6e2e73657373696f6e222c2266656465726174696f6e2e686973746f7279222c226d656469612e6174746163686d656e7473225d2c22696e7374616e6365223a22612e6578616d706c65222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226b6e6f776e5f7065657273223a5b22622e6578616d706c65222c22632e6578616d706c65225d2c226e616d65223a224578616d706c6520496e7374616e63652041222c227075626c69635f7374726f6e67686f6c6473223a5b7b226465736372697074696f6e223a224d3020766563746f722066697874757265222c226964223a2273683031222c226d656d6265725f636f756e74223a312c226e616d65223a2254657374205374726f6e67686f6c64222c2274616773223a5b5d7d5d2c22736f667477617265223a226f70656e6d6577222c2276223a312c2276657273696f6e223a22302e312e302d6d30227d",
+          "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+          "public_key": "XaHw8L8EyAb4rfaQMAgvWXt8AiWh_ZrWBjIDxCiIdhA",
+          "signature": "oLKilzxbSOW1sOPzZ7IuceZ-SzdNtOqR0GnhQ4e8Fb7oTHWYTnw6017tZm9QSzWGqOBzm4j6tWgPWb29uobyBg",
+          "expected": "valid"
+        },
+        {
+          "case_id": "TV-11b",
+          "description": "GET /.well-known/openmew/users/alice profile document, signed by the instance active key.",
+          "domain_prefix": "openmew/user-profile/v1",
+          "object": {
+            "v": 1,
+            "actor": "@alice:a.example",
+            "profile_version": 3,
+            "display_name": "Alice",
+            "avatar": "omew://a.example/media/VmJIefvui4UfXB_oLhl1Ojl5fo3LwFGmgC9gVpsmtjs",
+            "bio": "M0 test fixture account",
+            "created_at": 1747224000000,
+            "status": "active",
+            "ownership_key": {
+              "key_id": "VLdTNz7O27kJHcWTAZCz2g",
+              "public_key": "MYDJzZYV14aDcacOmtFZoz4nGZxo7wu0fx4wdhNgdJU",
+              "created_at": 1747224000000
+            },
+            "key_history": [],
+            "also_known_as": [],
+            "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+            "sig": "3-G36cbDeb0KtQhvGH-uTrLumP9Mp0zbZCOZr-5DDl6f4IZptbT-FWdh2nLSGCv4cXKguF7amWXNUXqJ_ZznCA"
+          },
+          "canonical_jcs_hex": "7b226163746f72223a2240616c6963653a612e6578616d706c65222c22616c736f5f6b6e6f776e5f6173223a5b5d2c22617661746172223a226f6d65773a2f2f612e6578616d706c652f6d656469612f566d4a49656676756934556658425f6f4c686c314f6a6c35666f334c7746476d674339675670736d746a73222c2262696f223a224d3020746573742066697874757265206163636f756e74222c22637265617465645f6174223a313734373232343030303030302c22646973706c61795f6e616d65223a22416c696365222c226b65795f686973746f7279223a5b5d2c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f776e6572736869705f6b6579223a7b22637265617465645f6174223a313734373232343030303030302c226b65795f6964223a22564c64544e7a374f32376b4a48635754415a437a3267222c227075626c69635f6b6579223a224d59444a7a5a5956313461446361634f6d74465a6f7a346e475a786f377775306678347764684e67644a55227d2c2270726f66696c655f76657273696f6e223a332c22737461747573223a22616374697665222c2276223a317d",
+          "signing_input_hex": "6f70656e6d65772f757365722d70726f66696c652f7631007b226163746f72223a2240616c6963653a612e6578616d706c65222c22616c736f5f6b6e6f776e5f6173223a5b5d2c22617661746172223a226f6d65773a2f2f612e6578616d706c652f6d656469612f566d4a49656676756934556658425f6f4c686c314f6a6c35666f334c7746476d674339675670736d746a73222c2262696f223a224d3020746573742066697874757265206163636f756e74222c22637265617465645f6174223a313734373232343030303030302c22646973706c61795f6e616d65223a22416c696365222c226b65795f686973746f7279223a5b5d2c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f776e6572736869705f6b6579223a7b22637265617465645f6174223a313734373232343030303030302c226b65795f6964223a22564c64544e7a374f32376b4a48635754415a437a3267222c227075626c69635f6b6579223a224d59444a7a5a5956313461446361634f6d74465a6f7a346e475a786f377775306678347764684e67644a55227d2c2270726f66696c655f76657273696f6e223a332c22737461747573223a22616374697665222c2276223a317d",
+          "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+          "public_key": "XaHw8L8EyAb4rfaQMAgvWXt8AiWh_ZrWBjIDxCiIdhA",
+          "signature": "3-G36cbDeb0KtQhvGH-uTrLumP9Mp0zbZCOZr-5DDl6f4IZptbT-FWdh2nLSGCv4cXKguF7amWXNUXqJ_ZznCA",
+          "expected": "valid"
+        }
+      ]
+    },
+    {
+      "id": "TV-12",
+      "title": "联邦请求签名(openmew/request/v1)",
+      "spec_refs": [
+        "§8.3.1"
+      ],
+      "cases": [
+        {
+          "case_id": "TV-12",
+          "description": "Federated GET request signature for a history-backfill call from b.example on behalf of @bob:b.example.",
+          "domain_prefix": "openmew/request/v1",
+          "object": {
+            "method": "GET",
+            "path": "/rooms/sh01/ch/general/history",
+            "query": "before=100&limit=50",
+            "origin": "b.example",
+            "on_behalf_of": "@bob:b.example",
+            "ts": 1755000000000,
+            "nonce": "K5AvcCSMWquZgNN7MTGGDw",
+            "sig": "aXSj1pMTzun9WvHNhlnrvYaWn6ibie4tF3pSaf2vevChU8mq_GYZEYUcrgFnmaPEv0RSl_iOddLQrh2lWfadBw"
+          },
+          "canonical_jcs_hex": "7b226d6574686f64223a22474554222c226e6f6e6365223a224b3541766343534d5771755a674e4e374d5447474477222c226f6e5f626568616c665f6f66223a2240626f623a622e6578616d706c65222c226f726967696e223a22622e6578616d706c65222c2270617468223a222f726f6f6d732f736830312f63682f67656e6572616c2f686973746f7279222c227175657279223a226265666f72653d313030266c696d69743d3530222c227473223a313735353030303030303030307d",
+          "signing_input_hex": "6f70656e6d65772f726571756573742f7631007b226d6574686f64223a22474554222c226e6f6e6365223a224b3541766343534d5771755a674e4e374d5447474477222c226f6e5f626568616c665f6f66223a2240626f623a622e6578616d706c65222c226f726967696e223a22622e6578616d706c65222c2270617468223a222f726f6f6d732f736830312f63682f67656e6572616c2f686973746f7279222c227175657279223a226265666f72653d313030266c696d69743d3530222c227473223a313735353030303030303030307d",
+          "key_id": "-lkZYaKrWWheYiiuN73A7g",
+          "public_key": "A6RigMlZmE92iEV9t8qMze15XyaOaQ4xBwZX3iPhiGo",
+          "signature": "aXSj1pMTzun9WvHNhlnrvYaWn6ibie4tF3pSaf2vevChU8mq_GYZEYUcrgFnmaPEv0RSl_iOddLQrh2lWfadBw",
+          "expected": "valid",
+          "authorization_header": "OpenMew key_id=-lkZYaKrWWheYiiuN73A7g,ts=1755000000000,nonce=K5AvcCSMWquZgNN7MTGGDw,on_behalf_of=%40bob%3Ab.example,sig=aXSj1pMTzun9WvHNhlnrvYaWn6ibie4tF3pSaf2vevChU8mq_GYZEYUcrgFnmaPEv0RSl_iOddLQrh2lWfadBw"
+        }
+      ]
+    },
+    {
+      "id": "TV-13",
+      "title": "所有权密钥轮换链(三代)与 key_history 校验(openmew/ownership/v1)",
+      "spec_refs": [
+        "§6.7"
+      ],
+      "key_history": [
+        {
+          "key_id": "VLdTNz7O27kJHcWTAZCz2g",
+          "public_key": "MYDJzZYV14aDcacOmtFZoz4nGZxo7wu0fx4wdhNgdJU",
+          "created_at": 1749816000000
+        },
+        {
+          "key_id": "lUEy_4GaYq8Zi12uFghQeA",
+          "public_key": "I5vLXAhm73R4mUqQ50r_7pGbGS1KuW25tlXjpLtsN-4",
+          "created_at": 1753272000000,
+          "prev_key_id": "VLdTNz7O27kJHcWTAZCz2g",
+          "continuity_sig": "H0iIXuCUH9h69rJ7CqKqtSgAes369XhlXgqOpER3MVJY0TUc3HiLwY5Ad5V80PlXZaRHn-xwLTDQHh1KkCNNBQ"
+        },
+        {
+          "key_id": "j9w44fnQfxofHlsaCCZZtw",
+          "public_key": "BkLdAVlwp3l3wpr_C2SmUYqywKmt94IwYfqiNu7vQBA",
+          "created_at": 1754913600000,
+          "prev_key_id": "lUEy_4GaYq8Zi12uFghQeA",
+          "continuity_sig": "8Kl0gvG7FPJm8EULasDVCFhEhP6n7ZV_az7df3i8U97n1dl2g16YLpsHJxj_kPE6_OUitkJwuA_ezX2_9LYpAg"
+        }
+      ],
+      "cases": [
+        {
+          "case_id": "TV-13a",
+          "description": "Ownership key generation-2 continuity signature, signed by generation-1 ownership private key.",
+          "domain_prefix": "openmew/ownership/v1",
+          "object": {
+            "actor": "@alice:a.example",
+            "key_id": "lUEy_4GaYq8Zi12uFghQeA",
+            "public_key": "I5vLXAhm73R4mUqQ50r_7pGbGS1KuW25tlXjpLtsN-4",
+            "created_at": 1753272000000,
+            "prev_key_id": "VLdTNz7O27kJHcWTAZCz2g",
+            "sig": "H0iIXuCUH9h69rJ7CqKqtSgAes369XhlXgqOpER3MVJY0TUc3HiLwY5Ad5V80PlXZaRHn-xwLTDQHh1KkCNNBQ"
+          },
+          "canonical_jcs_hex": "7b226163746f72223a2240616c6963653a612e6578616d706c65222c22637265617465645f6174223a313735333237323030303030302c226b65795f6964223a226c5545795f3447615971385a69313275466768516541222c22707265765f6b65795f6964223a22564c64544e7a374f32376b4a48635754415a437a3267222c227075626c69635f6b6579223a224935764c5841686d373352346d5571513530725f377047624753314b75573235746c586a704c74734e2d34227d",
+          "signing_input_hex": "6f70656e6d65772f6f776e6572736869702f7631007b226163746f72223a2240616c6963653a612e6578616d706c65222c22637265617465645f6174223a313735333237323030303030302c226b65795f6964223a226c5545795f3447615971385a69313275466768516541222c22707265765f6b65795f6964223a22564c64544e7a374f32376b4a48635754415a437a3267222c227075626c69635f6b6579223a224935764c5841686d373352346d5571513530725f377047624753314b75573235746c586a704c74734e2d34227d",
+          "key_id": "VLdTNz7O27kJHcWTAZCz2g",
+          "public_key": "MYDJzZYV14aDcacOmtFZoz4nGZxo7wu0fx4wdhNgdJU",
+          "signature": "H0iIXuCUH9h69rJ7CqKqtSgAes369XhlXgqOpER3MVJY0TUc3HiLwY5Ad5V80PlXZaRHn-xwLTDQHh1KkCNNBQ",
+          "expected": "valid"
+        },
+        {
+          "case_id": "TV-13b",
+          "description": "Ownership key generation-3 continuity signature, signed by generation-2 ownership private key.",
+          "domain_prefix": "openmew/ownership/v1",
+          "object": {
+            "actor": "@alice:a.example",
+            "key_id": "j9w44fnQfxofHlsaCCZZtw",
+            "public_key": "BkLdAVlwp3l3wpr_C2SmUYqywKmt94IwYfqiNu7vQBA",
+            "created_at": 1754913600000,
+            "prev_key_id": "lUEy_4GaYq8Zi12uFghQeA",
+            "sig": "8Kl0gvG7FPJm8EULasDVCFhEhP6n7ZV_az7df3i8U97n1dl2g16YLpsHJxj_kPE6_OUitkJwuA_ezX2_9LYpAg"
+          },
+          "canonical_jcs_hex": "7b226163746f72223a2240616c6963653a612e6578616d706c65222c22637265617465645f6174223a313735343931333630303030302c226b65795f6964223a226a39773434666e5166786f66486c736143435a5a7477222c22707265765f6b65795f6964223a226c5545795f3447615971385a69313275466768516541222c227075626c69635f6b6579223a22426b4c6441566c7770336c337770725f4332536d55597179774b6d7439344977596671694e753776514241227d",
+          "signing_input_hex": "6f70656e6d65772f6f776e6572736869702f7631007b226163746f72223a2240616c6963653a612e6578616d706c65222c22637265617465645f6174223a313735343931333630303030302c226b65795f6964223a226a39773434666e5166786f66486c736143435a5a7477222c22707265765f6b65795f6964223a226c5545795f3447615971385a69313275466768516541222c227075626c69635f6b6579223a22426b4c6441566c7770336c337770725f4332536d55597179774b6d7439344977596671694e753776514241227d",
+          "key_id": "lUEy_4GaYq8Zi12uFghQeA",
+          "public_key": "I5vLXAhm73R4mUqQ50r_7pGbGS1KuW25tlXjpLtsN-4",
+          "signature": "8Kl0gvG7FPJm8EULasDVCFhEhP6n7ZV_az7df3i8U97n1dl2g16YLpsHJxj_kPE6_OUitkJwuA_ezX2_9LYpAg",
+          "expected": "valid"
+        },
+        {
+          "case_id": "TV-13c",
+          "description": "MUST-fail: key_history[2].continuity_sig replaced with generation-2's own continuity_sig (chain-break simulation). Verifying it against generation-3's continuity_input under generation-2's public key MUST fail.",
+          "domain_prefix": "openmew/ownership/v1",
+          "object": {
+            "actor": "@alice:a.example",
+            "key_id": "j9w44fnQfxofHlsaCCZZtw",
+            "public_key": "BkLdAVlwp3l3wpr_C2SmUYqywKmt94IwYfqiNu7vQBA",
+            "created_at": 1754913600000,
+            "prev_key_id": "lUEy_4GaYq8Zi12uFghQeA"
+          },
+          "canonical_jcs_hex": "7b226163746f72223a2240616c6963653a612e6578616d706c65222c22637265617465645f6174223a313735343931333630303030302c226b65795f6964223a226a39773434666e5166786f66486c736143435a5a7477222c22707265765f6b65795f6964223a226c5545795f3447615971385a69313275466768516541222c227075626c69635f6b6579223a22426b4c6441566c7770336c337770725f4332536d55597179774b6d7439344977596671694e753776514241227d",
+          "signing_input_hex": "6f70656e6d65772f6f776e6572736869702f7631007b226163746f72223a2240616c6963653a612e6578616d706c65222c22637265617465645f6174223a313735343931333630303030302c226b65795f6964223a226a39773434666e5166786f66486c736143435a5a7477222c22707265765f6b65795f6964223a226c5545795f3447615971385a69313275466768516541222c227075626c69635f6b6579223a22426b4c6441566c7770336c337770725f4332536d55597179774b6d7439344977596671694e753776514241227d",
+          "key_id": "lUEy_4GaYq8Zi12uFghQeA",
+          "public_key": "I5vLXAhm73R4mUqQ50r_7pGbGS1KuW25tlXjpLtsN-4",
+          "signature": "H0iIXuCUH9h69rJ7CqKqtSgAes369XhlXgqOpER3MVJY0TUc3HiLwY5Ad5V80PlXZaRHn-xwLTDQHh1KkCNNBQ",
+          "expected": "reject",
+          "reject_reason": "OMEW_OWNERSHIP_PROOF_INVALID"
+        }
+      ]
+    },
+    {
+      "id": "TV-14",
+      "title": "迁移证明签名与跨边重放拒绝(openmew/migration-claim/v1,两条边各一份 nonce)",
+      "spec_refs": [
+        "§7.8.1"
+      ],
+      "cases": [
+        {
+          "case_id": "TV-14a",
+          "description": "Migration claim_input for edge challenge_origin=b.example, signed by the ownership chain tail (generation 3).",
+          "domain_prefix": "openmew/migration-claim/v1",
+          "object": {
+            "old": "@alice:a.example",
+            "new": "@alice:c.example",
+            "nonce": "g-AhfRiLP60XGZAfR0KPeA",
+            "challenge_origin": "b.example",
+            "signed_at": 1755000000000,
+            "sig": "XH03zaReSx1lpAI21UCzmhtoP_jt51qSQWsKDc6Bsy-XLvuotxZQg-SGMEkTCFa656Aegs7O9BhUuSYDNH3oDA"
+          },
+          "canonical_jcs_hex": "7b226368616c6c656e67655f6f726967696e223a22622e6578616d706c65222c226e6577223a2240616c6963653a632e6578616d706c65222c226e6f6e6365223a22672d41686652694c50363058475a416652304b506541222c226f6c64223a2240616c6963653a612e6578616d706c65222c227369676e65645f6174223a313735353030303030303030307d",
+          "signing_input_hex": "6f70656e6d65772f6d6967726174696f6e2d636c61696d2f7631007b226368616c6c656e67655f6f726967696e223a22622e6578616d706c65222c226e6577223a2240616c6963653a632e6578616d706c65222c226e6f6e6365223a22672d41686652694c50363058475a416652304b506541222c226f6c64223a2240616c6963653a612e6578616d706c65222c227369676e65645f6174223a313735353030303030303030307d",
+          "key_id": "j9w44fnQfxofHlsaCCZZtw",
+          "public_key": "BkLdAVlwp3l3wpr_C2SmUYqywKmt94IwYfqiNu7vQBA",
+          "signature": "XH03zaReSx1lpAI21UCzmhtoP_jt51qSQWsKDc6Bsy-XLvuotxZQg-SGMEkTCFa656Aegs7O9BhUuSYDNH3oDA",
+          "expected": "valid"
+        },
+        {
+          "case_id": "TV-14b",
+          "description": "Migration claim_input for edge challenge_origin=d.example, signed by the ownership chain tail (generation 3).",
+          "domain_prefix": "openmew/migration-claim/v1",
+          "object": {
+            "old": "@alice:a.example",
+            "new": "@alice:c.example",
+            "nonce": "RbV3JwlhOt8_6xQdktjvjA",
+            "challenge_origin": "d.example",
+            "signed_at": 1755000000000,
+            "sig": "vgjY0VCYcz5Mt0NB6zvj0W4BHPQ-u3PbD8Wd6QJzHWHlb48rtT3qmWQI1X4Uk5ouvC6rqSg0ED-gZ5FSMFnFBA"
+          },
+          "canonical_jcs_hex": "7b226368616c6c656e67655f6f726967696e223a22642e6578616d706c65222c226e6577223a2240616c6963653a632e6578616d706c65222c226e6f6e6365223a22526256334a776c684f74385f367851646b746a766a41222c226f6c64223a2240616c6963653a612e6578616d706c65222c227369676e65645f6174223a313735353030303030303030307d",
+          "signing_input_hex": "6f70656e6d65772f6d6967726174696f6e2d636c61696d2f7631007b226368616c6c656e67655f6f726967696e223a22642e6578616d706c65222c226e6577223a2240616c6963653a632e6578616d706c65222c226e6f6e6365223a22526256334a776c684f74385f367851646b746a766a41222c226f6c64223a2240616c6963653a612e6578616d706c65222c227369676e65645f6174223a313735353030303030303030307d",
+          "key_id": "j9w44fnQfxofHlsaCCZZtw",
+          "public_key": "BkLdAVlwp3l3wpr_C2SmUYqywKmt94IwYfqiNu7vQBA",
+          "signature": "vgjY0VCYcz5Mt0NB6zvj0W4BHPQ-u3PbD8Wd6QJzHWHlb48rtT3qmWQI1X4Uk5ouvC6rqSg0ED-gZ5FSMFnFBA",
+          "expected": "valid"
+        },
+        {
+          "case_id": "TV-14c",
+          "description": "MUST-fail: edge B's proof signature replayed against edge D's claim_input (different challenge_origin and nonce). Verification MUST fail, proving a single proof cannot cross edges.",
+          "domain_prefix": "openmew/migration-claim/v1",
+          "object": {
+            "old": "@alice:a.example",
+            "new": "@alice:c.example",
+            "nonce": "RbV3JwlhOt8_6xQdktjvjA",
+            "challenge_origin": "d.example",
+            "signed_at": 1755000000000
+          },
+          "canonical_jcs_hex": "7b226368616c6c656e67655f6f726967696e223a22642e6578616d706c65222c226e6577223a2240616c6963653a632e6578616d706c65222c226e6f6e6365223a22526256334a776c684f74385f367851646b746a766a41222c226f6c64223a2240616c6963653a612e6578616d706c65222c227369676e65645f6174223a313735353030303030303030307d",
+          "signing_input_hex": "6f70656e6d65772f6d6967726174696f6e2d636c61696d2f7631007b226368616c6c656e67655f6f726967696e223a22642e6578616d706c65222c226e6577223a2240616c6963653a632e6578616d706c65222c226e6f6e6365223a22526256334a776c684f74385f367851646b746a766a41222c226f6c64223a2240616c6963653a612e6578616d706c65222c227369676e65645f6174223a313735353030303030303030307d",
+          "key_id": "j9w44fnQfxofHlsaCCZZtw",
+          "public_key": "BkLdAVlwp3l3wpr_C2SmUYqywKmt94IwYfqiNu7vQBA",
+          "signature": "XH03zaReSx1lpAI21UCzmhtoP_jt51qSQWsKDc6Bsy-XLvuotxZQg-SGMEkTCFa656Aegs7O9BhUuSYDNH3oDA",
+          "expected": "reject",
+          "reject_reason": "cross_edge_replay"
+        }
+      ]
+    },
+    {
+      "id": "TV-15",
+      "title": "user.moved 双路径信封:dual_sign 含嵌套 home_release 验签、disaster 含公示期与异议冻结",
+      "spec_refs": [
+        "§7.8.2",
+        "§7.8.3"
+      ],
+      "cases": [
+        {
+          "case_id": "TV-15a-nested",
+          "description": "Nested home_release: A's own signed user.update envelope with moved_to=new, evidence only (not a delivered event).",
+          "domain_prefix": "openmew/event/v1",
+          "object": {
+            "v": 1,
+            "id": "e658f489-6103-7659-882d-fd6c5e11f924",
+            "type": "user.update",
+            "origin": "a.example",
+            "actor": "@alice:a.example",
+            "ts": 1754913600000,
+            "payload": {
+              "profile_version": 4,
+              "moved_to": "@alice:c.example"
+            },
+            "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+            "sig": "s3THfAZ0zZagDt5aZlUXvhZWn-gkRccVSzRQxNGtoI0p7FC_fpo3UKGGbtITAF_WsNW2i2615fZx37gnoPYPDQ"
+          },
+          "canonical_jcs_hex": "7b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2265363538663438392d363130332d373635392d383832642d666436633565313166393234222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b226d6f7665645f746f223a2240616c6963653a632e6578616d706c65222c2270726f66696c655f76657273696f6e223a347d2c227473223a313735343931333630303030302c2274797065223a22757365722e757064617465222c2276223a317d",
+          "signing_input_hex": "6f70656e6d65772f6576656e742f7631007b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2265363538663438392d363130332d373635392d383832642d666436633565313166393234222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b226d6f7665645f746f223a2240616c6963653a632e6578616d706c65222c2270726f66696c655f76657273696f6e223a347d2c227473223a313735343931333630303030302c2274797065223a22757365722e757064617465222c2276223a317d",
+          "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+          "public_key": "XaHw8L8EyAb4rfaQMAgvWXt8AiWh_ZrWBjIDxCiIdhA",
+          "signature": "s3THfAZ0zZagDt5aZlUXvhZWn-gkRccVSzRQxNGtoI0p7FC_fpo3UKGGbtITAF_WsNW2i2615fZx37gnoPYPDQ",
+          "expected": "valid"
+        },
+        {
+          "case_id": "TV-15a",
+          "description": "user.moved, mode=dual_sign, broadcast by new home c.example, carrying a verified nested home_release from a.example.",
+          "domain_prefix": "openmew/event/v1",
+          "object": {
+            "v": 1,
+            "id": "63167678-8b90-7495-b511-79995a4a6576",
+            "type": "user.moved",
+            "origin": "c.example",
+            "actor": "@alice:c.example",
+            "ts": 1755000000000,
+            "payload": {
+              "old": "@alice:a.example",
+              "new": "@alice:c.example",
+              "mode": "dual_sign",
+              "proof": {
+                "old": "@alice:a.example",
+                "new": "@alice:c.example",
+                "nonce": "Hyr5YgrJK48vC_vsHxsCeA",
+                "challenge_origin": "c.example",
+                "signed_at": 1754996400000,
+                "ownership_key_id": "j9w44fnQfxofHlsaCCZZtw",
+                "key_history": [
+                  {
+                    "key_id": "VLdTNz7O27kJHcWTAZCz2g",
+                    "public_key": "MYDJzZYV14aDcacOmtFZoz4nGZxo7wu0fx4wdhNgdJU"
+                  },
+                  {
+                    "key_id": "lUEy_4GaYq8Zi12uFghQeA",
+                    "public_key": "I5vLXAhm73R4mUqQ50r_7pGbGS1KuW25tlXjpLtsN-4",
+                    "prev_key_id": "VLdTNz7O27kJHcWTAZCz2g"
+                  },
+                  {
+                    "key_id": "j9w44fnQfxofHlsaCCZZtw",
+                    "public_key": "BkLdAVlwp3l3wpr_C2SmUYqywKmt94IwYfqiNu7vQBA",
+                    "prev_key_id": "lUEy_4GaYq8Zi12uFghQeA"
+                  }
+                ],
+                "sig": "uf9GLk9BD41jFBpz739X2G_38zVQIzz-7QapKzwe-_vJWL_rhcmQtAj9_Sm0CuGJGFhUGFicaGK4t1U-2mIkDQ"
+              },
+              "home_release": {
+                "v": 1,
+                "id": "e658f489-6103-7659-882d-fd6c5e11f924",
+                "type": "user.update",
+                "origin": "a.example",
+                "actor": "@alice:a.example",
+                "ts": 1754913600000,
+                "payload": {
+                  "profile_version": 4,
+                  "moved_to": "@alice:c.example"
+                },
+                "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+                "sig": "s3THfAZ0zZagDt5aZlUXvhZWn-gkRccVSzRQxNGtoI0p7FC_fpo3UKGGbtITAF_WsNW2i2615fZx37gnoPYPDQ"
+              },
+              "effective_at": 1755000000000
+            },
+            "key_id": "oqv4jKLgrKE7Zg_QC5B1Ug",
+            "sig": "KVlmj-fRrh2EML9mO_461REPDd7yo5V3_xMZ7lGYRTAf9f4RSVyXHLX1sj_aqCPmg9Db5blrt0yLn9zWDlJMBw"
+          },
+          "canonical_jcs_hex": "7b226163746f72223a2240616c6963653a632e6578616d706c65222c226964223a2236333136373637382d386239302d373439352d623531312d373939393561346136353736222c226b65795f6964223a226f7176346a4b4c67724b45375a675f51433542315567222c226f726967696e223a22632e6578616d706c65222c227061796c6f6164223a7b226566666563746976655f6174223a313735353030303030303030302c22686f6d655f72656c65617365223a7b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2265363538663438392d363130332d373635392d383832642d666436633565313166393234222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b226d6f7665645f746f223a2240616c6963653a632e6578616d706c65222c2270726f66696c655f76657273696f6e223a347d2c22736967223a227333544866415a307a5a6167447435615a6c555876685a576e2d676b52636356537a5251784e47746f4930703746435f66706f33554b47476274495441465f57734e57326932363135665a783337676e6f5059504451222c227473223a313735343931333630303030302c2274797065223a22757365722e757064617465222c2276223a317d2c226d6f6465223a226475616c5f7369676e222c226e6577223a2240616c6963653a632e6578616d706c65222c226f6c64223a2240616c6963653a612e6578616d706c65222c2270726f6f66223a7b226368616c6c656e67655f6f726967696e223a22632e6578616d706c65222c226b65795f686973746f7279223a5b7b226b65795f6964223a22564c64544e7a374f32376b4a48635754415a437a3267222c227075626c69635f6b6579223a224d59444a7a5a5956313461446361634f6d74465a6f7a346e475a786f377775306678347764684e67644a55227d2c7b226b65795f6964223a226c5545795f3447615971385a69313275466768516541222c22707265765f6b65795f6964223a22564c64544e7a374f32376b4a48635754415a437a3267222c227075626c69635f6b6579223a224935764c5841686d373352346d5571513530725f377047624753314b75573235746c586a704c74734e2d34227d2c7b226b65795f6964223a226a39773434666e5166786f66486c736143435a5a7477222c22707265765f6b65795f6964223a226c5545795f3447615971385a69313275466768516541222c227075626c69635f6b6579223a22426b4c6441566c7770336c337770725f4332536d55597179774b6d7439344977596671694e753776514241227d5d2c226e6577223a2240616c6963653a632e6578616d706c65222c226e6f6e6365223a22487972355967724a4b343876435f7673487873436541222c226f6c64223a2240616c6963653a612e6578616d706c65222c226f776e6572736869705f6b65795f6964223a226a39773434666e5166786f66486c736143435a5a7477222c22736967223a22756639474c6b39424434316a4642707a3733395832475f33387a5651497a7a2d375161704b7a77652d5f764a574c5f7268636d5174416a395f536d304375474a474668554746696361474b347431552d326d496b4451222c227369676e65645f6174223a313735343939363430303030307d7d2c227473223a313735353030303030303030302c2274797065223a22757365722e6d6f766564222c2276223a317d",
+          "signing_input_hex": "6f70656e6d65772f6576656e742f7631007b226163746f72223a2240616c6963653a632e6578616d706c65222c226964223a2236333136373637382d386239302d373439352d623531312d373939393561346136353736222c226b65795f6964223a226f7176346a4b4c67724b45375a675f51433542315567222c226f726967696e223a22632e6578616d706c65222c227061796c6f6164223a7b226566666563746976655f6174223a313735353030303030303030302c22686f6d655f72656c65617365223a7b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2265363538663438392d363130332d373635392d383832642d666436633565313166393234222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b226d6f7665645f746f223a2240616c6963653a632e6578616d706c65222c2270726f66696c655f76657273696f6e223a347d2c22736967223a227333544866415a307a5a6167447435615a6c555876685a576e2d676b52636356537a5251784e47746f4930703746435f66706f33554b47476274495441465f57734e57326932363135665a783337676e6f5059504451222c227473223a313735343931333630303030302c2274797065223a22757365722e757064617465222c2276223a317d2c226d6f6465223a226475616c5f7369676e222c226e6577223a2240616c6963653a632e6578616d706c65222c226f6c64223a2240616c6963653a612e6578616d706c65222c2270726f6f66223a7b226368616c6c656e67655f6f726967696e223a22632e6578616d706c65222c226b65795f686973746f7279223a5b7b226b65795f6964223a22564c64544e7a374f32376b4a48635754415a437a3267222c227075626c69635f6b6579223a224d59444a7a5a5956313461446361634f6d74465a6f7a346e475a786f377775306678347764684e67644a55227d2c7b226b65795f6964223a226c5545795f3447615971385a69313275466768516541222c22707265765f6b65795f6964223a22564c64544e7a374f32376b4a48635754415a437a3267222c227075626c69635f6b6579223a224935764c5841686d373352346d5571513530725f377047624753314b75573235746c586a704c74734e2d34227d2c7b226b65795f6964223a226a39773434666e5166786f66486c736143435a5a7477222c22707265765f6b65795f6964223a226c5545795f3447615971385a69313275466768516541222c227075626c69635f6b6579223a22426b4c6441566c7770336c337770725f4332536d55597179774b6d7439344977596671694e753776514241227d5d2c226e6577223a2240616c6963653a632e6578616d706c65222c226e6f6e6365223a22487972355967724a4b343876435f7673487873436541222c226f6c64223a2240616c6963653a612e6578616d706c65222c226f776e6572736869705f6b65795f6964223a226a39773434666e5166786f66486c736143435a5a7477222c22736967223a22756639474c6b39424434316a4642707a3733395832475f33387a5651497a7a2d375161704b7a77652d5f764a574c5f7268636d5174416a395f536d304375474a474668554746696361474b347431552d326d496b4451222c227369676e65645f6174223a313735343939363430303030307d7d2c227473223a313735353030303030303030302c2274797065223a22757365722e6d6f766564222c2276223a317d",
+          "key_id": "oqv4jKLgrKE7Zg_QC5B1Ug",
+          "public_key": "bfGI2lHkWvm3vWv8acH5hC8MfIKTO-QSD-Aq2lWdNdc",
+          "signature": "KVlmj-fRrh2EML9mO_461REPDd7yo5V3_xMZ7lGYRTAf9f4RSVyXHLX1sj_aqCPmg9Db5blrt0yLn9zWDlJMBw",
+          "expected": "valid",
+          "nested_home_release_check": {
+            "nested_origin_equals_old_domain": true,
+            "received_at_ms": 1755000000000,
+            "nested_ts_ms": 1754913600000,
+            "age_ms": 86400000,
+            "freshness_ceiling_ms": 2592000000,
+            "expected": "accept"
+          }
+        },
+        {
+          "case_id": "TV-15b",
+          "description": "user.moved, mode=disaster (no home_release): recorded pending, effective_at = ts + 7d.",
+          "domain_prefix": "openmew/event/v1",
+          "object": {
+            "v": 1,
+            "id": "5bc109b0-23f9-7c36-833d-3677c8ed8d1f",
+            "type": "user.moved",
+            "origin": "c.example",
+            "actor": "@alice:c.example",
+            "ts": 1755000005000,
+            "payload": {
+              "old": "@alice:a.example",
+              "new": "@alice:c.example",
+              "mode": "disaster",
+              "proof": {
+                "old": "@alice:a.example",
+                "new": "@alice:c.example",
+                "nonce": "Hyr5YgrJK48vC_vsHxsCeA",
+                "challenge_origin": "c.example",
+                "signed_at": 1754996400000,
+                "ownership_key_id": "j9w44fnQfxofHlsaCCZZtw",
+                "key_history": [
+                  {
+                    "key_id": "VLdTNz7O27kJHcWTAZCz2g",
+                    "public_key": "MYDJzZYV14aDcacOmtFZoz4nGZxo7wu0fx4wdhNgdJU"
+                  },
+                  {
+                    "key_id": "lUEy_4GaYq8Zi12uFghQeA",
+                    "public_key": "I5vLXAhm73R4mUqQ50r_7pGbGS1KuW25tlXjpLtsN-4",
+                    "prev_key_id": "VLdTNz7O27kJHcWTAZCz2g"
+                  },
+                  {
+                    "key_id": "j9w44fnQfxofHlsaCCZZtw",
+                    "public_key": "BkLdAVlwp3l3wpr_C2SmUYqywKmt94IwYfqiNu7vQBA",
+                    "prev_key_id": "lUEy_4GaYq8Zi12uFghQeA"
+                  }
+                ],
+                "sig": "uf9GLk9BD41jFBpz739X2G_38zVQIzz-7QapKzwe-_vJWL_rhcmQtAj9_Sm0CuGJGFhUGFicaGK4t1U-2mIkDQ"
+              },
+              "effective_at": 1755604805000
+            },
+            "key_id": "oqv4jKLgrKE7Zg_QC5B1Ug",
+            "sig": "RVnVK81jb7CEgtDeZtu7n50_Vl4CZV7kWSpnOPGQgepxgXZjfp2g-SenmCSJ39nGgo19l-7WeEGsY5SAnd5BBg"
+          },
+          "canonical_jcs_hex": "7b226163746f72223a2240616c6963653a632e6578616d706c65222c226964223a2235626331303962302d323366392d376333362d383333642d333637376338656438643166222c226b65795f6964223a226f7176346a4b4c67724b45375a675f51433542315567222c226f726967696e223a22632e6578616d706c65222c227061796c6f6164223a7b226566666563746976655f6174223a313735353630343830353030302c226d6f6465223a226469736173746572222c226e6577223a2240616c6963653a632e6578616d706c65222c226f6c64223a2240616c6963653a612e6578616d706c65222c2270726f6f66223a7b226368616c6c656e67655f6f726967696e223a22632e6578616d706c65222c226b65795f686973746f7279223a5b7b226b65795f6964223a22564c64544e7a374f32376b4a48635754415a437a3267222c227075626c69635f6b6579223a224d59444a7a5a5956313461446361634f6d74465a6f7a346e475a786f377775306678347764684e67644a55227d2c7b226b65795f6964223a226c5545795f3447615971385a69313275466768516541222c22707265765f6b65795f6964223a22564c64544e7a374f32376b4a48635754415a437a3267222c227075626c69635f6b6579223a224935764c5841686d373352346d5571513530725f377047624753314b75573235746c586a704c74734e2d34227d2c7b226b65795f6964223a226a39773434666e5166786f66486c736143435a5a7477222c22707265765f6b65795f6964223a226c5545795f3447615971385a69313275466768516541222c227075626c69635f6b6579223a22426b4c6441566c7770336c337770725f4332536d55597179774b6d7439344977596671694e753776514241227d5d2c226e6577223a2240616c6963653a632e6578616d706c65222c226e6f6e6365223a22487972355967724a4b343876435f7673487873436541222c226f6c64223a2240616c6963653a612e6578616d706c65222c226f776e6572736869705f6b65795f6964223a226a39773434666e5166786f66486c736143435a5a7477222c22736967223a22756639474c6b39424434316a4642707a3733395832475f33387a5651497a7a2d375161704b7a77652d5f764a574c5f7268636d5174416a395f536d304375474a474668554746696361474b347431552d326d496b4451222c227369676e65645f6174223a313735343939363430303030307d7d2c227473223a313735353030303030353030302c2274797065223a22757365722e6d6f766564222c2276223a317d",
+          "signing_input_hex": "6f70656e6d65772f6576656e742f7631007b226163746f72223a2240616c6963653a632e6578616d706c65222c226964223a2235626331303962302d323366392d376333362d383333642d333637376338656438643166222c226b65795f6964223a226f7176346a4b4c67724b45375a675f51433542315567222c226f726967696e223a22632e6578616d706c65222c227061796c6f6164223a7b226566666563746976655f6174223a313735353630343830353030302c226d6f6465223a226469736173746572222c226e6577223a2240616c6963653a632e6578616d706c65222c226f6c64223a2240616c6963653a612e6578616d706c65222c2270726f6f66223a7b226368616c6c656e67655f6f726967696e223a22632e6578616d706c65222c226b65795f686973746f7279223a5b7b226b65795f6964223a22564c64544e7a374f32376b4a48635754415a437a3267222c227075626c69635f6b6579223a224d59444a7a5a5956313461446361634f6d74465a6f7a346e475a786f377775306678347764684e67644a55227d2c7b226b65795f6964223a226c5545795f3447615971385a69313275466768516541222c22707265765f6b65795f6964223a22564c64544e7a374f32376b4a48635754415a437a3267222c227075626c69635f6b6579223a224935764c5841686d373352346d5571513530725f377047624753314b75573235746c586a704c74734e2d34227d2c7b226b65795f6964223a226a39773434666e5166786f66486c736143435a5a7477222c22707265765f6b65795f6964223a226c5545795f3447615971385a69313275466768516541222c227075626c69635f6b6579223a22426b4c6441566c7770336c337770725f4332536d55597179774b6d7439344977596671694e753776514241227d5d2c226e6577223a2240616c6963653a632e6578616d706c65222c226e6f6e6365223a22487972355967724a4b343876435f7673487873436541222c226f6c64223a2240616c6963653a612e6578616d706c65222c226f776e6572736869705f6b65795f6964223a226a39773434666e5166786f66486c736143435a5a7477222c22736967223a22756639474c6b39424434316a4642707a3733395832475f33387a5651497a7a2d375161704b7a77652d5f764a574c5f7268636d5174416a395f536d304375474a474668554746696361474b347431552d326d496b4451222c227369676e65645f6174223a313735343939363430303030307d7d2c227473223a313735353030303030353030302c2274797065223a22757365722e6d6f766564222c2276223a317d",
+          "key_id": "oqv4jKLgrKE7Zg_QC5B1Ug",
+          "public_key": "bfGI2lHkWvm3vWv8acH5hC8MfIKTO-QSD-Aq2lWdNdc",
+          "signature": "RVnVK81jb7CEgtDeZtu7n50_Vl4CZV7kWSpnOPGQgepxgXZjfp2g-SenmCSJ39nGgo19l-7WeEGsY5SAnd5BBg",
+          "expected": "valid"
+        },
+        {
+          "case_id": "TV-15c",
+          "description": "user.move_objection from old home a.example, target_id matches the disaster user.moved, arrives within the 7d notice window.",
+          "domain_prefix": "openmew/event/v1",
+          "object": {
+            "v": 1,
+            "id": "c0f88b8d-8d80-79e8-aed5-cbe5e9c3d7f5",
+            "type": "user.move_objection",
+            "origin": "a.example",
+            "actor": "@alice:a.example",
+            "ts": 1755003605000,
+            "payload": {
+              "target_id": "5bc109b0-23f9-7c36-833d-3677c8ed8d1f",
+              "reason": "old home disputes this migration"
+            },
+            "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+            "sig": "OwUH7PdeydVwkAN31NkgJ6dFL52M9nOL1mLgfgNdfO6CRB8mV7XlF5TVoGjgmGwzxQkIPmi1oa1lcTnpaLbeAg"
+          },
+          "canonical_jcs_hex": "7b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2263306638386238642d386438302d373965382d616564352d636265356539633364376635222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22726561736f6e223a226f6c6420686f6d652064697370757465732074686973206d6967726174696f6e222c227461726765745f6964223a2235626331303962302d323366392d376333362d383333642d333637376338656438643166227d2c227473223a313735353030333630353030302c2274797065223a22757365722e6d6f76655f6f626a656374696f6e222c2276223a317d",
+          "signing_input_hex": "6f70656e6d65772f6576656e742f7631007b226163746f72223a2240616c6963653a612e6578616d706c65222c226964223a2263306638386238642d386438302d373965382d616564352d636265356539633364376635222c226b65795f6964223a226157534647534b33764652356d525a48504661355551222c226f726967696e223a22612e6578616d706c65222c227061796c6f6164223a7b22726561736f6e223a226f6c6420686f6d652064697370757465732074686973206d6967726174696f6e222c227461726765745f6964223a2235626331303962302d323366392d376333362d383333642d333637376338656438643166227d2c227473223a313735353030333630353030302c2274797065223a22757365722e6d6f76655f6f626a656374696f6e222c2276223a317d",
+          "key_id": "aWSFGSK3vFR5mRZHPFa5UQ",
+          "public_key": "XaHw8L8EyAb4rfaQMAgvWXt8AiWh_ZrWBjIDxCiIdhA",
+          "signature": "OwUH7PdeydVwkAN31NkgJ6dFL52M9nOL1mLgfgNdfO6CRB8mV7XlF5TVoGjgmGwzxQkIPmi1oa1lcTnpaLbeAg",
+          "expected": "valid"
+        },
+        {
+          "case_id": "TV-15d",
+          "description": "MUST-fail (state-machine, not signature): a second disaster-path migration proof for the same `old` actor, submitted after a matching, in-window user.move_objection was recorded, MUST be rejected 409 OMEW_MIGRATION_FROZEN regardless of signature validity.",
+          "state_machine_check": {
+            "old": "@alice:a.example",
+            "disaster_moved_id": "5bc109b0-23f9-7c36-833d-3677c8ed8d1f",
+            "disaster_effective_at": 1755604805000,
+            "objection_target_id": "5bc109b0-23f9-7c36-833d-3677c8ed8d1f",
+            "objection_received_at": 1755003605000,
+            "second_disaster_attempt_at": 1755007205000
+          },
+          "expected": "reject",
+          "reject_reason": "OMEW_MIGRATION_FROZEN"
+        }
+      ]
+    }
+  ]
+}

@@ -1101,27 +1101,37 @@ peer 收到后 MUST 比对本地缓存的分片版本(§8.3 的分片元数据),
 
 ---
 
-## 附录 A 测试向量(占位)
+## 附录 A 测试向量
 
-M0 冻结前 MUST 补齐并纳入一致性测试套件。每组向量含:输入信封 JSON、JCS 输出的十六进制字节、`signing_input` 的十六进制字节、测试密钥对、期望签名。
+全部向量已生成,位于 `test/vectors/m0-vectors.json`,由 `scripts/gen-vectors.mjs` 生成、`scripts/verify-vectors.mjs` 独立重验(零依赖,Node ≥ 20,Ed25519 经 `node:crypto`)。每组向量含:输入信封 JSON、JCS 输出的十六进制字节、`signing_input` 的十六进制字节、测试密钥对、期望签名(含 MUST-fail 否定用例)。
+
+测试密钥均为向量文件 `keys` 节中登记的确定性派生 TEST ONLY 材料,与任何真实实例或账号无关:
+
+| 标签 | key_id |
+|---|---|
+| `a.example` 实例密钥(第 1/2/3 代) | `aWSFGSK3vFR5mRZHPFa5UQ` / `c32Hwuke-2S_3QcmzbECng` / `P4Iv0tZ58S48ugVXIwMB1w` |
+| `b.example` 实例密钥 | `-lkZYaKrWWheYiiuN73A7g` |
+| `c.example` 实例密钥 | `oqv4jKLgrKE7Zg_QC5B1Ug` |
+| `d.example` 实例密钥 | `_aLgCH2Tbf31v8-pDxZlFA` |
+| `@alice:a.example` 所有权密钥(第 1/2/3 代) | `VLdTNz7O27kJHcWTAZCz2g` / `lUEy_4GaYq8Zi12uFghQeA` / `j9w44fnQfxofHlsaCCZZtw` |
 
 | 编号 | 覆盖点 | 状态 |
 |---|---|---|
-| TV-01 | 最小 `item.create`,纯 ASCII text | TBD |
-| TV-02 | 含 `objects.users` sideload | TBD |
-| TV-03 | 含非 ASCII 正文(CJK + emoji + 组合字符),校验 NFC 与 JCS 转义 | TBD |
-| TV-04 | 含媒体对象与 `omew://` 引用 | TBD |
-| TV-05 | 含未知扩展字段,验证签名覆盖与不剥离 | TBD |
-| TV-06 | 键序颠倒的等价输入,验证 JCS 输出一致 | TBD |
-| TV-07 | 会话断言(`openmew/assertion/v1` 域分隔) | TBD |
-| TV-08 | 轮换连续性签名链(三代密钥) | TBD |
-| TV-09 | 边界整数(±(2^53 − 1))与超界拒绝 | TBD |
-| TV-10 | confusable localpart 碰撞样本集 | TBD |
-| TV-11 | 实例描述符与用户档案文档签名(两个域分隔前缀) | TBD |
-| TV-12 | 联邦请求签名(`openmew/request/v1`) | TBD |
-| TV-13 | 所有权密钥轮换链(三代)与 `key_history` 校验(`openmew/ownership/v1`) | TBD |
-| TV-14 | 迁移证明签名与跨边重放拒绝(`openmew/migration-claim/v1`,两条边各一份 nonce) | TBD |
-| TV-15 | `user.moved` 双路径信封:`dual_sign` 含嵌套 `home_release` 验签、`disaster` 含公示期与异议冻结 | TBD |
+| TV-01 | 最小 `item.create`,纯 ASCII text | 已生成 |
+| TV-02 | 含 `objects.users` sideload | 已生成 |
+| TV-03 | 含非 ASCII 正文(CJK + emoji + 组合字符),校验 NFC 与 JCS 转义 | 已生成 |
+| TV-04 | 含媒体对象与 `omew://` 引用 | 已生成 |
+| TV-05 | 含未知扩展字段,验证签名覆盖与不剥离 | 已生成(含剥离字段后验签必败的否定用例) |
+| TV-06 | 键序颠倒的等价输入,验证 JCS 输出一致 | 已生成 |
+| TV-07 | 会话断言(`openmew/assertion/v1` 域分隔) | 已生成 |
+| TV-08 | 轮换连续性签名链(三代密钥) | 已生成(含 retired 超宽限期拒绝的否定用例) |
+| TV-09 | 边界整数(±(2^53 − 1))与超界拒绝 | 已生成(含超界拒绝的否定用例) |
+| TV-10 | confusable localpart 碰撞样本集 | 已生成(§1.4 所举 ASCII 子集示例,非完整 UTS #39 表,详见脚本注释) |
+| TV-11 | 实例描述符与用户档案文档签名(两个域分隔前缀) | 已生成 |
+| TV-12 | 联邦请求签名(`openmew/request/v1`) | 已生成 |
+| TV-13 | 所有权密钥轮换链(三代)与 `key_history` 校验(`openmew/ownership/v1`) | 已生成(含链断裂拒绝的否定用例) |
+| TV-14 | 迁移证明签名与跨边重放拒绝(`openmew/migration-claim/v1`,两条边各一份 nonce) | 已生成(含跨边重放拒绝的否定用例) |
+| TV-15 | `user.moved` 双路径信封:`dual_sign` 含嵌套 `home_release` 验签、`disaster` 含公示期与异议冻结 | 已生成(含异议冻结后二次证明拒绝的否定用例) |
 
 ## 附录 B 遗留待决项
 
@@ -1136,7 +1146,7 @@ M0 冻结前 MUST 补齐并纳入一致性测试套件。每组向量含:输入�
 
 | 条件 | 状态 | 阻塞冻结 |
 |---|---|---|
-| 附录 A 全部测试向量补齐并纳入一致性测试套件 | TBD | **是** |
+| 附录 A 全部测试向量补齐并纳入一致性测试套件 | 已完成:`test/vectors/m0-vectors.json`,`scripts/verify-vectors.mjs` 独立重验通过 | **是** |
 | 所有权密钥字段与迁移事件定名冻结(§6.1 / §6.7 / §7.7 / §7.8) | 已定 | **是**(事后补钥会弱化归属证明) |
 | 代码 License 确定 | 已决(AGPL-3.0) | 否 |
 | GitHub 组织名备选确认 | 待人工确认 | 否(不影响协议文本) |
