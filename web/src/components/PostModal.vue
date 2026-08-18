@@ -47,7 +47,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 <style scoped>
 .post-modal-overlay {
   position: fixed;
-  top: var(--topbar-height);
+  top: 0;
   left: 0;
   right: 0;
   bottom: 0;
@@ -163,9 +163,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
 @media (max-width: 768px) {
   .post-modal-overlay {
-    top: 0;
-    left: 0;
-    right: 0;
     padding: 0;
   }
 

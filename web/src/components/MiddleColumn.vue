@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { useChannel } from '../composables/useChannel'
 import { useShellView } from '../composables/useShellView'
-import { useStronghold } from '../composables/useStronghold'
+import ChannelSwitcher from './ChannelSwitcher.vue'
 import ChatPane from './ChatPane.vue'
+import { useChannel } from '../composables/useChannel'
 
 const { selectedChannel } = useChannel()
-const { currentNode } = useStronghold()
 const { setView } = useShellView()
 </script>
 
@@ -17,11 +16,8 @@ const { setView } = useShellView()
           <path d="M15 18l-6-6 6-6" />
         </svg>
       </button>
-      <div class="middle-column__header-text">
-        <p class="middle-column__stronghold-name">{{ currentNode.name }}</p>
-        <h1 class="middle-column__name">{{ selectedChannel.name }}</h1>
-        <p class="middle-column__description">{{ selectedChannel.description }}</p>
-      </div>
+      <div class="middle-column__header-spacer" />
+      <ChannelSwitcher />
     </div>
     <ChatPane :channel="selectedChannel" />
   </main>
@@ -48,11 +44,8 @@ const { setView } = useShellView()
   border-bottom: 1px solid var(--stroke-divider);
 }
 
-.middle-column__header-text {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  min-width: 0;
+.middle-column__header-spacer {
+  flex: 1 1 auto;
 }
 
 .middle-column__back {
@@ -77,29 +70,6 @@ const { setView } = useShellView()
   background: var(--ctrl-fill-secondary);
 }
 
-.middle-column__stronghold-name {
-  display: none;
-  margin: 0;
-  font-size: 0.72rem;
-  color: var(--text-tertiary);
-}
-
-.middle-column__name {
-  margin: 0;
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.middle-column__description {
-  margin: 0;
-  font-size: 0.78rem;
-  color: var(--text-tertiary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 @media (max-width: 768px) {
   .middle-column {
     display: none;
@@ -113,10 +83,6 @@ const { setView } = useShellView()
 
   .middle-column__back {
     display: flex;
-  }
-
-  .middle-column__stronghold-name {
-    display: block;
   }
 }
 </style>

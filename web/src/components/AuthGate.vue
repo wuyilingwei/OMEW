@@ -250,7 +250,7 @@ function finishRegistration() {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: calc(var(--topbar-height) + 2rem) 1rem 2rem;
+  padding: 2rem 1rem;
 }
 
 .auth-card {
