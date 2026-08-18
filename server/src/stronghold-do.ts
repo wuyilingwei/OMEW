@@ -62,9 +62,29 @@ export interface EditConfigSnapshot {
 }
 
 export class StrongholdDO extends DurableObject<Env> {
+  // DOs created via getByName always carry their name back on ctx.id - used to
+  // key the D1 membership index without an extra config read on every call.
+  private readonly selfId: string;
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    this.selfId = ctx.id.name ?? ctx.id.toString();
     ctx.blockConcurrencyWhile(async () => this.migrate());
+  }
+
+  // Best-effort side index (GET /api/me/strongholds) - the `member` table above
+  // stays the sole authority for actual membership; a failed sync here just means
+  // that endpoint under/over-reports until the next successful mutation.
+  private async indexMember(actor: string): Promise<void> {
+    await this.env.DB.prepare(
+      "INSERT INTO stronghold_member_index (actor, stronghold_id) VALUES (?, ?) ON CONFLICT(actor, stronghold_id) DO NOTHING"
+    ).bind(actor, this.selfId).run().catch(() => {});
+  }
+
+  private async unindexMember(actor: string): Promise<void> {
+    await this.env.DB.prepare(
+      "DELETE FROM stronghold_member_index WHERE actor = ? AND stronghold_id = ?"
+    ).bind(actor, this.selfId).run().catch(() => {});
   }
 
   private migrate(): void {
@@ -90,9 +110,9 @@ export class StrongholdDO extends DurableObject<Env> {
         actor TEXT PRIMARY KEY, operator TEXT NOT NULL, banned_at INTEGER NOT NULL
       );
     `);
-    // task 016: stronghold-level settings added after the config table already
-    // existed in deployed strongholds - additive ALTER, guarded so it's a no-op
-    // once a DO has already picked the columns up.
+    // Stronghold-level settings added after the config table already existed in
+    // deployed strongholds - additive ALTER, guarded so it's a no-op once a DO
+    // has already picked the columns up.
     this.addColumnIfMissing("config", "cover", "TEXT");
     this.addColumnIfMissing("config", "allow_message_edit", "INTEGER NOT NULL DEFAULT 1");
     this.addColumnIfMissing("config", "allow_message_retract", "INTEGER NOT NULL DEFAULT 1");
@@ -128,6 +148,7 @@ export class StrongholdDO extends DurableObject<Env> {
       "INSERT INTO member (actor, role, deny, restricted, application_state, joined_at) VALUES (?, 'owner', 0, 0, 'approved', ?)",
       ownerActor, createdAt
     );
+    await this.indexMember(ownerActor);
     return {
       id, name, description: description ?? null, visibility, icon: icon ?? null, cover: null,
       allow_message_edit: 1, allow_message_retract: 1, edit_window_secs: 300,
@@ -157,9 +178,9 @@ export class StrongholdDO extends DurableObject<Env> {
       next.name, next.description, next.visibility, next.icon, next.cover,
       next.allow_message_edit, next.allow_message_retract, next.edit_window_secs, next.id
     );
-    // task 016: push the edit-policy slice to every room DO this stronghold owns
-    // (DO-to-DO, fire-and-forget) so RoomDO write paths never query D1/config on
-    // the hot path - only StrongholdDO changes trigger a refresh.
+    // Push the edit-policy slice to every room DO this stronghold owns (DO-to-DO,
+    // fire-and-forget) so RoomDO write paths never query D1/config on the hot
+    // path - only StrongholdDO changes trigger a refresh.
     await this.pushEditConfigToRooms(next);
     return next;
   }
@@ -243,6 +264,7 @@ export class StrongholdDO extends DurableObject<Env> {
         "ON CONFLICT(actor) DO UPDATE SET role = excluded.role, deny = excluded.deny, restricted = excluded.restricted",
       actor, role, effectiveDeny, restricted ? 1 : 0, joinedAt
     );
+    await this.indexMember(actor);
     return { actor, role, deny: effectiveDeny, restricted: restricted ? 1 : 0, banned_at: null, application_state: "approved", joined_at: joinedAt };
   }
 
@@ -274,6 +296,7 @@ export class StrongholdDO extends DurableObject<Env> {
     const current = await this.getMember(actor);
     if (!current || current.role === "owner") return false;
     this.ctx.storage.sql.exec("DELETE FROM member WHERE actor = ?", actor);
+    await this.unindexMember(actor);
     return true;
   }
 

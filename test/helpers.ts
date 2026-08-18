@@ -4,6 +4,7 @@ import { signToken } from "../server/src/auth";
 import type { Role, RoomTokenClaims, SessionTokenClaims } from "../server/src/types";
 import migration0001 from "../server/migrations/0001_init.sql?raw";
 import migration0002 from "../server/migrations/0002_user_system.sql?raw";
+import migration0003 from "../server/migrations/0003_stronghold_index.sql?raw";
 
 // Must match vitest.config.ts's miniflare.bindings.DEV_TOKEN_SECRET.
 export const TEST_SECRET = "test-secret-do-not-use-in-prod";
@@ -26,7 +27,7 @@ export async function ensureMigrated(): Promise<void> {
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'instance_config'"
   ).first();
   if (marker) return;
-  for (const sql of [migration0001, migration0002]) {
+  for (const sql of [migration0001, migration0002, migration0003]) {
     for (const statement of splitStatements(sql)) {
       await env.DB.prepare(statement).run();
     }
@@ -85,8 +86,47 @@ export function nextMessage(ws: WebSocket): Promise<Record<string, unknown>> {
   });
 }
 
+// Drains messages off `ws` until one of the given `type` arrives, discarding any
+// interleaved frames of other types along the way. batch (item.create/update/
+// delete) and item.bump are independent broadcast paths with no ordering
+// guarantee relative to each other, so tests can't assume a fixed arrival order.
+export async function nextMessageOfType(ws: WebSocket, type: string, maxDrain = 10): Promise<Record<string, unknown>> {
+  for (let i = 0; i < maxDrain; i++) {
+    const msg = await nextMessage(ws);
+    if (msg.type === type) return msg;
+  }
+  throw new Error(`no message of type ${type} seen within ${maxDrain} messages`);
+}
+
+// Collects every message that arrives within `ms`, then resolves with all of
+// them - used to assert on the absence/presence of a given frame type over a
+// window, without assuming anything about interleaving with other frame types.
+export function collectMessagesFor(ws: WebSocket, ms: number): Promise<Record<string, unknown>[]> {
+  const messages: Record<string, unknown>[] = [];
+  return new Promise((resolve) => {
+    const handler = (event: MessageEvent) => {
+      messages.push(JSON.parse(event.data as string));
+    };
+    ws.addEventListener("message", handler);
+    setTimeout(() => {
+      ws.removeEventListener("message", handler);
+      resolve(messages);
+    }, ms);
+  });
+}
+
 export function itemCreateFrame(clientId: string, text: string): string {
   return JSON.stringify({ type: "item.create", client_id: clientId, kind: "post", body: { text } });
+}
+
+// Section-real: a top-level section item MUST be a titled post; a channel post
+// MUST NOT carry a title (see room-do.ts's channel/section kind matrix).
+export function postCreateFrame(clientId: string, title: string, text: string, cover?: string): string {
+  return JSON.stringify({ type: "item.create", client_id: clientId, kind: "post", body: { title, text, ...(cover ? { cover } : {}) } });
+}
+
+export function replyCreateFrame(clientId: string, parentSeq: number, text: string): string {
+  return JSON.stringify({ type: "item.create", client_id: clientId, kind: "reply", parent_seq: parentSeq, body: { text } });
 }
 
 export function itemUpdateFrame(targetSeq: number, text: string): string {
