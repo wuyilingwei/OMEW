@@ -153,6 +153,7 @@ v1 不实现任何媒体逻辑,仅在房间 WS 上预留一组命名空间化消
 ---
 ## 9. 权限模型
 角色 `owner` / `mod` / `member`(据点级,owner 唯一且可转让);惩戒两级:受限(按 `deny` 位掩码)与封禁(记录时间与操作者,不可自行回来)。`deny` 位仅对 `member` 生效,`owner` 豁免一切 deny;对 `mod` 施加 deny MUST 先降级为 `member`,单个事件 MUST NOT 同时降级与施加 deny。
+据点级消息策略:`allow_message_edit` / `allow_message_retract` 开关 + 可配时间窗(默认 300 s,0 = 不限)约束**作者本人**的编辑与撤回;owner/mod 删除他人消息属审核权,不受该开关与窗口限制,但 mod MUST NOT 删除 owner 的消息。
 无 presence 表,权限不能每条消息查库:WS 握手时前端带该实例签发的短期 token,DO 验签后写入 attachment,之后只读 attachment。token claims MUST 绑定**具体房间**(DO id)+ 据点角色 + `deny` 位快照 + 短 `exp` + `jti`;token MUST 走 `Sec-WebSocket-Protocol` 子协议或首帧,**MUST NOT 放在 URL query**(会进日志);过期由客户端静默续期。
 attachment 是握手期授权快照,MUST 配合失效通道:StrongholdDO 在 `member.ban` / `member.update` / `user.deactivate` 生效时 MUST 通知相关房间 DO,房间 DO MUST 关闭该 actor 的连接或改写其 attachment;仅靠 token `exp` 不构成撤销。撤销时延上界:房间 WS token `exp` MUST ≤ 300 s,宾客会话 token `exp` MUST ≤ 24 h;收到 `user.deactivate` / `member.ban` 的实例 MUST 立即作废对应会话。残余风险窗口 = 未过期 token 的剩余 `exp`,M0 规范 MUST 明示该残余。
 读路径与写路径同等鉴权:成员列表、申请记录、据点配置等 GET 端点 MUST 按角色裁剪。
