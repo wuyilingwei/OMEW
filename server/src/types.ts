@@ -46,11 +46,32 @@ export interface StrongholdTokenClaims {
   jti: string;
 }
 
-// dev-token session claims (M1 stub, see auth.ts) - not a WS token, used for HTTP bearer auth.
+// Session claims (see auth.ts for the HMAC signing mechanism) - not a WS token,
+// used for HTTP bearer auth. Issued by /api/register and /api/login (users.ts).
 export interface SessionTokenClaims {
   v: 1;
   typ: "session";
   actor: string;
   exp: number;
   jti: string;
+}
+
+// Instance-level identity policy (users.ts), backed by the single-row
+// instance_config table (migration 0002).
+export type RootRequirement = "email" | "phone" | "code";
+
+export interface InstanceConfig {
+  allow_root: boolean;
+  root_requirements: RootRequirement[];
+  trusted_identity_servers: string[];
+}
+
+// Shape returned to clients on register/login - never includes pw_hash/pw_salt or
+// the ownership ciphertext.
+export interface PublicUser {
+  username: string;
+  actor: string;
+  is_admin: boolean;
+  email: string | null;
+  email_verified: boolean;
 }
