@@ -2,6 +2,7 @@
 import LeftColumn from './components/LeftColumn.vue'
 import MiddleColumn from './components/MiddleColumn.vue'
 import NodeRail from './components/NodeRail.vue'
+import PostModal from './components/PostModal.vue'
 import RightColumn from './components/RightColumn.vue'
 import TopBar from './components/TopBar.vue'
 </script>
@@ -15,6 +16,7 @@ import TopBar from './components/TopBar.vue'
       <MiddleColumn />
       <RightColumn />
     </div>
+    <PostModal />
   </div>
 </template>
 

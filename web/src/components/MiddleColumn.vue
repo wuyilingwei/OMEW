@@ -1,17 +1,15 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { mockChannels } from '../data/mock'
-import type { ChannelSummary } from '../types/models'
-import ChannelSwitcher from './ChannelSwitcher.vue'
+import { useChannel } from '../composables/useChannel'
 import ChatPane from './ChatPane.vue'
 
-const selectedChannel = ref<ChannelSummary>(mockChannels.find((channel) => channel.active) ?? mockChannels[0])
+const { selectedChannel } = useChannel()
 </script>
 
 <template>
   <main class="middle-column">
     <div class="middle-column__header">
-      <ChannelSwitcher v-model="selectedChannel" :channels="mockChannels" />
+      <h1 class="middle-column__name">{{ selectedChannel.name }}</h1>
+      <p class="middle-column__description">{{ selectedChannel.description }}</p>
     </div>
     <ChatPane :channel="selectedChannel" />
   </main>
@@ -29,11 +27,28 @@ const selectedChannel = ref<ChannelSummary>(mockChannels.find((channel) => chann
 .middle-column__header {
   flex: 0 0 auto;
   display: flex;
-  align-items: center;
-  padding: 0.6rem 1rem;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.55rem 1rem;
   background: var(--layer-default);
   backdrop-filter: blur(24px) saturate(160%);
   -webkit-backdrop-filter: blur(24px) saturate(160%);
   border-bottom: 1px solid var(--stroke-divider);
+}
+
+.middle-column__name {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.middle-column__description {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

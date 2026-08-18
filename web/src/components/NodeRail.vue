@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { mockNodes } from '../data/mock'
+import { useStronghold } from '../composables/useStronghold'
+
+const { selectedNodeId, selectNode } = useStronghold()
 </script>
 
 <template>
@@ -9,9 +12,10 @@ import { mockNodes } from '../data/mock'
       <li v-for="node in mockNodes" :key="node.id">
         <button
           class="node-rail__item"
-          :class="{ 'node-rail__item--active': node.active }"
+          :class="{ 'node-rail__item--active': node.id === selectedNodeId }"
           type="button"
           :title="node.name"
+          @click="selectNode(node.id)"
         >
           {{ node.iconLabel }}
         </button>
