@@ -47,7 +47,8 @@ const tabs: { view: ShellView; label: string }[] = [
   right: 0;
   bottom: 0;
   z-index: 30;
-  height: var(--navbar-height);
+  /* border-box: 总高需含 safe-area,否则 padding 会压扁按钮区 */
+  height: calc(var(--navbar-height) + env(safe-area-inset-bottom));
   padding-bottom: env(safe-area-inset-bottom);
   background: var(--layer-default);
   backdrop-filter: blur(24px) saturate(160%);

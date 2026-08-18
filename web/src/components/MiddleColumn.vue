@@ -58,8 +58,8 @@ const { setView } = useShellView()
 .middle-column__back {
   display: none;
   flex: 0 0 auto;
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
   align-items: center;
   justify-content: center;
   border: none;
