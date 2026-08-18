@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import worker from "../server/src/api";
 import { signToken } from "../server/src/auth";
-import type { Role, RoomTokenClaims } from "../server/src/types";
+import type { Role, RoomTokenClaims, SessionTokenClaims } from "../server/src/types";
 import migration0001 from "../server/migrations/0001_init.sql?raw";
 import migration0002 from "../server/migrations/0002_user_system.sql?raw";
 
@@ -87,4 +87,26 @@ export function nextMessage(ws: WebSocket): Promise<Record<string, unknown>> {
 
 export function itemCreateFrame(clientId: string, text: string): string {
   return JSON.stringify({ type: "item.create", client_id: clientId, kind: "post", body: { text } });
+}
+
+export function itemUpdateFrame(targetSeq: number, text: string): string {
+  return JSON.stringify({ type: "item.update", target_seq: targetSeq, body: { text } });
+}
+
+export function itemDeleteFrame(targetSeq: number, reason?: string): string {
+  return JSON.stringify({ type: "item.delete", target_seq: targetSeq, reason });
+}
+
+// Mints a bearer session token directly (bypasses /api/register + D1) - mirrors
+// connectRoom's direct RoomTokenClaims signing, for tests that only care about
+// StrongholdDO/RoomDO authorization mechanics rather than the full user system.
+export async function sessionToken(actor: string): Promise<string> {
+  const claims: SessionTokenClaims = {
+    v: 1,
+    typ: "session",
+    actor,
+    exp: Math.floor(Date.now() / 1000) + 300,
+    jti: crypto.randomUUID(),
+  };
+  return signToken(claims, TEST_SECRET);
 }

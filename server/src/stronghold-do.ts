@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { verifyToken } from "./auth";
-import type { Role, RoomType, StrongholdTokenClaims } from "./types";
+import { typeToKind, type Role, type RoomType, type StrongholdTokenClaims } from "./types";
 
 // proposal S4.1/S4.4: stronghold config + capability rules + authoritative member
 // table + persisted tips aggregate, with a WS fan-out for tip.update pushes.
@@ -9,17 +9,21 @@ const TIP_FLUSH_MS = 1_500; // m0-protocol S3.3: tip.update coalesced, not per-m
 
 // `type` (not `interface`) so these structurally satisfy the SqlStorageValue
 // index-signature constraint that sql.exec<T>() requires.
-type ConfigRow = {
+export type ConfigRow = {
   id: string;
   name: string;
   description: string | null;
   visibility: "public" | "private";
   icon: string | null;
+  cover: string | null;
+  allow_message_edit: number;
+  allow_message_retract: number;
+  edit_window_secs: number;
   owner_actor: string;
   created_at: number;
 };
 
-type RoomRow = {
+export type RoomRow = {
   res_id: string;
   type: RoomType;
   name: string;
@@ -30,7 +34,7 @@ type RoomRow = {
   created_at: number;
 };
 
-type MemberRow = {
+export type MemberRow = {
   actor: string;
   role: Role;
   deny: number;
@@ -40,9 +44,21 @@ type MemberRow = {
   joined_at: number;
 };
 
+export type BanRow = {
+  actor: string;
+  operator: string;
+  banned_at: number;
+};
+
 interface TipAttachment {
   actor: string;
   stronghold: string;
+}
+
+export interface EditConfigSnapshot {
+  allow_message_edit: boolean;
+  allow_message_retract: boolean;
+  edit_window_secs: number;
 }
 
 export class StrongholdDO extends DurableObject<Env> {
@@ -70,7 +86,24 @@ export class StrongholdDO extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS tip (
         room_ref TEXT PRIMARY KEY, latest_seq INTEGER NOT NULL, ts INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS ban (
+        actor TEXT PRIMARY KEY, operator TEXT NOT NULL, banned_at INTEGER NOT NULL
+      );
     `);
+    // task 016: stronghold-level settings added after the config table already
+    // existed in deployed strongholds - additive ALTER, guarded so it's a no-op
+    // once a DO has already picked the columns up.
+    this.addColumnIfMissing("config", "cover", "TEXT");
+    this.addColumnIfMissing("config", "allow_message_edit", "INTEGER NOT NULL DEFAULT 1");
+    this.addColumnIfMissing("config", "allow_message_retract", "INTEGER NOT NULL DEFAULT 1");
+    this.addColumnIfMissing("config", "edit_window_secs", "INTEGER NOT NULL DEFAULT 300");
+  }
+
+  private addColumnIfMissing(table: string, column: string, definition: string): void {
+    const cols = this.ctx.storage.sql.exec<{ name: string }>(`PRAGMA table_info(${table})`).toArray();
+    if (!cols.some((c) => c.name === column)) {
+      this.ctx.storage.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
   }
 
   // ---- config -----------------------------------------------------------------
@@ -87,14 +120,19 @@ export class StrongholdDO extends DurableObject<Env> {
     if (existing.length > 0) return existing[0]!;
     const createdAt = Date.now();
     this.ctx.storage.sql.exec(
-      "INSERT INTO config (id, name, description, visibility, icon, owner_actor, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO config (id, name, description, visibility, icon, cover, allow_message_edit, allow_message_retract, edit_window_secs, owner_actor, created_at) " +
+        "VALUES (?, ?, ?, ?, ?, NULL, 1, 1, 300, ?, ?)",
       id, name, description ?? null, visibility, icon ?? null, ownerActor, createdAt
     );
     this.ctx.storage.sql.exec(
       "INSERT INTO member (actor, role, deny, restricted, application_state, joined_at) VALUES (?, 'owner', 0, 0, 'approved', ?)",
       ownerActor, createdAt
     );
-    return { id, name, description: description ?? null, visibility, icon: icon ?? null, owner_actor: ownerActor, created_at: createdAt };
+    return {
+      id, name, description: description ?? null, visibility, icon: icon ?? null, cover: null,
+      allow_message_edit: 1, allow_message_retract: 1, edit_window_secs: 300,
+      owner_actor: ownerActor, created_at: createdAt,
+    };
   }
 
   async getConfig(): Promise<ConfigRow | null> {
@@ -102,15 +140,47 @@ export class StrongholdDO extends DurableObject<Env> {
     return rows[0] ?? null;
   }
 
-  async updateConfig(patch: Partial<Pick<ConfigRow, "name" | "description" | "visibility" | "icon">>): Promise<ConfigRow | null> {
+  async updateConfig(
+    patch: Partial<
+      Pick<
+        ConfigRow,
+        "name" | "description" | "visibility" | "icon" | "cover" | "allow_message_edit" | "allow_message_retract" | "edit_window_secs"
+      >
+    >
+  ): Promise<ConfigRow | null> {
     const current = await this.getConfig();
     if (!current) return null;
     const next = { ...current, ...patch };
     this.ctx.storage.sql.exec(
-      "UPDATE config SET name = ?, description = ?, visibility = ?, icon = ? WHERE id = ?",
-      next.name, next.description, next.visibility, next.icon, next.id
+      "UPDATE config SET name = ?, description = ?, visibility = ?, icon = ?, cover = ?, " +
+        "allow_message_edit = ?, allow_message_retract = ?, edit_window_secs = ? WHERE id = ?",
+      next.name, next.description, next.visibility, next.icon, next.cover,
+      next.allow_message_edit, next.allow_message_retract, next.edit_window_secs, next.id
     );
+    // task 016: push the edit-policy slice to every room DO this stronghold owns
+    // (DO-to-DO, fire-and-forget) so RoomDO write paths never query D1/config on
+    // the hot path - only StrongholdDO changes trigger a refresh.
+    await this.pushEditConfigToRooms(next);
     return next;
+  }
+
+  private async pushEditConfigToRooms(config: ConfigRow): Promise<void> {
+    const rooms = await this.listRooms();
+    const snapshot: EditConfigSnapshot = {
+      allow_message_edit: Boolean(config.allow_message_edit),
+      allow_message_retract: Boolean(config.allow_message_retract),
+      edit_window_secs: config.edit_window_secs,
+    };
+    await Promise.all(
+      rooms.map((room) => {
+        const roomRef = `${config.id}/${typeToKind(room.type)}/${room.res_id}`;
+        const stub = this.env.ROOM_DO.getByName(roomRef);
+        return stub.setEditConfig(snapshot).catch(() => {
+          // best-effort push; the room DO's own query-back fallback (RoomDO
+          // ensureEditConfig) covers a missed push on its next gated write.
+        });
+      })
+    );
   }
 
   // ---- rooms --------------------------------------------------------------------
@@ -183,6 +253,64 @@ export class StrongholdDO extends DurableObject<Env> {
 
   async listMembers(): Promise<MemberRow[]> {
     return this.ctx.storage.sql.exec<MemberRow>("SELECT * FROM member ORDER BY joined_at").toArray();
+  }
+
+  // proposal §9: deny bits only apply to `member`; role/deny changes here never
+  // touch `owner` (ownership moves only through transferOwnership). Caller (api.ts)
+  // is responsible for the "role change requires owner" / "DENY_ON_MOD" gating -
+  // this just applies whatever role/deny the caller already validated.
+  async updateMember(actor: string, patch: { role?: "mod" | "member"; deny?: number }): Promise<MemberRow | null> {
+    const current = await this.getMember(actor);
+    if (!current || current.role === "owner") return null;
+    const role = patch.role ?? current.role;
+    const deny = role === "mod" ? 0 : patch.deny ?? current.deny;
+    this.ctx.storage.sql.exec("UPDATE member SET role = ?, deny = ? WHERE actor = ?", role, deny, actor);
+    return { ...current, role, deny };
+  }
+
+  // Kick: revocable removal, the row is gone entirely (distinct from ban, which
+  // keeps the row and sets banned_at - see banMember). Never targets `owner`.
+  async removeMember(actor: string): Promise<boolean> {
+    const current = await this.getMember(actor);
+    if (!current || current.role === "owner") return false;
+    this.ctx.storage.sql.exec("DELETE FROM member WHERE actor = ?", actor);
+    return true;
+  }
+
+  async transferOwnership(fromActor: string, toActor: string): Promise<ConfigRow | null> {
+    const config = await this.getConfig();
+    const target = await this.getMember(toActor);
+    if (!config || config.owner_actor !== fromActor || !target || target.role === "owner") return null;
+    this.ctx.storage.sql.exec("UPDATE member SET role = 'owner', deny = 0 WHERE actor = ?", toActor);
+    this.ctx.storage.sql.exec("UPDATE member SET role = 'member', deny = 0 WHERE actor = ?", fromActor);
+    this.ctx.storage.sql.exec("UPDATE config SET owner_actor = ? WHERE id = ?", toActor, config.id);
+    return { ...config, owner_actor: toActor };
+  }
+
+  // ---- bans (audit trail; member.banned_at stays the fast-path gate check) --------
+
+  async banMember(actor: string, operator: string): Promise<MemberRow | null> {
+    const target = await this.getMember(actor);
+    if (!target || target.role === "owner") return null;
+    const bannedAt = Date.now();
+    this.ctx.storage.sql.exec("UPDATE member SET banned_at = ? WHERE actor = ?", bannedAt, actor);
+    this.ctx.storage.sql.exec(
+      "INSERT INTO ban (actor, operator, banned_at) VALUES (?, ?, ?) " +
+        "ON CONFLICT(actor) DO UPDATE SET operator = excluded.operator, banned_at = excluded.banned_at",
+      actor, operator, bannedAt
+    );
+    return { ...target, banned_at: bannedAt };
+  }
+
+  async unbanMember(actor: string): Promise<MemberRow | null> {
+    const target = await this.getMember(actor);
+    this.ctx.storage.sql.exec("UPDATE member SET banned_at = NULL WHERE actor = ?", actor);
+    this.ctx.storage.sql.exec("DELETE FROM ban WHERE actor = ?", actor);
+    return target ? { ...target, banned_at: null } : null;
+  }
+
+  async listBans(): Promise<BanRow[]> {
+    return this.ctx.storage.sql.exec<BanRow>("SELECT * FROM ban ORDER BY banned_at DESC").toArray();
   }
 
   // ---- tips (S3.3 / S4.4) -----------------------------------------------------------

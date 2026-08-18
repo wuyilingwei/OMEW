@@ -1,10 +1,12 @@
 import { DurableObject } from "cloudflare:workers";
 import { verifyToken } from "./auth";
+import type { EditConfigSnapshot } from "./stronghold-do";
 import {
   DENY_CHANNEL_SPEAK,
   DENY_SECTION_POST,
   DENY_SECTION_REPLY,
   HOME_DOMAIN,
+  type Role,
   type RoomTokenClaims,
 } from "./types";
 
@@ -28,7 +30,7 @@ const RATE_LIMIT_REFILL_PER_SEC = 5;
 interface Attachment {
   actor: string;
   room: string; // room-ref, e.g. "<stronghold>/ch/<resId>"
-  role: "owner" | "mod" | "member";
+  role: Role;
   deny: number;
   last_seq: number;
 }
@@ -48,9 +50,17 @@ type ItemRow = {
 };
 
 interface PendingEntry {
-  senderWs: WebSocket;
+  // null = the write originated over HTTP (task 016 edit/retract endpoints),
+  // there is no sender connection to exclude from the fan-out.
+  senderWs: WebSocket | null;
   frame: Record<string, unknown>;
 }
+
+// task 016: author self-edit/retract outcome. Reuses the item.update / item.delete
+// broadcast shapes (m0-protocol namespacing, S5.4) - "edit"/"retract" describe the
+// operation, not a new wire frame type.
+export type EditOutcome = { ok: true; seq: number } | { ok: false; code: string; message: string };
+export type RetractOutcome = { ok: true; seq: number | null } | { ok: false; code: string; message: string };
 
 export class RoomDO extends DurableObject<Env> {
   private pendingBatch: PendingEntry[] = [];
@@ -96,6 +106,63 @@ export class RoomDO extends DurableObject<Env> {
       )
       .one();
     return row.seq;
+  }
+
+  // ---- edit-policy snapshot (task 016) ---------------------------------------
+  // StrongholdDO pushes {allow_message_edit, allow_message_retract, edit_window_secs}
+  // here on every config change (DO-to-DO, fire-and-forget); three extra `meta` rows
+  // piggyback on the table that already exists for next_seq rather than opening a
+  // second one. Query-back (ensureEditConfig) covers a room that never got a push
+  // yet (created after the stronghold's last config change, or a missed delivery).
+
+  private readEditConfig(): EditConfigSnapshot | null {
+    const rows = this.ctx.storage.sql
+      .exec<{ key: string; value: number }>(
+        "SELECT key, value FROM meta WHERE key IN ('allow_message_edit', 'allow_message_retract', 'edit_window_secs')"
+      )
+      .toArray();
+    if (rows.length < 3) return null;
+    const byKey = new Map(rows.map((r) => [r.key, r.value]));
+    return {
+      allow_message_edit: byKey.get("allow_message_edit") === 1,
+      allow_message_retract: byKey.get("allow_message_retract") === 1,
+      edit_window_secs: byKey.get("edit_window_secs") ?? 0,
+    };
+  }
+
+  private persistEditConfig(cfg: EditConfigSnapshot): void {
+    const entries: [string, number][] = [
+      ["allow_message_edit", cfg.allow_message_edit ? 1 : 0],
+      ["allow_message_retract", cfg.allow_message_retract ? 1 : 0],
+      ["edit_window_secs", cfg.edit_window_secs],
+    ];
+    for (const [key, value] of entries) {
+      this.ctx.storage.sql.exec(
+        "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        key, value
+      );
+    }
+  }
+
+  // DO-to-DO push target, called by StrongholdDO.updateConfig.
+  async setEditConfig(cfg: EditConfigSnapshot): Promise<void> {
+    this.persistEditConfig(cfg);
+  }
+
+  private async ensureEditConfig(strongholdId: string): Promise<EditConfigSnapshot> {
+    const cached = this.readEditConfig();
+    if (cached) return cached;
+    const stub = this.env.STRONGHOLD_DO.getByName(strongholdId);
+    const config = await stub.getConfig();
+    const fetched: EditConfigSnapshot = config
+      ? {
+          allow_message_edit: Boolean(config.allow_message_edit),
+          allow_message_retract: Boolean(config.allow_message_retract),
+          edit_window_secs: config.edit_window_secs,
+        }
+      : { allow_message_edit: true, allow_message_retract: true, edit_window_secs: 300 };
+    this.persistEditConfig(fetched);
+    return fetched;
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -275,31 +342,82 @@ export class RoomDO extends DurableObject<Env> {
     this.reportTip(attachment.room, seq);
   }
 
-  private handleItemUpdate(ws: WebSocket, attachment: Attachment, frame: Record<string, unknown>): void {
+  private async handleItemUpdate(ws: WebSocket, attachment: Attachment, frame: Record<string, unknown>): Promise<void> {
     const targetSeq = Number(frame.target_seq);
     const body = frame.body;
-    if (!Number.isFinite(targetSeq) || !body || typeof body !== "object") {
+    if (!Number.isFinite(targetSeq)) {
       this.sendError(ws, "OMEW_MALFORMED", "bad item.update");
       return;
     }
+    const result = await this.performEdit(attachment.actor, attachment.room, targetSeq, body, ws);
+    if (!result.ok) {
+      this.sendError(ws, result.code, result.message);
+      return;
+    }
+    this.sendAck(ws, { status: "ok", target_seq: targetSeq, seq: result.seq });
+  }
 
-    const target = this.ctx.storage.sql
-      .exec<ItemRow>("SELECT * FROM item WHERE seq = ?", targetSeq)
-      .toArray();
+  private async handleItemDelete(ws: WebSocket, attachment: Attachment, frame: Record<string, unknown>): Promise<void> {
+    const targetSeq = Number(frame.target_seq);
+    const reason = frame.reason == null ? undefined : String(frame.reason);
+    if (!Number.isFinite(targetSeq)) {
+      this.sendError(ws, "OMEW_MALFORMED", "bad item.delete");
+      return;
+    }
+    const result = await this.performRetract(attachment.actor, attachment.role, attachment.room, targetSeq, reason, ws);
+    if (!result.ok) {
+      this.sendError(ws, result.code, result.message);
+      return;
+    }
+    // m0-protocol S3.2: repeated item.delete is an idempotent no-op - result.seq is
+    // null when the target was already tombstoned, no new event was broadcast.
+    this.sendAck(ws, result.seq == null ? { status: "ok", target_seq: targetSeq } : { status: "ok", target_seq: targetSeq, seq: result.seq });
+  }
+
+  // task 016: HTTP entry points for the same edit/retract operations (api.ts),
+  // for clients that aren't holding the room's WS open. Core logic and the
+  // item.update/item.delete broadcast are shared with the WS frame handlers above.
+  async editItem(actor: string, roomRef: string, targetSeq: number, content: unknown): Promise<EditOutcome> {
+    return this.performEdit(actor, roomRef, targetSeq, content, null);
+  }
+
+  async retractItem(actor: string, role: Role, roomRef: string, targetSeq: number, reason?: string): Promise<RetractOutcome> {
+    return this.performRetract(actor, role, roomRef, targetSeq, reason, null);
+  }
+
+  // Author self-edit: gated by the stronghold's allow_message_edit switch and
+  // edit_window_secs window (0 = unlimited), measured from the target item's ts.
+  // Editing someone else's item is never allowed, regardless of role - only
+  // retraction has a moderator override (§9: owner/mod delete = review power).
+  private async performEdit(
+    actor: string,
+    roomRef: string,
+    targetSeq: number,
+    body: unknown,
+    excludeWs: WebSocket | null
+  ): Promise<EditOutcome> {
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return { ok: false, code: "OMEW_MALFORMED", message: "body must be an object" };
+    }
+    const target = this.ctx.storage.sql.exec<ItemRow>("SELECT * FROM item WHERE seq = ?", targetSeq).toArray();
     if (target.length === 0) {
-      this.sendError(ws, "OMEW_TARGET_NOT_FOUND", "target not found");
-      return;
+      return { ok: false, code: "OMEW_TARGET_NOT_FOUND", message: "target not found" };
     }
-    const tomb = this.ctx.storage.sql
-      .exec<{ seq: number }>("SELECT seq FROM tombstone WHERE seq = ?", targetSeq)
-      .toArray();
+    const tomb = this.ctx.storage.sql.exec<{ seq: number }>("SELECT seq FROM tombstone WHERE seq = ?", targetSeq).toArray();
     if (tomb.length > 0) {
-      this.sendError(ws, "OMEW_ITEM_DELETED", "target already deleted");
-      return;
+      return { ok: false, code: "OMEW_ITEM_DELETED", message: "target already deleted" };
     }
-    if (target[0]!.actor !== attachment.actor) {
-      this.sendError(ws, "OMEW_FORBIDDEN", "only the author may edit");
-      return;
+    if (target[0]!.actor !== actor) {
+      return { ok: false, code: "OMEW_FORBIDDEN", message: "only the author may edit" };
+    }
+
+    const strongholdId = roomRef.split("/")[0]!;
+    const cfg = await this.ensureEditConfig(strongholdId);
+    if (!cfg.allow_message_edit) {
+      return { ok: false, code: "EDIT_DISABLED", message: "message editing is disabled for this stronghold" };
+    }
+    if (cfg.edit_window_secs > 0 && (Date.now() - target[0]!.ts) / 1000 > cfg.edit_window_secs) {
+      return { ok: false, code: "WINDOW_EXPIRED", message: "edit window has expired" };
     }
 
     const editedAt = Date.now();
@@ -311,54 +429,69 @@ export class RoomDO extends DurableObject<Env> {
       targetSeq, seq, bodyJson, editedAt
     );
 
-    this.sendAck(ws, { status: "ok", target_seq: targetSeq, seq });
-    this.enqueueBroadcast(ws, { type: "item.update", seq, target_seq: targetSeq, body, edited_at: editedAt });
-    this.reportTip(attachment.room, seq);
+    this.enqueueBroadcast(excludeWs, { type: "item.update", seq, target_seq: targetSeq, body, edited_at: editedAt });
+    this.reportTip(roomRef, seq);
+    return { ok: true, seq };
   }
 
-  private handleItemDelete(ws: WebSocket, attachment: Attachment, frame: Record<string, unknown>): void {
-    const targetSeq = Number(frame.target_seq);
-    const reason = frame.reason == null ? undefined : String(frame.reason);
-    if (!Number.isFinite(targetSeq)) {
-      this.sendError(ws, "OMEW_MALFORMED", "bad item.delete");
-      return;
-    }
-
+  // Author self-retract: gated the same way as edit (allow_message_retract +
+  // edit_window_secs). owner/mod retracting someone else's item is moderation, not
+  // self-service - it bypasses both the switch and the window, but a mod (not
+  // owner) MUST NOT remove the owner's item.
+  private async performRetract(
+    actor: string,
+    role: Role,
+    roomRef: string,
+    targetSeq: number,
+    reason: string | undefined,
+    excludeWs: WebSocket | null
+  ): Promise<RetractOutcome> {
     const alreadyTombstoned = this.ctx.storage.sql
       .exec<{ seq: number }>("SELECT seq FROM tombstone WHERE seq = ?", targetSeq)
       .toArray();
     if (alreadyTombstoned.length > 0) {
-      // m0-protocol S3.2: repeated item.delete is an idempotent no-op, not an error.
-      this.sendAck(ws, { status: "ok", target_seq: targetSeq });
-      return;
+      return { ok: true, seq: null };
     }
 
-    const target = this.ctx.storage.sql
-      .exec<ItemRow>("SELECT * FROM item WHERE seq = ?", targetSeq)
-      .toArray();
+    const target = this.ctx.storage.sql.exec<ItemRow>("SELECT * FROM item WHERE seq = ?", targetSeq).toArray();
     if (target.length === 0) {
-      this.sendError(ws, "OMEW_TARGET_NOT_FOUND", "target not found");
-      return;
+      return { ok: false, code: "OMEW_TARGET_NOT_FOUND", message: "target not found" };
     }
 
-    const isAuthor = target[0]!.actor === attachment.actor;
-    const isModerator = attachment.role === "mod" || attachment.role === "owner";
+    const isAuthor = target[0]!.actor === actor;
+    const isModerator = role === "mod" || role === "owner";
     if (!isAuthor && !isModerator) {
-      this.sendError(ws, "OMEW_FORBIDDEN", "not author or moderator");
-      return;
+      return { ok: false, code: "OMEW_FORBIDDEN", message: "not author or moderator" };
     }
-    const byRole: "author" | "mod" | "owner" = isAuthor ? "author" : (attachment.role as "mod" | "owner");
+
+    const strongholdId = roomRef.split("/")[0]!;
+    if (isAuthor) {
+      const cfg = await this.ensureEditConfig(strongholdId);
+      if (!cfg.allow_message_retract) {
+        return { ok: false, code: "RETRACT_DISABLED", message: "message retraction is disabled for this stronghold" };
+      }
+      if (cfg.edit_window_secs > 0 && (Date.now() - target[0]!.ts) / 1000 > cfg.edit_window_secs) {
+        return { ok: false, code: "WINDOW_EXPIRED", message: "retract window has expired" };
+      }
+    } else if (role === "mod") {
+      const stub = this.env.STRONGHOLD_DO.getByName(strongholdId);
+      const authorMember = await stub.getMember(target[0]!.actor);
+      if (authorMember && authorMember.role === "owner") {
+        return { ok: false, code: "OMEW_FORBIDDEN", message: "mod cannot delete the owner's item" };
+      }
+    }
+    const byRole: "author" | "mod" | "owner" = isAuthor ? "author" : (role as "mod" | "owner");
 
     const ts = Date.now();
     const seq = this.allocateSeq();
     this.ctx.storage.sql.exec(
       "INSERT INTO tombstone (seq, actor, ts, reason) VALUES (?, ?, ?, ?)",
-      targetSeq, attachment.actor, ts, reason ?? null
+      targetSeq, actor, ts, reason ?? null
     );
 
-    this.sendAck(ws, { status: "ok", target_seq: targetSeq, seq });
-    this.enqueueBroadcast(ws, { type: "item.delete", seq, target_seq: targetSeq, reason, by_role: byRole });
-    this.reportTip(attachment.room, seq);
+    this.enqueueBroadcast(excludeWs, { type: "item.delete", seq, target_seq: targetSeq, reason, by_role: byRole });
+    this.reportTip(roomRef, seq);
+    return { ok: true, seq };
   }
 
   // S4.4: RoomDO -> StrongholdDO after each commit; fire-and-forget, never blocks
@@ -456,7 +589,9 @@ export class RoomDO extends DurableObject<Env> {
   // S4.3/S5.2: commit already happened by the time this is called; ack was already
   // sent synchronously above. This only queues the fan-out to everyone else, batched
   // in a window that exists solely while there is something pending to flush.
-  private enqueueBroadcast(senderWs: WebSocket, frame: Record<string, unknown>): void {
+  // senderWs is null for HTTP-originated writes (task 016 edit/retract endpoints) -
+  // there is no sender connection to exclude, every connected socket gets the frame.
+  private enqueueBroadcast(senderWs: WebSocket | null, frame: Record<string, unknown>): void {
     this.pendingBatch.push({ senderWs, frame });
     if (this.batchTimer == null) {
       this.batchTimer = setTimeout(() => this.flushBatch(), BATCH_WINDOW_MS);
