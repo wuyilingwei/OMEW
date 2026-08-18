@@ -817,9 +817,15 @@ claim_input = UTF8("openmew/migration-claim/v1") || 0x00 ||
 - 旧 actor 串 MUST 记入新档案文档的 `also_known_as`。历史事件的 `actor` 字段 MUST 保持原值,MUST NOT 改写——已签名内容不可改写,历史归属经 `also_known_as` 解析。
 - 生效后接收端 MUST 拒绝以 `old` 为 `sub` 的新断言(`OMEW_ACTOR_DEACTIVATED`),即使 A 复活并继续签发。
 
----
+### 7.9 实例身份策略
 
-## 8 房间语义
+实例 MUST 持有以下三项可配置策略,由实例管理员管理:
+
+- **`allow_root`**(是否作为根节点):`false` 的实例 MUST 拒绝本地注册(不充当任何身份的注册权威),仅承载宾客身份与据点内容;其作为据点域 `origin` 的资格不受影响。
+- **`root_requirements`** ⊆ {`email`, `phone`, `code`}:作为根节点时的注册门槛,逐项强制。`phone` 为**保留枚举值**——部署未接入短信通道时 MUST 返回明确错误,MUST NOT 静默跳过该项校验。
+- **`trusted_identity_servers`**(承认哪些服务器的身份):域名列表,`"*"` 表示全部。`POST /federation/session` MUST 在验签**之前**按断言 `iss` 域比对该表;不在名单 MUST 返回 403 `OMEW_ORIGIN_NOT_TRUSTED`,且 MUST NOT 因此向该域发起密钥拉取(与 §11.2 未知 origin 零出站一致)。`"*"` 不豁免 §6 密钥验证与 §11 限流。将某域移出名单时,SHOULD 经 §7.3 撤销传播作废该域用户的现存会话;已落库的历史内容不受追溯。
+
+策略属实例本地配置,不进入信封与联邦事件;实例描述符(§6.1)MAY 以 `registration: open|invite|closed` 概要宣告注册开放度供客户端与目录展示。
 
 ### 8.1 配置
 
@@ -1044,6 +1050,7 @@ peer 收到后 MUST 比对本地缓存的分片版本(§8.3 的分片元数据),
 | `OMEW_ASSERTION_EXPIRED` | 401 | 断言过期 | 是(换新断言) |
 | `OMEW_ASSERTION_REPLAY` | 403 | `jti` 重复 | 否 |
 | `OMEW_SESSION_INVALID` | 401 | 会话 token 无效、已失效或类型不匹配(§7.3) | 是(重建会话) |
+| `OMEW_ORIGIN_NOT_TRUSTED` | 403 | 断言 `iss` 域不在接收实例的 `trusted_identity_servers` 名单(§7.9) | 否 |
 | `OMEW_ACTOR_DEACTIVATED` | 403 | actor 已被其注册实例停用,或已迁移至新 home(§7.8) | 否 |
 | `OMEW_OWNERSHIP_PROOF_INVALID` | 403 | 所有权证明签名无效、密钥链断裂,或本地无钉扎公钥可验(§6.7 / §7.8.1) | 否 |
 | `OMEW_CHALLENGE_STALE` | 409 | 迁移挑战 `nonce` 未知、过期或已使用 | 是(重取 challenge) |
