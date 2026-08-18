@@ -1,11 +1,19 @@
 <script setup lang="ts">
 import { mockChannels } from '../data/mock'
 import { useChannel } from '../composables/useChannel'
+import { useShellView } from '../composables/useShellView'
 import { useStronghold } from '../composables/useStronghold'
+import type { ChannelSummary } from '../types/models'
 import ChannelList from './ChannelList.vue'
 
 const { currentNode } = useStronghold()
 const { selectedChannel, selectChannel } = useChannel()
+const { setView } = useShellView()
+
+function onSelectChannel(channel: ChannelSummary) {
+  selectChannel(channel)
+  setView('chat')
+}
 </script>
 
 <template>
@@ -19,7 +27,7 @@ const { selectedChannel, selectChannel } = useChannel()
     </div>
     <div class="right-column__channels">
       <h3 class="right-column__channels-title">频道</h3>
-      <ChannelList :channels="mockChannels" :selected="selectedChannel" @select="selectChannel" />
+      <ChannelList :channels="mockChannels" :selected="selectedChannel" @select="onSelectChannel" />
     </div>
   </aside>
 </template>
@@ -95,5 +103,19 @@ const { selectedChannel, selectChannel } = useChannel()
   letter-spacing: 0.02em;
   color: var(--text-tertiary);
   text-transform: uppercase;
+}
+
+@media (max-width: 768px) {
+  .right-column {
+    display: none;
+  }
+
+  .shell__body[data-view='stronghold'] .right-column {
+    display: flex;
+    flex: 1 1 auto;
+    width: 100%;
+    min-height: 0;
+    border-left: none;
+  }
 }
 </style>

@@ -96,4 +96,18 @@ const filteredPosts = computed(() =>
   gap: 0.5rem;
   padding: 0 0.75rem 1rem;
 }
+
+@media (max-width: 768px) {
+  .left-column {
+    display: none;
+  }
+
+  .shell__body[data-view='posts'] .left-column {
+    display: flex;
+    flex: 1 1 auto;
+    width: 100%;
+    min-height: 0;
+    border-right: none;
+  }
+}
 </style>

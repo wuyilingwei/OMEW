@@ -73,4 +73,10 @@ defineProps<{ message: ChatMessage }>()
 .message-bubble--mine .message-bubble__time {
   color: var(--accent-text-secondary);
 }
+
+@media (max-width: 768px) {
+  .message-bubble {
+    max-width: 80%;
+  }
+}
 </style>
