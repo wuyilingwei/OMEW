@@ -67,7 +67,7 @@ const emit = defineEmits<{ select: [ChannelSummary] }>()
 }
 
 .channel-list__item--active .channel-list__marker {
-  background: var(--accent-base);
+  background: rgb(var(--colors-primary));
 }
 
 @media (max-width: 768px) {

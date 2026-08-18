@@ -81,7 +81,7 @@ const tabs: { view: ShellView; label: string }[] = [
 }
 
 .mobile-nav__item--active {
-  color: var(--accent-base);
+  color: rgb(var(--colors-primary));
   font-weight: 600;
 }
 

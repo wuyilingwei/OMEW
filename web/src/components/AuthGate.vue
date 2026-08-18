@@ -303,8 +303,8 @@ function finishRegistration() {
 }
 
 .auth-card__tab--active {
-  background: var(--accent-base);
-  color: var(--accent-text);
+  background: rgb(var(--colors-primary));
+  color: var(--on-accent);
 }
 
 .auth-form {

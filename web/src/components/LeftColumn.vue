@@ -85,9 +85,9 @@ const filteredPosts = computed(() =>
 }
 
 .left-column__pill--active {
-  background: var(--accent-base);
+  background: rgb(var(--colors-primary));
   border-color: transparent;
-  color: var(--accent-text);
+  color: var(--on-accent);
 }
 
 .left-column__feed {

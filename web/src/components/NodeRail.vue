@@ -49,8 +49,8 @@ const { selectedNodeId, selectNode } = useStronghold()
   justify-content: center;
   font-size: 0.75rem;
   font-weight: 700;
-  background: var(--accent-base);
-  color: var(--accent-text);
+  background: rgb(var(--colors-primary));
+  color: var(--on-accent);
   margin-bottom: 0.5rem;
 }
 
@@ -84,7 +84,7 @@ const { selectedNodeId, selectNode } = useStronghold()
 }
 
 .node-rail__item--active {
-  border-color: var(--accent-base);
+  border-color: rgb(var(--colors-primary));
   color: var(--text-primary);
 }
 

@@ -33,7 +33,7 @@
 .field input:focus,
 .field textarea:focus {
   outline: none;
-  border-color: var(--accent-base);
+  border-color: rgb(var(--colors-primary));
   background: var(--ctrl-fill-input-active, var(--ctrl-fill-secondary));
 }
 

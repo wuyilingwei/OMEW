@@ -25,8 +25,9 @@ defineProps<{ message: ChatMessage }>()
 }
 
 .message-row--mine {
+  /* row-reverse flips the main axis: default flex-start packing already
+     places content at the visual right edge; flex-end would send it left */
   flex-direction: row-reverse;
-  justify-content: flex-end;
 }
 
 .message-row__avatar {
@@ -43,9 +44,9 @@ defineProps<{ message: ChatMessage }>()
 }
 
 .message-bubble--mine {
-  background: var(--accent-base);
+  background: rgb(var(--colors-primary));
   border-color: transparent;
-  color: var(--accent-text);
+  color: var(--on-accent);
 }
 
 .message-bubble__author {
@@ -71,7 +72,7 @@ defineProps<{ message: ChatMessage }>()
 }
 
 .message-bubble--mine .message-bubble__time {
-  color: var(--accent-text-secondary);
+  color: color-mix(in srgb, var(--on-accent) 70%, transparent);
 }
 
 @media (max-width: 768px) {

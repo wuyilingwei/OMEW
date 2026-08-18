@@ -51,7 +51,7 @@ const { open } = usePostModal()
 }
 
 .post-card:focus-visible {
-  outline: 2px solid var(--accent-base);
+  outline: 2px solid rgb(var(--colors-primary));
   outline-offset: -2px;
 }
 
