@@ -21,8 +21,16 @@
     {
       "binding": "DB",
       "database_name": "openmew",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "6ec2421a-2a72-46d6-acd2-f6356b738772",
       "migrations_dir": "migrations"
     }
+  ],
+  "assets": {
+    "directory": "../web/dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/auth/*", "/stronghold", "/stronghold/*", "/inbox", "/inbox/*"]
+  },
+  "routes": [
+    { "pattern": "omew.wuyilingwei.com", "custom_domain": true }
   ]
 }
