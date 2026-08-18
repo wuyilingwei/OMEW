@@ -16,31 +16,33 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
 <template>
   <Teleport to="body">
-    <div v-if="openPost" class="post-modal-overlay" @click.self="close">
-      <div class="post-modal" role="dialog" aria-modal="true" :aria-label="openPost.title">
-        <WinButton Style="SubtleButtonStyle" class="post-modal__close" @Click="close">关闭</WinButton>
-        <div class="post-modal__scroll">
-          <img v-if="openPost.cover" class="post-modal__cover" :src="openPost.cover" :alt="openPost.title" />
-          <div class="post-modal__body">
-            <h1 class="post-modal__title">{{ openPost.title }}</h1>
-            <div class="post-modal__author-row">
-              <AvatarBadge :seed="openPost.avatar" :size="36" />
-              <div class="post-modal__author-meta">
-                <span class="post-modal__author-name">{{ openPost.author }}</span>
-                <span class="post-modal__time">{{ openPost.timestamp }}</span>
+    <Transition name="post-modal">
+      <div v-if="openPost" class="post-modal-overlay" @click.self="close">
+        <div class="post-modal" role="dialog" aria-modal="true" :aria-label="openPost.title">
+          <WinButton Style="SubtleButtonStyle" class="post-modal__close" @Click="close">关闭</WinButton>
+          <div class="post-modal__scroll">
+            <img v-if="openPost.cover" class="post-modal__cover" :src="openPost.cover" :alt="openPost.title" />
+            <div class="post-modal__body">
+              <h1 class="post-modal__title">{{ openPost.title }}</h1>
+              <div class="post-modal__author-row">
+                <AvatarBadge :seed="openPost.avatar" :size="36" />
+                <div class="post-modal__author-meta">
+                  <span class="post-modal__author-name">{{ openPost.author }}</span>
+                  <span class="post-modal__time">{{ openPost.timestamp }}</span>
+                </div>
               </div>
-            </div>
-            <p v-for="(paragraph, index) in openPost.content.split('\n\n')" :key="index" class="post-modal__paragraph">
-              {{ paragraph }}
-            </p>
-            <div class="post-modal__comments">
-              <h2 class="post-modal__comments-title">评论</h2>
-              <p class="post-modal__comments-empty">暂无评论，来说两句吧。</p>
+              <p v-for="(paragraph, index) in openPost.content.split('\n\n')" :key="index" class="post-modal__paragraph">
+                {{ paragraph }}
+              </p>
+              <div class="post-modal__comments">
+                <h2 class="post-modal__comments-title">评论</h2>
+                <p class="post-modal__comments-empty">暂无评论，来说两句吧。</p>
+              </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    </Transition>
   </Teleport>
 </template>
 
@@ -74,6 +76,38 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   backdrop-filter: blur(32px) saturate(160%);
   -webkit-backdrop-filter: blur(32px) saturate(160%);
   overflow: hidden;
+}
+
+.post-modal-enter-active,
+.post-modal-leave-active {
+  transition: opacity var(--normal-duration) var(--fast-out-slow-in);
+}
+
+.post-modal-enter-active .post-modal,
+.post-modal-leave-active .post-modal {
+  transition:
+    opacity var(--normal-duration) var(--fast-out-slow-in),
+    transform var(--normal-duration) var(--fast-out-slow-in);
+}
+
+.post-modal-enter-from,
+.post-modal-leave-to {
+  opacity: 0;
+}
+
+.post-modal-enter-from .post-modal,
+.post-modal-leave-to .post-modal {
+  opacity: 0;
+  transform: scale(0.94) translateY(12px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .post-modal-enter-active,
+  .post-modal-leave-active,
+  .post-modal-enter-active .post-modal,
+  .post-modal-leave-active .post-modal {
+    transition: none !important;
+  }
 }
 
 .post-modal__close {
