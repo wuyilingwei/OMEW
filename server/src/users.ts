@@ -51,6 +51,13 @@ export function localpartOfActor(actor: string): string {
   return actor.startsWith("@") && colon > 1 ? actor.slice(1, colon) : "";
 }
 
+// The domain half of `@localpart:domain` - distinguishes a local user (domain ==
+// HOME_DOMAIN, looked up in `users`) from a guest actor (looked up in `guest_identity`).
+export function domainOfActor(actor: string): string {
+  const colon = actor.indexOf(":");
+  return actor.startsWith("@") && colon > 1 ? actor.slice(colon + 1) : "";
+}
+
 export async function getInstanceConfig(env: Env): Promise<InstanceConfig> {
   const row = await env.DB.prepare(
     "SELECT allow_root, root_requirements, trusted_identity_servers FROM instance_config WHERE id = 1"

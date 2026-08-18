@@ -1,5 +1,6 @@
 import { dummyPasswordFields, hashPassword, newJti, signToken, verifyPassword, verifyToken } from "./auth";
 import { handleInbox } from "./inbox";
+import type { ConfigRow, MemberRow } from "./stronghold-do";
 import {
   HOME_DOMAIN,
   typeToKind,
@@ -9,6 +10,7 @@ import {
   type StrongholdTokenClaims,
 } from "./types";
 import {
+  domainOfActor,
   generateInviteCode,
   getInstanceConfig,
   isOriginTrusted,
@@ -459,6 +461,286 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     return json(await stub.listMembers());
   }
 
+  // ---- stronghold settings & member management (task 016) --------------------------
+  // New /api/stronghold/* surface: flat {error:CODE} shape, matching /api/register et
+  // al. above - distinct from the /stronghold/* dev-convenience routes above it, which
+  // are untouched and keep serving stronghold/room creation, WS tokens and upgrades.
+
+  m = match("/api/stronghold/:id/config", path);
+  if (m && method === "GET") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const config = await stub.getConfig();
+    if (!config) return apiError(404, "NOT_FOUND");
+    const member = await stub.getMember(actor);
+    if (!member || member.banned_at) return apiError(403, "FORBIDDEN");
+    return json(toApiConfig(config));
+  }
+  if (m && method === "PATCH") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const member = await stub.getMember(actor);
+    if (!member || member.banned_at) return apiError(403, "FORBIDDEN");
+    if (member.role !== "owner" && member.role !== "mod") return apiError(403, "FORBIDDEN");
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    // §9 / proposal: visibility is owner-only, every other config field is owner/mod.
+    if ("visibility" in body && member.role !== "owner") return apiError(403, "FORBIDDEN");
+
+    const patch: Partial<
+      Pick<ConfigRow, "description" | "visibility" | "cover" | "allow_message_edit" | "allow_message_retract" | "edit_window_secs">
+    > = {};
+    if ("description" in body) {
+      if (body.description !== null && typeof body.description !== "string") return apiError(400, "CONFIG_INVALID");
+      patch.description = body.description as string | null;
+    }
+    if ("cover" in body) {
+      if (body.cover !== null && typeof body.cover !== "string") return apiError(400, "CONFIG_INVALID");
+      patch.cover = body.cover as string | null;
+    }
+    if ("visibility" in body) {
+      if (body.visibility !== "public" && body.visibility !== "private") return apiError(400, "CONFIG_INVALID");
+      patch.visibility = body.visibility;
+    }
+    if ("allow_message_edit" in body) {
+      if (typeof body.allow_message_edit !== "boolean") return apiError(400, "CONFIG_INVALID");
+      patch.allow_message_edit = body.allow_message_edit ? 1 : 0;
+    }
+    if ("allow_message_retract" in body) {
+      if (typeof body.allow_message_retract !== "boolean") return apiError(400, "CONFIG_INVALID");
+      patch.allow_message_retract = body.allow_message_retract ? 1 : 0;
+    }
+    if ("edit_window_secs" in body) {
+      if (typeof body.edit_window_secs !== "number" || !Number.isInteger(body.edit_window_secs) || body.edit_window_secs < 0) {
+        return apiError(400, "CONFIG_INVALID");
+      }
+      patch.edit_window_secs = body.edit_window_secs;
+    }
+
+    const updated = await stub.updateConfig(patch);
+    if (!updated) return apiError(404, "NOT_FOUND");
+    return json(toApiConfig(updated));
+  }
+
+  m = match("/api/stronghold/:id/members", path);
+  if (m && method === "GET") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const requester = await stub.getMember(actor);
+    if (!requester || requester.banned_at) return apiError(403, "FORBIDDEN");
+
+    const tab = url.searchParams.get("tab") ?? "all";
+    if (tab !== "all" && tab !== "restricted" && tab !== "banned") return apiError(400, "TAB_INVALID");
+    const after = url.searchParams.get("after");
+
+    const all = await stub.listMembers();
+    const filtered =
+      tab === "banned"
+        ? all.filter((entry) => entry.banned_at != null)
+        : tab === "restricted"
+          ? all.filter((entry) => entry.banned_at == null && entry.deny !== 0)
+          : all.filter((entry) => entry.banned_at == null);
+
+    const { page, next_cursor } = paginateMembers(filtered, after);
+    const profiles = await actorProfiles(env, page.map((entry) => entry.actor));
+    const entries = page.map((entry) => toMemberEntry(entry, profiles.get(entry.actor)));
+    return json({ entries, next_cursor });
+  }
+
+  m = match("/api/stronghold/:id/members/:actor", path);
+  if (m && method === "PATCH") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const requester = await stub.getMember(actor);
+    if (!requester || requester.banned_at) return apiError(403, "FORBIDDEN");
+    if (requester.role !== "owner" && requester.role !== "mod") return apiError(403, "FORBIDDEN");
+
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+
+    const target = await stub.getMember(m.actor!);
+    if (!target) return apiError(404, "NOT_FOUND");
+    if (target.role === "owner") return apiError(403, "FORBIDDEN");
+
+    let role: "mod" | "member" | undefined;
+    if ("role" in body) {
+      // §9: appointing/dismissing a mod is owner-only.
+      if (requester.role !== "owner") return apiError(403, "FORBIDDEN");
+      if (body.role !== "mod" && body.role !== "member") return apiError(400, "ROLE_INVALID");
+      role = body.role;
+    }
+
+    let deny: number | undefined;
+    if ("deny" in body) {
+      if (typeof body.deny !== "number" || !Number.isInteger(body.deny) || body.deny < 0) return apiError(400, "CONFIG_INVALID");
+      deny = body.deny;
+      // §9: deny only ever applies to a `member`. Denying a mod - whether or not
+      // this same request also tries to demote them - MUST fail; the caller has
+      // to demote first in a separate request, then apply deny in a second one.
+      if (deny !== 0 && target.role === "mod") return apiError(400, "DENY_ON_MOD");
+    }
+
+    const updated = await stub.updateMember(m.actor!, { role, deny });
+    if (!updated) return apiError(404, "NOT_FOUND");
+    const profiles = await actorProfiles(env, [updated.actor]);
+    return json(toMemberEntry(updated, profiles.get(updated.actor)));
+  }
+  if (m && method === "DELETE") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const requester = await stub.getMember(actor);
+    if (!requester || requester.banned_at) return apiError(403, "FORBIDDEN");
+    if (requester.role !== "owner" && requester.role !== "mod") return apiError(403, "FORBIDDEN");
+
+    const target = await stub.getMember(m.actor!);
+    if (!target) return apiError(404, "NOT_FOUND");
+    if (target.role === "owner") return apiError(403, "FORBIDDEN");
+    if (target.role === "mod" && requester.role !== "owner") return apiError(403, "FORBIDDEN");
+
+    await stub.removeMember(m.actor!);
+    return new Response(null, { status: 204, headers: cors() });
+  }
+
+  m = match("/api/stronghold/:id/bans", path);
+  if (m && method === "GET") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const requester = await stub.getMember(actor);
+    if (!requester || requester.banned_at) return apiError(403, "FORBIDDEN");
+    if (requester.role !== "owner" && requester.role !== "mod") return apiError(403, "FORBIDDEN");
+    const entries = await stub.listBans();
+    return json({ entries });
+  }
+
+  m = match("/api/stronghold/:id/bans/:actor", path);
+  if (m && method === "PUT") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const requester = await stub.getMember(actor);
+    if (!requester || requester.banned_at) return apiError(403, "FORBIDDEN");
+    if (requester.role !== "owner" && requester.role !== "mod") return apiError(403, "FORBIDDEN");
+
+    const target = await stub.getMember(m.actor!);
+    if (!target) return apiError(404, "NOT_FOUND");
+    if (target.role === "owner") return apiError(403, "FORBIDDEN");
+    if (target.role === "mod" && requester.role !== "owner") return apiError(403, "FORBIDDEN");
+
+    const banned = await stub.banMember(m.actor!, actor);
+    if (!banned) return apiError(404, "NOT_FOUND");
+    return json({ actor: banned.actor, operator: actor, banned_at: banned.banned_at });
+  }
+  if (m && method === "DELETE") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const requester = await stub.getMember(actor);
+    if (!requester || requester.banned_at) return apiError(403, "FORBIDDEN");
+    if (requester.role !== "owner" && requester.role !== "mod") return apiError(403, "FORBIDDEN");
+
+    await stub.unbanMember(m.actor!);
+    return new Response(null, { status: 204, headers: cors() });
+  }
+
+  m = match("/api/stronghold/:id/transfer", path);
+  if (m && method === "POST") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const requester = await stub.getMember(actor);
+    if (!requester || requester.banned_at) return apiError(403, "FORBIDDEN");
+    if (requester.role !== "owner") return apiError(403, "FORBIDDEN");
+
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    const to = typeof body.to === "string" ? body.to : "";
+    if (!to) return apiError(400, "MALFORMED");
+
+    const updated = await stub.transferOwnership(actor, to);
+    if (!updated) return apiError(400, "TARGET_NOT_MEMBER");
+    return json(toApiConfig(updated));
+  }
+
+  // ---- room item edit/retract (task 016 - "edit"/"retract" HTTP entry points; the
+  // WS frame types stay item.update/item.delete per m0-protocol S5.4 namespacing) ----
+
+  m = match("/api/stronghold/:id/rooms/:resId/items/:seq", path);
+  if (m && method === "PATCH") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const strongholdStub = env.STRONGHOLD_DO.getByName(m.id!);
+    const member = await strongholdStub.getMember(actor);
+    if (!member || member.banned_at) return apiError(403, "FORBIDDEN");
+    const room = await strongholdStub.getRoom(m.resId!);
+    if (!room) return apiError(404, "NOT_FOUND");
+    const seq = Number(m.seq);
+    if (!Number.isFinite(seq)) return apiError(400, "MALFORMED");
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+
+    const roomRef = `${m.id!}/${typeToKind(room.type)}/${m.resId!}`;
+    const roomStub = env.ROOM_DO.getByName(roomRef);
+    const result = await roomStub.editItem(actor, roomRef, seq, body.content);
+    if (!result.ok) return apiError(roomErrorStatus(result.code), result.code);
+    return json({ seq: result.seq, target_seq: seq });
+  }
+  if (m && method === "DELETE") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const strongholdStub = env.STRONGHOLD_DO.getByName(m.id!);
+    const member = await strongholdStub.getMember(actor);
+    if (!member || member.banned_at) return apiError(403, "FORBIDDEN");
+    const room = await strongholdStub.getRoom(m.resId!);
+    if (!room) return apiError(404, "NOT_FOUND");
+    const seq = Number(m.seq);
+    if (!Number.isFinite(seq)) return apiError(400, "MALFORMED");
+
+    const roomRef = `${m.id!}/${typeToKind(room.type)}/${m.resId!}`;
+    const roomStub = env.ROOM_DO.getByName(roomRef);
+    const result = await roomStub.retractItem(actor, member.role, roomRef, seq);
+    if (!result.ok) return apiError(roomErrorStatus(result.code), result.code);
+    return json({ seq: result.seq, target_seq: seq });
+  }
+
+  // ---- user profile lookup (task 016; 登录可读) --------------------------------------
+
+  m = match("/api/users/:actor", path);
+  if (m && method === "GET") {
+    const requester = await requireActor(request, env);
+    if (!requester) return apiError(401, "AUTH_REQUIRED");
+    const target = m.actor!;
+    if (!target.startsWith("@") || !target.includes(":")) return apiError(400, "MALFORMED");
+
+    if (domainOfActor(target) === HOME_DOMAIN) {
+      const row = await env.DB.prepare("SELECT display_name, created_at FROM users WHERE localpart = ?")
+        .bind(localpartOfActor(target))
+        .first<{ display_name: string; created_at: number }>();
+      if (!row) return apiError(404, "NOT_FOUND");
+      return json({ actor: target, display_name: row.display_name, avatar: null, created_at: row.created_at, is_guest: false });
+    }
+
+    const row = await env.DB.prepare(
+      "SELECT display_name, avatar, first_seen_at, registered_origin FROM guest_identity WHERE actor = ?"
+    )
+      .bind(target)
+      .first<{ display_name: string | null; avatar: string | null; first_seen_at: number; registered_origin: string }>();
+    if (!row) return apiError(404, "NOT_FOUND");
+    return json({
+      actor: target,
+      display_name: row.display_name ?? target,
+      avatar: row.avatar,
+      created_at: row.first_seen_at,
+      is_guest: true,
+      home_domain: row.registered_origin,
+    });
+  }
+
   // ---- WS token minting (m0-protocol S7.3 / S9) ------------------------------------
 
   m = match("/stronghold/:id/rooms/:resId/token", path);
@@ -548,6 +830,115 @@ function asOptionalString(v: unknown): string | undefined {
 
 function asOptionalNumber(v: unknown): number | undefined {
   return typeof v === "number" ? v : undefined;
+}
+
+// ---- task 016: stronghold settings & member management helpers -------------------
+
+// DO storage keeps allow_message_edit/allow_message_retract as 0/1 (SqlStorageValue
+// convention, matches restricted/archived elsewhere in this codebase) - coerce to
+// real JSON booleans at the wire boundary, same pattern as users.ts's toPublicUser.
+function toApiConfig(row: ConfigRow) {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    cover: row.cover,
+    visibility: row.visibility,
+    icon: row.icon,
+    allow_message_edit: Boolean(row.allow_message_edit),
+    allow_message_retract: Boolean(row.allow_message_retract),
+    edit_window_secs: row.edit_window_secs,
+    owner_actor: row.owner_actor,
+    created_at: row.created_at,
+  };
+}
+
+const ROOM_ERROR_STATUS: Record<string, number> = {
+  OMEW_MALFORMED: 400,
+  OMEW_TARGET_NOT_FOUND: 404,
+  OMEW_ITEM_DELETED: 409,
+  OMEW_FORBIDDEN: 403,
+  EDIT_DISABLED: 403,
+  RETRACT_DISABLED: 403,
+  WINDOW_EXPIRED: 403,
+};
+
+function roomErrorStatus(code: string): number {
+  return ROOM_ERROR_STATUS[code] ?? 400;
+}
+
+interface ActorProfile {
+  display_name: string;
+  is_guest: boolean;
+  home_domain?: string;
+}
+
+// Batch actor -> profile lookup, split across the local `users` table and the
+// `guest_identity` table per m0-protocol §7.2's authority split (registration
+// instance owns the profile; a member row here only owns role/deny/joined_at).
+async function actorProfiles(env: Env, actors: string[]): Promise<Map<string, ActorProfile>> {
+  const result = new Map<string, ActorProfile>();
+  const unique = [...new Set(actors)];
+  const localActors = unique.filter((a) => domainOfActor(a) === HOME_DOMAIN);
+  const guestActors = unique.filter((a) => domainOfActor(a) !== HOME_DOMAIN);
+
+  if (localActors.length > 0) {
+    const localparts = localActors.map(localpartOfActor);
+    const placeholders = localparts.map(() => "?").join(",");
+    const { results } = await env.DB.prepare(
+      `SELECT localpart, display_name FROM users WHERE localpart IN (${placeholders})`
+    )
+      .bind(...localparts)
+      .all<{ localpart: string; display_name: string }>();
+    const byLocalpart = new Map(results.map((r) => [r.localpart, r.display_name]));
+    for (const actor of localActors) {
+      const localpart = localpartOfActor(actor);
+      result.set(actor, { display_name: byLocalpart.get(localpart) ?? localpart, is_guest: false });
+    }
+  }
+
+  if (guestActors.length > 0) {
+    const placeholders = guestActors.map(() => "?").join(",");
+    const { results } = await env.DB.prepare(
+      `SELECT actor, display_name, registered_origin FROM guest_identity WHERE actor IN (${placeholders})`
+    )
+      .bind(...guestActors)
+      .all<{ actor: string; display_name: string | null; registered_origin: string }>();
+    const byActor = new Map(results.map((r) => [r.actor, r]));
+    for (const actor of guestActors) {
+      const row = byActor.get(actor);
+      result.set(actor, { display_name: row?.display_name ?? actor, is_guest: true, home_domain: row?.registered_origin });
+    }
+  }
+
+  return result;
+}
+
+function toMemberEntry(member: MemberRow, profile: ActorProfile | undefined) {
+  return {
+    actor: member.actor,
+    display_name: profile?.display_name ?? member.actor,
+    role: member.role,
+    deny: member.deny,
+    joined_at: member.joined_at,
+    is_guest: profile?.is_guest ?? false,
+    ...(profile?.home_domain ? { home_domain: profile.home_domain } : {}),
+  };
+}
+
+const MEMBERS_PAGE_SIZE = 50;
+
+function paginateMembers(members: MemberRow[], afterCursor: string | null): { page: MemberRow[]; next_cursor: string | null } {
+  const sorted = [...members].sort((a, b) => a.joined_at - b.joined_at || a.actor.localeCompare(b.actor));
+  let startIndex = 0;
+  if (afterCursor) {
+    const idx = sorted.findIndex((entry) => entry.actor === afterCursor);
+    startIndex = idx >= 0 ? idx + 1 : 0;
+  }
+  const page = sorted.slice(startIndex, startIndex + MEMBERS_PAGE_SIZE);
+  const hasMore = startIndex + MEMBERS_PAGE_SIZE < sorted.length;
+  const last = page[page.length - 1];
+  return { page, next_cursor: hasMore && last ? last.actor : null };
 }
 
 async function issueSessionToken(actor: string, env: Env): Promise<string> {
