@@ -87,4 +87,42 @@ const { selectedNodeId, selectNode } = useStronghold()
   border-color: var(--accent-base);
   color: var(--text-primary);
 }
+
+@media (max-width: 768px) {
+  .node-rail {
+    display: none;
+  }
+
+  .shell__body[data-view='stronghold'] .node-rail {
+    display: flex;
+    flex-direction: row;
+    flex: 0 0 auto;
+    width: 100%;
+    height: auto;
+    padding: 0.5rem 0.75rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: none;
+    border-bottom: 1px solid var(--stroke-divider);
+  }
+
+  .shell__body[data-view='stronghold'] .node-rail__logo {
+    margin-bottom: 0;
+  }
+
+  .shell__body[data-view='stronghold'] .node-rail__list {
+    flex-direction: row;
+    width: auto;
+  }
+
+  .shell__body[data-view='stronghold'] .node-rail__item {
+    width: 44px;
+    height: 44px;
+    flex: 0 0 auto;
+  }
+
+  .shell__body[data-view='stronghold'] .node-rail__item:active {
+    background: var(--ctrl-fill-tertiary);
+  }
+}
 </style>

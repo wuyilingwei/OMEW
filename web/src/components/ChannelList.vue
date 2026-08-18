@@ -69,4 +69,14 @@ const emit = defineEmits<{ select: [ChannelSummary] }>()
 .channel-list__item--active .channel-list__marker {
   background: var(--accent-base);
 }
+
+@media (max-width: 768px) {
+  .channel-list__item {
+    padding: 0.75rem 1rem;
+  }
+
+  .channel-list__item:active {
+    background: var(--ctrl-fill-tertiary);
+  }
+}
 </style>
