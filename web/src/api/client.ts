@@ -85,11 +85,19 @@ function toStrongholdMember(entry: WireMemberEntry): StrongholdMember {
   }
 }
 
+// a 401 on an authenticated request means the stored session is dead
+// (secret rotation, revocation); the handler drops the app back to the
+// auth gate instead of letting every consumer retry into a loading loop.
+// Guarded to authed requests only, so a failed login attempt (also 401)
+// never clears an unrelated existing session.
+let onUnauthorized: (() => void) | null = null
+export function setUnauthorizedHandler(handler: () => void) {
+  onUnauthorized = handler
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
-  })
+  const headers = { 'Content-Type': 'application/json', ...(init?.headers ?? {}) }
+  const res = await fetch(`${API_BASE}${path}`, { ...init, headers })
   if (res.status === 204) return undefined as T
   const body = await res.json().catch(() => ({}))
   // /api/* uses the flat {error: "CODE"} shape; the /stronghold/* dev-convenience
@@ -97,6 +105,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const errVal = body?.error
   if (!res.ok || errVal) {
     const code = typeof errVal === 'string' ? errVal : (errVal?.code ?? 'UNKNOWN_ERROR')
+    if (res.status === 401 && 'Authorization' in headers) onUnauthorized?.()
     throw new ApiRequestError(code, res.status)
   }
   return body as T

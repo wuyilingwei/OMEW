@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import { api } from '../api'
+import { setUnauthorizedHandler } from '../api/client'
 import type { AuthResponse, AuthUser, LoginPayload, RegisterPayload } from '../api/types'
 
 const TOKEN_KEY = 'openmew-token'
@@ -51,6 +52,8 @@ function logout() {
   user.value = null
   persist()
 }
+
+setUnauthorizedHandler(logout)
 
 export function useAuth() {
   return {
