@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { api, ApiRequestError } from '../api'
+import { useStorageUsage } from '../composables/useStorageUsage'
+import { fileUploadError } from '../utils/validate'
 import { WinButton } from '../vendor/winui'
 
 const props = defineProps<{ modelValue: string; token: string }>()
@@ -11,6 +13,8 @@ const UPLOAD_ERROR_MESSAGES: Record<string, string> = {
   QUOTA_EXCEEDED: '你的存储配额已用尽',
   MIME_REJECTED: '不支持的文件类型',
 }
+
+const { usage, noteUploaded } = useStorageUsage()
 
 const advanced = ref(false)
 const uploading = ref(false)
@@ -27,12 +31,20 @@ async function onFileChange(event: Event) {
   const file = input.files?.[0]
   if (!file) return
   error.value = ''
+  // pre-flight against the cached /api/me/storage usage before spending a request
+  const preflight = fileUploadError(file, usage.value)
+  if (preflight) {
+    error.value = preflight
+    input.value = ''
+    return
+  }
   uploading.value = true
   progress.value = 0
   try {
     const result = await api.uploadMedia(props.token, file, (pct) => {
       progress.value = pct
     })
+    noteUploaded(result.size)
     emit('update:modelValue', result.url)
   } catch (err) {
     error.value = err instanceof ApiRequestError ? (UPLOAD_ERROR_MESSAGES[err.code] ?? `上传失败：${err.code}`) : '上传失败，请稍后重试'

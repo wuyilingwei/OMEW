@@ -1,2 +1,5 @@
 export { default as WinButton } from './components/WinButton.vue'
 export { default as WinDropDownButton } from './components/WinDropDownButton.vue'
+export { default as WinToggleSwitch } from './components/WinToggleSwitch.vue'
+export { default as WinInfoBar } from './components/WinInfoBar.vue'
+export { default as WinSelectorBar } from './components/WinSelectorBar.vue'

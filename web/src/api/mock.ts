@@ -318,6 +318,10 @@ function toPost(room: MockRoomState, item: RoomItem) {
     title: item.body.title ?? '',
     cover: item.body.cover ?? null,
     preview: item.body.preview ?? '',
+    // unlike the real backend (server-side projection gap, tracked
+    // separately), the mock stand-in just returns the stored body's media
+    // as-is so image-message dev/visual checks work end-to-end.
+    media: item.body.media,
     last_reply_seq: idx?.last_reply_seq ?? item.seq,
     reply_count: idx?.reply_count ?? 0,
     bumped_at: idx?.bumped_at ?? item.ts,

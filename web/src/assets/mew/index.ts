@@ -6,6 +6,7 @@ import defaultAvatar0Url from './default-avatar-0.png'
 import defaultAvatar1Url from './default-avatar-1.png'
 import defaultNodePageBgUrl from './default-node-page-bg.png'
 import helpfulUrl from './helpful.webp'
+import imAddReactionUrl from './im-add-reaction.png'
 import kusaUrl from './kusa.webp'
 import lanceUrl from './lance.webp'
 import likeUrl from './like.webp'
@@ -44,6 +45,7 @@ export const MASCOT_EMOTES: Record<string, string> = {
   az: azUrl,
   comfort: comfortUrl,
   helpful: helpfulUrl,
+  'im-add-reaction': imAddReactionUrl,
   kusa: kusaUrl,
   lance: lanceUrl,
   like: likeUrl,

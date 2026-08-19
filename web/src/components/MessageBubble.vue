@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import type { MediaAttachment } from '../api/types'
 import { useEmotes } from '../composables/useEmotes'
 import { buildEmoteLookup, parseMessageText, pureEmoteToken } from '../utils/emote'
 import AvatarBadge from './AvatarBadge.vue'
+import MediaGrid from './MediaGrid.vue'
 
 export interface MessageVM {
   key: string
@@ -10,6 +12,7 @@ export interface MessageVM {
   actor: string
   displayName: string
   content: string
+  media?: MediaAttachment[]
   timestamp: string
   editedAt?: number
   mine: boolean
@@ -52,7 +55,7 @@ const pureEmote = computed(() => pureEmoteToken(segments.value))
       </template>
       <template v-else>
         <img v-if="pureEmote" class="message-bubble__big-emote" :src="pureEmote.url" :alt="message.content" />
-        <div v-else class="message-bubble__content">
+        <div v-else-if="message.content" class="message-bubble__content">
           <template v-for="(segment, index) in segments" :key="index">
             <img
               v-if="segment.type === 'emote'"
@@ -63,6 +66,7 @@ const pureEmote = computed(() => pureEmoteToken(segments.value))
             <template v-else>{{ segment.value }}</template>
           </template>
         </div>
+        <MediaGrid v-if="message.media?.length" :media="message.media" />
         <div class="message-bubble__meta">
           <span v-if="message.pending">发送中…</span>
           <span v-else-if="message.failed">

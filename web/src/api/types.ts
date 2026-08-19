@@ -155,12 +155,20 @@ export interface CreateRoomPayload {
 
 // ---- room items (chat messages / posts / replies) -------------------------
 
+// image attachment as carried on an item.create WS frame's free-form body -
+// server doesn't validate the shape (017/019), this is a client-side contract.
+export interface MediaAttachment {
+  id: string
+  url: string
+  mime: string
+}
+
 export interface ItemBody {
   text?: string
   title?: string
   cover?: string
   preview?: string
-  media?: unknown
+  media?: MediaAttachment[]
   quote?: unknown
 }
 
@@ -195,6 +203,10 @@ export interface PostSummary {
   title: string
   cover: string | null
   preview: string
+  // optional: real listPosts/getPost responses don't project this field out
+  // of the stored body yet (server-side follow-up) - present for the
+  // author's own just-created post (local echo) and in mock/dev.
+  media?: MediaAttachment[]
   last_reply_seq: number
   reply_count: number
   bumped_at: number
@@ -263,5 +275,9 @@ export interface Emote {
 export interface EmotePack {
   id: string
   name: string
+  // optional human-readable label for the pack header, distinct from `name`
+  // (which is the stable key embedded in :pack:name: tokens) - only the
+  // built-in default pack sets this, instance packs fall back to `name`.
+  display?: string
   emotes: Emote[]
 }

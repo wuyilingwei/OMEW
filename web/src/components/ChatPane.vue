@@ -3,10 +3,11 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { EMPTY_STATE } from '../assets/mew'
 import { useAuth } from '../composables/useAuth'
 import { useChatRoom } from '../composables/useChatRoom'
+import { useImageAttachments } from '../composables/useImageAttachments'
 import { useStrongholdConfig } from '../composables/useStrongholdConfig'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
 import { actorLocalpart } from '../utils/actor'
-import { WinButton } from '../vendor/winui'
+import { WinButton, WinInfoBar } from '../vendor/winui'
 import EmotePicker from './EmotePicker.vue'
 import EmptyState from './EmptyState.vue'
 import MessageBubble, { type MessageVM } from './MessageBubble.vue'
@@ -15,12 +16,14 @@ const auth = useAuth()
 const { config } = useStrongholdConfig()
 const { members } = useStrongholdMembers()
 const { items, pending, historyLoading, hasMoreHistory, loadOlder, sendText, resend, editMessage, retractMessage } = useChatRoom()
+const attachments = useImageAttachments()
 
 const draft = ref('')
 const editingSeq = ref<number | null>(null)
 const editingText = ref('')
 const scrollEl = ref<HTMLElement | null>(null)
 const showEmotePicker = ref(false)
+const imageInput = ref<HTMLInputElement | null>(null)
 
 function displayName(actor: string): string {
   return members.value.find((m) => m.actor === actor)?.display_name ?? actorLocalpart(actor)
@@ -49,6 +52,7 @@ const messages = computed<MessageVM[]>(() => {
     actor: item.actor,
     displayName: displayName(item.actor),
     content: item.body.text ?? '',
+    media: item.body.media,
     timestamp: formatTime(item.ts),
     editedAt: item.edited_at,
     mine: item.actor === auth.user.value?.actor,
@@ -63,6 +67,7 @@ const messages = computed<MessageVM[]>(() => {
     actor: auth.user.value?.actor ?? '',
     displayName: displayName(auth.user.value?.actor ?? ''),
     content: p.text,
+    media: p.media,
     timestamp: formatTime(p.ts),
     mine: true,
     editable: false,
@@ -82,9 +87,12 @@ const groupedMessages = computed(() =>
 )
 
 function submit() {
+  if (!draft.value.trim() && !attachments.items.value.length) return
   const text = draft.value
+  const media = attachments.items.value.length ? [...attachments.items.value] : undefined
   draft.value = ''
-  sendText(text)
+  attachments.reset()
+  sendText(text, media)
 }
 
 function pickEmote(code: string) {
@@ -96,6 +104,33 @@ function onEnter(event: KeyboardEvent) {
   if (event.shiftKey) return
   event.preventDefault()
   submit()
+}
+
+function pickImages() {
+  imageInput.value?.click()
+}
+
+function onImageInputChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  if (input.files?.length) void attachments.addFiles(input.files)
+  input.value = ''
+}
+
+function onPaste(event: ClipboardEvent) {
+  const files = [...(event.clipboardData?.items ?? [])]
+    .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => file != null)
+  if (files.length) {
+    event.preventDefault()
+    void attachments.addFiles(files)
+  }
+}
+
+function onDrop(event: DragEvent) {
+  event.preventDefault()
+  const files = [...(event.dataTransfer?.files ?? [])].filter((file) => file.type.startsWith('image/'))
+  if (files.length) void attachments.addFiles(files)
 }
 
 function startEdit(message: MessageVM) {
@@ -158,19 +193,48 @@ watch(
         @resend="onResend(entry.message)"
       />
     </div>
-    <div class="chat-pane__compose">
-      <EmotePicker v-if="showEmotePicker" @pick="pickEmote" @close="showEmotePicker = false" />
-      <WinButton Style="SubtleButtonStyle" class="chat-pane__emote-btn" title="表情" @Click="showEmotePicker = !showEmotePicker">
-        😀
-      </WinButton>
-      <textarea
-        v-model="draft"
-        class="chat-pane__input"
-        rows="1"
-        placeholder="说点什么…"
-        @keydown.enter="onEnter"
-      ></textarea>
-      <WinButton Style="AccentButtonStyle" class="chat-pane__send" @Click="submit">发送</WinButton>
+    <div class="chat-pane__compose-wrap" @dragover.prevent @drop="onDrop">
+      <WinInfoBar
+        v-if="attachments.error.value"
+        :IsOpen="true"
+        :IsClosable="false"
+        :IsIconVisible="false"
+        Severity="Error"
+        class="chat-pane__attach-error"
+      >
+        {{ attachments.error.value }}
+      </WinInfoBar>
+      <div v-if="attachments.items.value.length" class="chat-pane__attachments">
+        <div v-for="item in attachments.items.value" :key="item.id" class="chat-pane__attachment">
+          <img :src="item.url" alt="" />
+          <button type="button" class="chat-pane__attachment-remove" title="移除" @click="attachments.remove(item.id)">×</button>
+        </div>
+      </div>
+      <div class="chat-pane__compose">
+        <EmotePicker v-if="showEmotePicker" @pick="pickEmote" @close="showEmotePicker = false" />
+        <WinButton Style="SubtleButtonStyle" class="chat-pane__emote-btn" title="表情" @Click="showEmotePicker = !showEmotePicker">
+          😀
+        </WinButton>
+        <input ref="imageInput" class="chat-pane__image-input" type="file" accept="image/*" multiple @change="onImageInputChange" />
+        <WinButton
+          Style="SubtleButtonStyle"
+          class="chat-pane__image-btn"
+          title="发送图片"
+          :IsEnabled="!attachments.uploading.value"
+          @Click="pickImages"
+        >
+          🖼
+        </WinButton>
+        <textarea
+          v-model="draft"
+          class="chat-pane__input"
+          rows="1"
+          placeholder="说点什么…"
+          @keydown.enter="onEnter"
+          @paste="onPaste"
+        ></textarea>
+        <WinButton Style="AccentButtonStyle" class="chat-pane__send" @Click="submit">发送</WinButton>
+      </div>
     </div>
   </section>
 </template>
@@ -200,6 +264,53 @@ watch(
   margin-bottom: 0.75rem;
 }
 
+.chat-pane__compose-wrap {
+  flex: 0 0 auto;
+  background: var(--layer-default);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border-top: 1px solid var(--stroke-divider);
+}
+
+.chat-pane__attach-error {
+  margin: 0.6rem 1rem 0;
+}
+
+.chat-pane__attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.6rem 1rem 0;
+}
+
+.chat-pane__attachment {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-xs);
+  overflow: hidden;
+  border: 1px solid var(--card-stroke);
+}
+
+.chat-pane__attachment img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.chat-pane__attachment-remove {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 18px;
+  height: 18px;
+  line-height: 16px;
+  border: none;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 0.85rem;
+}
+
 .chat-pane__compose {
   position: relative;
   flex: 0 0 auto;
@@ -207,17 +318,22 @@ watch(
   align-items: flex-end;
   gap: 0.5rem;
   padding: 0.75rem 1rem;
-  background: var(--layer-default);
-  backdrop-filter: blur(24px) saturate(160%);
-  -webkit-backdrop-filter: blur(24px) saturate(160%);
-  border-top: 1px solid var(--stroke-divider);
 }
 
-.chat-pane__emote-btn {
+.chat-pane__emote-btn,
+.chat-pane__image-btn {
   min-height: 40px;
   padding: 0 0.7rem;
   border-radius: var(--radius-md);
   font-size: 1.1rem;
+}
+
+.chat-pane__image-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
 }
 
 .chat-pane__input {

@@ -1,7 +1,7 @@
 import { computed, ref, watch } from 'vue'
 import { api } from '../api'
 import { createRoomTransport } from '../api/transport'
-import type { PostReply, PostSummary, PostThread, RoomSummary } from '../api/types'
+import type { MediaAttachment, PostReply, PostSummary, PostThread, RoomSummary } from '../api/types'
 import type { RoomTransport } from '../api/roomSocket'
 import { useAuth } from './useAuth'
 import { useStronghold } from './useStronghold'
@@ -35,6 +35,7 @@ interface PendingCreate {
   title?: string
   text: string
   cover?: string
+  media?: MediaAttachment[]
   parentSeq?: number
 }
 const pendingCreates = new Map<string, PendingCreate>()
@@ -97,13 +98,21 @@ async function connectRoom(nodeId: string, room: RoomSummary) {
             title: pending.title ?? '',
             cover: pending.cover ?? null,
             preview: pending.text.slice(0, 80),
+            media: pending.media,
             last_reply_seq: ack.seq,
             reply_count: 0,
             bumped_at: ts,
           }
           if (!posts.value.some((p) => p.post_seq === ack.seq)) posts.value.unshift(entry)
+          // the just-created post's own detail view (if open) won't otherwise
+          // pick up media - the real listPosts/getPost projection doesn't
+          // carry it yet (server-side gap tracked separately) - patch the
+          // locally-known thread in place so the author's own view is correct.
+          if (thread.value && thread.value.post.post_seq === ack.seq && pending.media?.length) {
+            thread.value = { ...thread.value, post: { ...thread.value.post, media: pending.media } }
+          }
         } else if (thread.value && thread.value.post.post_seq === pending.parentSeq) {
-          const reply: PostReply = { seq: ack.seq, actor: pending.actor, ts, body: { text: pending.text } }
+          const reply: PostReply = { seq: ack.seq, actor: pending.actor, ts, body: { text: pending.text, media: pending.media } }
           if (!thread.value.replies.some((r) => r.seq === reply.seq)) {
             thread.value = { ...thread.value, replies: [reply, ...thread.value.replies] }
           }
@@ -166,7 +175,7 @@ export function useSectionRoom() {
     { immediate: true },
   )
 
-  function createPost(title: string, text: string, cover?: string) {
+  function createPost(title: string, text: string, cover?: string, media?: MediaAttachment[]) {
     const auth = useAuth()
     if (!transport || !auth.user.value) return false
     const clientId = crypto.randomUUID()
@@ -175,9 +184,17 @@ export function useSectionRoom() {
     const trimmedCover = cover?.trim() || undefined
     const body: Record<string, unknown> = { title: trimmedTitle, text: trimmedText }
     if (trimmedCover) body.cover = trimmedCover
+    if (media?.length) body.media = media
     const ok = transport.createItem(clientId, 'post', body)
     if (ok) {
-      pendingCreates.set(clientId, { kind: 'post', actor: auth.user.value.actor, title: trimmedTitle, text: trimmedText, cover: trimmedCover })
+      pendingCreates.set(clientId, {
+        kind: 'post',
+        actor: auth.user.value.actor,
+        title: trimmedTitle,
+        text: trimmedText,
+        cover: trimmedCover,
+        media,
+      })
     }
     return ok
   }
@@ -222,15 +239,17 @@ export function useSectionRoom() {
     }
   }
 
-  function createReply(text: string) {
+  function createReply(text: string, media?: MediaAttachment[]) {
     const auth = useAuth()
     if (!transport || !thread.value || !auth.user.value) return false
     const clientId = crypto.randomUUID()
     const trimmedText = text.trim()
     const postSeq = thread.value.post.post_seq
-    const ok = transport.createItem(clientId, 'reply', { text: trimmedText }, postSeq)
+    const body: Record<string, unknown> = { text: trimmedText }
+    if (media?.length) body.media = media
+    const ok = transport.createItem(clientId, 'reply', body, postSeq)
     if (ok) {
-      pendingCreates.set(clientId, { kind: 'reply', actor: auth.user.value.actor, text: trimmedText, parentSeq: postSeq })
+      pendingCreates.set(clientId, { kind: 'reply', actor: auth.user.value.actor, text: trimmedText, media, parentSeq: postSeq })
     }
     return ok
   }

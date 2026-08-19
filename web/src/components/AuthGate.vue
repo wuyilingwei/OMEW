@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { api, ApiRequestError } from '../api'
 import type { AuthResponse, InstanceConfig, RootRequirement } from '../api/types'
 import { useAuth } from '../composables/useAuth'
@@ -9,12 +9,21 @@ import {
   generateOwnershipKey,
   type OwnershipEnvelope,
 } from '../crypto/ownershipKey'
-import { WinButton } from '../vendor/winui'
+import { emailError, ownershipPassphraseError, passwordError, requiredError, usernameError } from '../utils/validate'
+import { WinButton, WinInfoBar, WinSelectorBar } from '../vendor/winui'
 
 const auth = useAuth()
 
 type Tab = 'login' | 'register'
 const tab = ref<Tab>('login')
+const TAB_OPTIONS: { Text: string; value: Tab }[] = [
+  { Text: '登录', value: 'login' },
+  { Text: '注册', value: 'register' },
+]
+const tabSelected = computed(() => TAB_OPTIONS.find((o) => o.value === tab.value))
+function onTabSelect(item: { value: Tab }) {
+  tab.value = item.value
+}
 
 const configLoading = ref(true)
 const configError = ref('')
@@ -67,6 +76,10 @@ const registerError = ref('')
 const registerBusy = ref(false)
 const pendingBackup = ref<{ session: AuthResponse; pubkeyBase64: string; envelope: OwnershipEnvelope } | null>(null)
 
+// live per-keystroke feedback for username format - only surfaced once the
+// user has actually typed something, so a fresh empty field stays quiet
+const liveUsernameError = computed(() => (registerForm.username ? usernameError(registerForm.username) : ''))
+
 function registerErrorMessage(err: unknown): string {
   if (err instanceof ApiRequestError) {
     switch (err.code) {
@@ -86,15 +99,16 @@ function registerErrorMessage(err: unknown): string {
 }
 
 async function submitRegister() {
-  registerError.value = ''
-  if (registerForm.ownershipPassphrase.length < 8) {
-    registerError.value = '所有权口令至少需要 8 位'
-    return
-  }
-  if (registerForm.ownershipPassphrase !== registerForm.ownershipPassphraseConfirm) {
-    registerError.value = '两次输入的所有权口令不一致'
-    return
-  }
+  const errors = [
+    usernameError(registerForm.username),
+    passwordError(registerForm.password),
+    needs('email') ? emailError(registerForm.email) : '',
+    needs('code') ? requiredError(registerForm.code, '邀请码') : '',
+    ownershipPassphraseError(registerForm.ownershipPassphrase, registerForm.password),
+  ].filter(Boolean)
+  if (registerForm.ownershipPassphrase !== registerForm.ownershipPassphraseConfirm) errors.push('两次输入的所有权口令不一致')
+  registerError.value = errors.join('；')
+  if (registerError.value) return
   registerBusy.value = true
   try {
     const { pubkeyBase64, envelope } = await generateOwnershipKey(registerForm.ownershipPassphrase)
@@ -133,26 +147,17 @@ function finishRegistration() {
       <div v-if="configLoading" class="auth-card__loading">正在获取节点信息…</div>
 
       <template v-else>
-        <p v-if="configError" class="notice notice--error">{{ configError }}</p>
+        <WinInfoBar v-if="configError" :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Error">
+          {{ configError }}
+        </WinInfoBar>
 
-        <div v-if="instanceConfig.allow_root" class="auth-card__tabs">
-          <button
-            type="button"
-            class="auth-card__tab"
-            :class="{ 'auth-card__tab--active': tab === 'login' }"
-            @click="tab = 'login'"
-          >
-            登录
-          </button>
-          <button
-            type="button"
-            class="auth-card__tab"
-            :class="{ 'auth-card__tab--active': tab === 'register' }"
-            @click="tab = 'register'"
-          >
-            注册
-          </button>
-        </div>
+        <WinSelectorBar
+          v-if="instanceConfig.allow_root"
+          class="auth-card__tabs"
+          :Items="TAB_OPTIONS"
+          :SelectedItem="tabSelected"
+          @update:SelectedItem="onTabSelect"
+        />
 
         <form v-if="tab === 'login'" class="auth-form" @submit.prevent="submitLogin">
           <div class="field">
@@ -171,9 +176,9 @@ function finishRegistration() {
 
         <template v-else>
           <div v-if="pendingBackup" class="auth-form">
-            <p class="notice notice--info">
+            <WinInfoBar :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Success">
               注册成功。请务必导出并妥善保管所有权密钥备份——它是账号迁移的唯一凭证，服务器不会保存明文私钥。
-            </p>
+            </WinInfoBar>
             <WinButton Style="DefaultButtonStyle" @Click="exportBackup">导出所有权密钥备份</WinButton>
             <WinButton Style="AccentButtonStyle" class="auth-form__submit" @Click="finishRegistration">
               进入 OpenMew
@@ -183,7 +188,16 @@ function finishRegistration() {
           <form v-else class="auth-form" @submit.prevent="submitRegister">
             <div class="field">
               <label class="field__label" for="register-username">用户名</label>
-              <input id="register-username" v-model.trim="registerForm.username" type="text" autocomplete="username" required />
+              <input
+                id="register-username"
+                v-model.trim="registerForm.username"
+                type="text"
+                autocomplete="username"
+                pattern="[a-z0-9_\-]{2,32}"
+                maxlength="32"
+                required
+              />
+              <p v-if="liveUsernameError" class="field__error">{{ liveUsernameError }}</p>
             </div>
             <div class="field">
               <label class="field__label" for="register-password">密码</label>
@@ -192,6 +206,7 @@ function finishRegistration() {
                 v-model="registerForm.password"
                 type="password"
                 autocomplete="new-password"
+                minlength="10"
                 required
               />
             </div>
@@ -199,7 +214,9 @@ function finishRegistration() {
               <label class="field__label" for="register-email">邮箱</label>
               <input id="register-email" v-model.trim="registerForm.email" type="email" autocomplete="email" required />
             </div>
-            <p v-if="needs('phone')" class="notice notice--caution">本实例暂不支持手机注册</p>
+            <WinInfoBar v-if="needs('phone')" :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Warning">
+              本实例暂不支持手机注册
+            </WinInfoBar>
             <div v-if="needs('code')" class="field">
               <label class="field__label" for="register-code">邀请码</label>
               <input id="register-code" v-model.trim="registerForm.code" type="text" required />
@@ -217,7 +234,7 @@ function finishRegistration() {
                   v-model="registerForm.ownershipPassphrase"
                   type="password"
                   autocomplete="new-password"
-                  minlength="8"
+                  minlength="10"
                   required
                 />
               </div>
@@ -228,7 +245,7 @@ function finishRegistration() {
                   v-model="registerForm.ownershipPassphraseConfirm"
                   type="password"
                   autocomplete="new-password"
-                  minlength="8"
+                  minlength="10"
                   required
                 />
               </div>
@@ -241,7 +258,9 @@ function finishRegistration() {
           </form>
         </template>
 
-        <p v-if="!instanceConfig.allow_root" class="notice notice--info">本节点不开放注册。如需账号，请联系节点管理员。</p>
+        <WinInfoBar v-if="!instanceConfig.allow_root" :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Informational">
+          本节点不开放注册。如需账号，请联系节点管理员。
+        </WinInfoBar>
       </template>
     </div>
   </div>
@@ -287,28 +306,9 @@ function finishRegistration() {
 }
 
 .auth-card__tabs {
-  display: flex;
-  gap: 0.25rem;
   padding: 0.25rem;
   border-radius: var(--radius-sm);
   background: var(--ctrl-fill-secondary);
-}
-
-.auth-card__tab {
-  flex: 1;
-  padding: 0.45rem;
-  border: none;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--text-secondary);
-  font-weight: 600;
-  font-size: 0.85rem;
-  transition: background var(--fast-duration) var(--fast-out-slow-in), color var(--fast-duration);
-}
-
-.auth-card__tab--active {
-  background: rgb(var(--colors-primary));
-  color: var(--on-accent);
 }
 
 .auth-form {
