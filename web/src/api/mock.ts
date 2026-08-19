@@ -1,6 +1,7 @@
 // in-memory stand-in for /api/* — resets on page reload, no persistence.
 // dev-only opt-in (see index.ts); production builds never import this module's
 // data path in practice since USE_MOCK is false by default.
+import { MASCOT_EMOTES } from '../assets/mew'
 import { ApiRequestError } from './errors'
 import type { RoomSocketHandlers, RoomTransport } from './roomSocket'
 import type {
@@ -11,9 +12,12 @@ import type {
   CreateRoomPayload,
   CreateStrongholdPayload,
   EditRetractResult,
+  Emote,
+  EmotePack,
   InviteCode,
   ItemBody,
   LoginPayload,
+  MediaUploadResult,
   MemberPage,
   MemberPatch,
   MemberTab,
@@ -25,6 +29,9 @@ import type {
   RoomSummary,
   RoomTokenResponse,
   RoomType,
+  StorageUsage,
+  StrongholdApplication,
+  StrongholdApplicationState,
   StrongholdConfig,
   StrongholdConfigPatch,
   StrongholdMember,
@@ -39,7 +46,27 @@ let config: AdminInstanceConfig = {
   allow_root: true,
   root_requirements: ['email'],
   trusted_identity_servers: ['*'],
+  federation_peers: [],
+  max_file_bytes: 8 * 1024 * 1024,
+  user_storage_quota_bytes: 100 * 1024 * 1024,
+  stronghold_creation_policy: 'open',
+  stronghold_creators: [],
 }
+
+// demo emote pack seeded from the same bundled mascot images the seed
+// script installs against a real instance - lets the picker/renderer be
+// visually checked without a backend.
+const emotePacks: EmotePack[] = [
+  {
+    id: 'mock-pack-mew',
+    name: 'Mew',
+    emotes: Object.entries(MASCOT_EMOTES).map(([name, url]): Emote => ({ id: `mock-emote-${name}`, name, media_id: `mock-media-${name}`, url })),
+  },
+]
+
+const mediaStore = new Map<string, MediaUploadResult>()
+const storageUsage = { used: 0 }
+const strongholdApplications: StrongholdApplication[] = []
 
 function actorFor(username: string): string {
   return `@${username}:local`
@@ -360,7 +387,11 @@ export class MockRoomTransport implements RoomTransport {
 
 export const mockApi = {
   async getInstanceConfig() {
-    return delay({ allow_root: config.allow_root, root_requirements: config.root_requirements })
+    return delay({
+      allow_root: config.allow_root,
+      root_requirements: config.root_requirements,
+      stronghold_creation: config.stronghold_creation_policy,
+    })
   },
 
   async register(payload: RegisterPayload): Promise<AuthResponse> {
@@ -434,8 +465,29 @@ export const mockApi = {
     return delay(mine.map(toStrongholdSummary))
   },
 
-  async createStronghold(token: string, payload: CreateStrongholdPayload): Promise<StrongholdConfig> {
+  async createStronghold(
+    token: string,
+    payload: CreateStrongholdPayload,
+  ): Promise<StrongholdConfig | { application_id: string; state: 'pending' }> {
     const user = requireUser(token)
+    if (!user.is_admin && config.stronghold_creation_policy === 'restricted' && !config.stronghold_creators.includes(user.actor)) {
+      throw new ApiRequestError('CREATION_RESTRICTED', 403)
+    }
+    if (!user.is_admin && config.stronghold_creation_policy === 'application') {
+      const application: StrongholdApplication = {
+        id: `app-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+        actor: user.actor,
+        name: payload.name,
+        description: payload.description ?? null,
+        visibility: payload.visibility ?? 'public',
+        state: 'pending',
+        created_at: Date.now(),
+        decided_by: null,
+        decided_at: null,
+      }
+      strongholdApplications.push(application)
+      return delay({ application_id: application.id, state: 'pending' as const })
+    }
     const id = `sh-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
     const lobby = makeRoom('lobby', 'channel', '大厅')
     const posts = makeRoom('posts', 'section', '帖子')
@@ -716,5 +768,92 @@ export const mockApi = {
       }
     }
     throw new ApiRequestError('NOT_FOUND', 404)
+  },
+
+  // ---- emotes / media / storage ------------------------------------------------
+
+  async getEmotes(token: string): Promise<EmotePack[]> {
+    requireUser(token)
+    return delay(emotePacks.map((pack) => ({ ...pack, emotes: [...pack.emotes] })))
+  },
+
+  async uploadMedia(token: string, file: File | Blob, onProgress?: (percent: number) => void): Promise<MediaUploadResult> {
+    requireUser(token)
+    const maxFile = config.max_file_bytes
+    if (file.size > maxFile) throw new ApiRequestError('FILE_TOO_LARGE', 413)
+    if (!file.type.startsWith('image/')) throw new ApiRequestError('MIME_REJECTED', 415)
+    if (storageUsage.used + file.size > config.user_storage_quota_bytes) throw new ApiRequestError('QUOTA_EXCEEDED', 413)
+    onProgress?.(100)
+    const id = `mock-upload-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+    const result: MediaUploadResult = { id, url: URL.createObjectURL(file), size: file.size, mime: file.type }
+    mediaStore.set(id, result)
+    storageUsage.used += file.size
+    return delay(result, 60)
+  },
+
+  async getStorageUsage(token: string): Promise<StorageUsage> {
+    requireUser(token)
+    return delay({ used: storageUsage.used, quota: config.user_storage_quota_bytes, max_file: config.max_file_bytes })
+  },
+
+  // ---- stronghold creation applications -----------------------------------------
+
+  async getMyStrongholdApplications(token: string): Promise<StrongholdApplication[]> {
+    const user = requireUser(token)
+    return delay(strongholdApplications.filter((app) => app.actor === user.actor))
+  },
+
+  async getAdminStrongholdApplications(token: string, state?: StrongholdApplicationState): Promise<StrongholdApplication[]> {
+    requireAdmin(token)
+    return delay(state ? strongholdApplications.filter((app) => app.state === state) : [...strongholdApplications])
+  },
+
+  async decideStrongholdApplication(
+    token: string,
+    id: string,
+    state: 'approved' | 'rejected',
+  ): Promise<{ id: string; state: string }> {
+    const admin = requireAdmin(token)
+    const application = strongholdApplications.find((app) => app.id === id)
+    if (!application) throw new ApiRequestError('NOT_FOUND', 404)
+    if (application.state !== 'pending') throw new ApiRequestError('ALREADY_DECIDED', 409)
+    application.state = state
+    application.decided_by = admin.actor
+    application.decided_at = Date.now()
+    if (state === 'approved') {
+      const nodeId = `sh-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+      const lobby = makeRoom('lobby', 'channel', '大厅')
+      const posts = makeRoom('posts', 'section', '帖子')
+      strongholds.set(nodeId, {
+        id: nodeId,
+        name: application.name,
+        description: application.description ?? '',
+        cover: '',
+        visibility: application.visibility,
+        allow_message_edit: true,
+        allow_message_retract: true,
+        edit_window_secs: 300,
+        owner_actor: application.actor,
+        rooms: new Map([
+          [lobby.res_id, lobby],
+          [posts.res_id, posts],
+        ]),
+      })
+      strongholdMembers.set(nodeId, [
+        {
+          actor: application.actor,
+          username: application.actor,
+          display_name: application.actor,
+          role: 'owner',
+          deny_discussion: false,
+          deny_idea: false,
+          deny_comment: false,
+          joined_at: new Date().toISOString(),
+          is_guest: false,
+        },
+      ])
+      strongholdBans.set(nodeId, [])
+    }
+    return delay({ id: application.id, state: application.state })
   },
 }

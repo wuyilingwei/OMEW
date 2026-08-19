@@ -1,17 +1,27 @@
 export type RootRequirement = 'email' | 'phone' | 'code'
 export type StrongholdCreationPolicy = 'open' | 'restricted' | 'application'
 
+// /api/instance/config (public, unauthenticated) - a deliberately thin
+// projection of the server's internal config; see AdminInstanceConfig for
+// the full admin-only shape (note the field is spelled differently there:
+// stronghold_creation here vs. stronghold_creation_policy on admin - the
+// public route renames it on the way out, creators/peers stay admin-only).
 export interface InstanceConfig {
   allow_root: boolean
   root_requirements: RootRequirement[]
   stronghold_creation: StrongholdCreationPolicy
 }
 
-export interface AdminInstanceConfig extends InstanceConfig {
+// /api/admin/instance/config - mirrors the server's internal InstanceConfig
+// row (server/src/types.ts) field-for-field; deliberately not `extends
+// InstanceConfig` since the two responses don't actually share a shape.
+export interface AdminInstanceConfig {
+  allow_root: boolean
+  root_requirements: RootRequirement[]
   trusted_identity_servers: string[]
-  federation_peers: string[]
   max_file_bytes: number
   user_storage_quota_bytes: number
+  federation_peers: string[]
   stronghold_creation_policy: StrongholdCreationPolicy
   stronghold_creators: string[]
 }
