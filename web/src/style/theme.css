@@ -62,8 +62,8 @@
     --colors-body: 200 200 200;
     --colors-disabled: 200 200 200;
 
-    --colors-primary: 114 148 218;
-    --colors-primary-darker: 154 178 228;
+    --colors-primary: 82 136 246; /* official dark #5288F6 (archive-verified) */
+    --colors-primary-darker: 64 95 174; /* official dark #405FAE */
     --on-accent: #000000;
 
     --colors-gray-50: 60 60 60;
@@ -100,8 +100,8 @@
   --colors-body: 200 200 200;
   --colors-disabled: 200 200 200;
 
-  --colors-primary: 114 148 218;
-  --colors-primary-darker: 154 178 228;
+  --colors-primary: 82 136 246; /* official dark #5288F6 (archive-verified) */
+  --colors-primary-darker: 64 95 174; /* official dark #405FAE */
   --on-accent: #000000;
 
   --colors-gray-50: 60 60 60;
