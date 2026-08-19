@@ -1,28 +1,27 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { mockChannels } from '../data/mock'
 import { useChannel } from '../composables/useChannel'
 import { useShellView } from '../composables/useShellView'
 import { WinDropDownButton } from '../vendor/winui'
 
-const { selectedChannel, selectChannel } = useChannel()
+const { channelRooms, selectedChannel, selectChannel } = useChannel()
 const { setView } = useShellView()
 
 const flyout = computed(() => ({
-  Items: mockChannels.map((channel) => ({ Text: channel.name, Value: channel.id })),
+  Items: channelRooms.value.map((room) => ({ Text: room.name, Value: room.id })),
 }))
 
 function onSelect(item: { Value: string }) {
-  const channel = mockChannels.find((candidate) => candidate.id === item.Value)
-  if (!channel) return
-  selectChannel(channel)
+  const room = channelRooms.value.find((candidate) => candidate.id === item.Value)
+  if (!room) return
+  selectChannel(room)
   setView('chat')
 }
 </script>
 
 <template>
   <WinDropDownButton class="channel-switcher" :Flyout="flyout" @Select="onSelect">
-    <span class="channel-switcher__label">{{ selectedChannel.name }}</span>
+    <span class="channel-switcher__label">{{ selectedChannel?.name ?? '无频道' }}</span>
   </WinDropDownButton>
 </template>
 

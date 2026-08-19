@@ -1,22 +1,34 @@
 // in-memory stand-in for /api/* — resets on page reload, no persistence.
-// remove once the real backend is merged; see index.ts for the switch.
-import { mockNodes } from '../data/mock'
+// dev-only opt-in (see index.ts); production builds never import this module's
+// data path in practice since USE_MOCK is false by default.
 import { ApiRequestError } from './errors'
+import type { RoomSocketHandlers, RoomTransport } from './roomSocket'
 import type {
   AdminInstanceConfig,
   AuthResponse,
   AuthUser,
   BanEntry,
+  CreateRoomPayload,
+  CreateStrongholdPayload,
+  EditRetractResult,
   InviteCode,
+  ItemBody,
   LoginPayload,
   MemberPage,
   MemberPatch,
   MemberTab,
+  PostPage,
+  PostThread,
   PublicUser,
   RegisterPayload,
+  RoomItem,
+  RoomSummary,
+  RoomTokenResponse,
+  RoomType,
   StrongholdConfig,
   StrongholdConfigPatch,
   StrongholdMember,
+  StrongholdSummary,
 } from './types'
 
 interface MockUser extends AuthUser {
@@ -29,16 +41,28 @@ let config: AdminInstanceConfig = {
   trusted_identity_servers: ['*'],
 }
 
+function actorFor(username: string): string {
+  return `@${username}:local`
+}
+
 // seeded so the admin view has something to log into during dev/visual checks
 const users: MockUser[] = [
-  { id: 'u-admin', username: 'admin', password: 'admin123', is_admin: true, email: 'admin@example.com' },
+  {
+    actor: actorFor('admin'),
+    username: 'admin',
+    password: 'admin123',
+    is_admin: true,
+    email: 'admin@example.com',
+    email_verified: true,
+  },
 ]
 
 const inviteCodes: InviteCode[] = []
-const sessions = new Map<string, string>() // token -> user id
+const sessions = new Map<string, string>() // token -> actor
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/
 const CODE_ALPHABET = '0123456789ABCDEFGHJKLMNPQRSTUVWXYZ'
+const PREVIEW_LEN = 80
 
 function delay<T>(value: T, ms = 220): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(value), ms))
@@ -58,22 +82,45 @@ function randomCode(): string {
 }
 
 function requireAdmin(token: string): MockUser {
-  const uid = sessions.get(token)
-  const user = users.find((candidate) => candidate.id === uid)
+  const actor = sessions.get(token)
+  const user = users.find((candidate) => candidate.actor === actor)
   if (!user?.is_admin) throw new ApiRequestError('AUTH_FAILED', 403)
   return user
 }
 
 function requireUser(token: string): MockUser {
-  const uid = sessions.get(token)
-  const user = users.find((candidate) => candidate.id === uid)
+  const actor = sessions.get(token)
+  const user = users.find((candidate) => candidate.actor === actor)
   if (!user) throw new ApiRequestError('AUTH_FAILED', 401)
   return user
 }
 
-// stronghold config/members/bans — seeded lazily per node id so every mock
-// stronghold (mockNodes) is manageable without a separate bootstrap step.
-const strongholdConfigs = new Map<string, StrongholdConfig>()
+// ---- strongholds / rooms / room items --------------------------------------
+
+interface MockRoomState {
+  res_id: string
+  type: RoomType
+  name: string
+  items: RoomItem[] // seq ascending
+  tombstoned: Set<number>
+  postIndex: Map<number, { last_reply_seq: number; reply_count: number; bumped_at: number }>
+  nextSeq: number
+}
+
+interface MockStrongholdState {
+  id: string
+  name: string
+  description: string
+  cover: string
+  visibility: StrongholdConfig['visibility']
+  allow_message_edit: boolean
+  allow_message_retract: boolean
+  edit_window_secs: number
+  owner_actor: string
+  rooms: Map<string, MockRoomState>
+}
+
+const strongholds = new Map<string, MockStrongholdState>()
 const strongholdMembers = new Map<string, StrongholdMember[]>()
 const strongholdBans = new Map<string, BanEntry[]>()
 
@@ -81,22 +128,88 @@ function daysAgo(days: number): string {
   return new Date(Date.now() - days * 86_400_000).toISOString()
 }
 
-function seedStronghold(nodeId: string) {
-  if (strongholdConfigs.has(nodeId)) return
-  const node = mockNodes.find((candidate) => candidate.id === nodeId)
-  strongholdConfigs.set(nodeId, {
-    id: nodeId,
-    name: node?.name ?? nodeId,
-    description: node?.description ?? '',
-    cover: node?.cover ?? '',
+function minutesAgo(mins: number): number {
+  return Date.now() - mins * 60_000
+}
+
+function makeRoom(resId: string, type: RoomType, name: string): MockRoomState {
+  return { res_id: resId, type, name, items: [], tombstoned: new Set(), postIndex: new Map(), nextSeq: 1 }
+}
+
+function appendItem(
+  room: MockRoomState,
+  actor: string,
+  kind: 'post' | 'reply',
+  body: ItemBody,
+  parentSeq: number | null,
+  ts: number,
+): RoomItem {
+  const seq = room.nextSeq++
+  const rootSeq = parentSeq ?? seq
+  const finalBody: ItemBody =
+    room.type === 'section' && parentSeq == null ? { ...body, preview: (body.text ?? '').slice(0, PREVIEW_LEN) } : body
+  const item: RoomItem = { seq, parent_seq: parentSeq, root_seq: rootSeq, actor, kind, ts, body: finalBody }
+  room.items.push(item)
+  if (room.type === 'section' && parentSeq == null) {
+    room.postIndex.set(seq, { last_reply_seq: seq, reply_count: 0, bumped_at: ts })
+  } else if (room.type === 'section' && parentSeq != null) {
+    const idx = room.postIndex.get(rootSeq)
+    if (idx) {
+      idx.last_reply_seq = seq
+      idx.reply_count += 1
+      idx.bumped_at = ts
+    }
+  }
+  return item
+}
+
+function seedDemoStronghold(): void {
+  const id = 'demo-stronghold'
+  if (strongholds.has(id)) return
+  const lobby = makeRoom('lobby', 'channel', '大厅')
+  const posts = makeRoom('posts', 'section', '帖子')
+
+  const chatSeed: [string, string, number][] = [
+    ['rin', '早上好，今天的同步会议改到下午三点', 60],
+    ['admin', '收到，我把文档链接放这里', 58],
+    ['rin', '看到了，辛苦', 57],
+    ['aki', '频道下拉切换起来顺手多了', 40],
+    ['admin', '对，之前那条横向标签栏确实别扭', 38],
+    ['rin', '进度已经同步到看板了', 20],
+    ['admin', '看到了，稍后过一遍', 12],
+  ]
+  for (const [username, text, minsAgo] of chatSeed) {
+    appendItem(lobby, actorFor(username), 'post', { text }, null, minutesAgo(minsAgo))
+  }
+
+  const postSeed: [string, string, string, number][] = [
+    ['admin', '本周维护窗口已更新', '本次维护将在周四凌晨两点开始，预计持续一小时，期间聊天记录仍可正常读取，但发送新消息会暂时不可用。', 300],
+    ['rin', '新据点主题壁纸放出', '这次的主题延续了上个季度的配色，加入了更多据点相关的细节，欢迎大家来挑喜欢的一张。', 180],
+    ['aki', '周末创作征集', '主题是「据点日常」，形式不限，文字、绘画、摄影都可以，周日晚上十点截止投稿。', 90],
+  ]
+  for (const [username, title, text, minsAgo] of postSeed) {
+    appendItem(posts, actorFor(username), 'post', { title, text }, null, minutesAgo(minsAgo))
+  }
+
+  strongholds.set(id, {
+    id,
+    name: '主据点',
+    description: '综合讨论与公告的默认据点，日常消息大多汇聚在这里。',
+    cover: '',
     visibility: 'public',
     allow_message_edit: true,
     allow_message_retract: true,
     edit_window_secs: 300,
+    owner_actor: actorFor('admin'),
+    rooms: new Map([
+      [lobby.res_id, lobby],
+      [posts.res_id, posts],
+    ]),
   })
-  strongholdMembers.set(nodeId, [
+
+  strongholdMembers.set(id, [
     {
-      actor: 'admin@local',
+      actor: actorFor('admin'),
       username: 'admin',
       display_name: 'admin',
       role: 'owner',
@@ -107,7 +220,7 @@ function seedStronghold(nodeId: string) {
       is_guest: false,
     },
     {
-      actor: 'rin@local',
+      actor: actorFor('rin'),
       username: 'Rin',
       display_name: 'Rin',
       role: 'mod',
@@ -118,7 +231,7 @@ function seedStronghold(nodeId: string) {
       is_guest: false,
     },
     {
-      actor: 'aki@local',
+      actor: actorFor('aki'),
       username: 'Aki',
       display_name: 'Aki',
       role: 'member',
@@ -128,20 +241,34 @@ function seedStronghold(nodeId: string) {
       joined_at: daysAgo(10),
       is_guest: false,
     },
-    {
-      actor: 'mika@remote.example',
-      username: 'Mika',
-      display_name: 'Mika',
-      role: 'member',
-      deny_discussion: false,
-      deny_idea: true,
-      deny_comment: false,
-      joined_at: daysAgo(5),
-      is_guest: true,
-      home_domain: 'remote.example',
-    },
   ])
-  strongholdBans.set(nodeId, [])
+  strongholdBans.set(id, [])
+}
+seedDemoStronghold()
+
+function toStrongholdConfig(state: MockStrongholdState): StrongholdConfig {
+  return {
+    id: state.id,
+    name: state.name,
+    description: state.description,
+    cover: state.cover,
+    visibility: state.visibility,
+    allow_message_edit: state.allow_message_edit,
+    allow_message_retract: state.allow_message_retract,
+    edit_window_secs: state.edit_window_secs,
+  }
+}
+
+function toStrongholdSummary(state: MockStrongholdState): StrongholdSummary {
+  const rooms: RoomSummary[] = [...state.rooms.values()].map((r) => ({ id: r.res_id, name: r.name, type: r.type }))
+  return { id: state.id, name: state.name, cover: state.cover || null, rooms }
+}
+
+function requireRoom(nodeId: string, resId: string): MockRoomState {
+  const state = strongholds.get(nodeId)
+  const room = state?.rooms.get(resId)
+  if (!room) throw new ApiRequestError('NOT_FOUND', 404)
+  return room
 }
 
 function findMember(nodeId: string, actor: string): StrongholdMember | undefined {
@@ -149,11 +276,86 @@ function findMember(nodeId: string, actor: string): StrongholdMember | undefined
 }
 
 function requireManager(token: string, nodeId: string): { user: MockUser; member: StrongholdMember } {
-  seedStronghold(nodeId)
   const user = requireUser(token)
-  const member = strongholdMembers.get(nodeId)?.find((candidate) => candidate.username === user.username)
+  const member = strongholdMembers.get(nodeId)?.find((candidate) => candidate.actor === user.actor)
   if (!member || (member.role !== 'owner' && member.role !== 'mod')) throw new ApiRequestError('FORBIDDEN', 403)
   return { user, member }
+}
+
+function toPost(room: MockRoomState, item: RoomItem) {
+  const idx = room.postIndex.get(item.seq)
+  return {
+    post_seq: item.seq,
+    actor: item.actor,
+    created_at: item.ts,
+    title: item.body.title ?? '',
+    cover: item.body.cover ?? null,
+    preview: item.body.preview ?? '',
+    last_reply_seq: idx?.last_reply_seq ?? item.seq,
+    reply_count: idx?.reply_count ?? 0,
+    bumped_at: idx?.bumped_at ?? item.ts,
+  }
+}
+
+// ---- mock room WS transport --------------------------------------------------
+// no real network hop; item.create resolves synchronously against the same
+// in-memory room store the REST-shaped methods below read from.
+
+export class MockRoomTransport implements RoomTransport {
+  constructor(
+    private readonly nodeId: string,
+    private readonly resId: string,
+    private readonly actor: string,
+    private readonly handlers: RoomSocketHandlers,
+  ) {}
+
+  connect(): void {
+    queueMicrotask(() => this.handlers.onOpen?.())
+  }
+
+  close(): void {
+    this.handlers.onClose?.()
+  }
+
+  createItem(clientId: string, kind: 'post' | 'reply', body: Record<string, unknown>, parentSeq?: number | null): boolean {
+    const room = strongholds.get(this.nodeId)?.rooms.get(this.resId)
+    if (!room) return false
+    const item = appendItem(room, this.actor, kind, body as ItemBody, parentSeq ?? null, Date.now())
+    queueMicrotask(() => {
+      this.handlers.onAck?.({ status: 'ok', client_id: clientId, seq: item.seq })
+      if (item.parent_seq != null) {
+        const idx = room.postIndex.get(item.root_seq!)
+        if (idx) {
+          this.handlers.onBump?.({
+            post_seq: item.root_seq!,
+            last_reply_seq: idx.last_reply_seq,
+            reply_count: idx.reply_count,
+            preview: item.body.text?.slice(0, PREVIEW_LEN) ?? '',
+            ts: idx.bumped_at,
+          })
+        }
+      }
+    })
+    return true
+  }
+
+  editItem(targetSeq: number, body: Record<string, unknown>): boolean {
+    const room = strongholds.get(this.nodeId)?.rooms.get(this.resId)
+    const item = room?.items.find((i) => i.seq === targetSeq)
+    if (!room || !item) return false
+    item.body = body as ItemBody
+    item.edited_at = Date.now()
+    queueMicrotask(() => this.handlers.onUpdate?.({ seq: targetSeq, target_seq: targetSeq, body: item.body, edited_at: item.edited_at! }))
+    return true
+  }
+
+  deleteItem(targetSeq: number, reason?: string): boolean {
+    const room = strongholds.get(this.nodeId)?.rooms.get(this.resId)
+    if (!room) return false
+    room.tombstoned.add(targetSeq)
+    queueMicrotask(() => this.handlers.onDelete?.({ seq: targetSeq, target_seq: targetSeq, reason, by_role: 'author' }))
+    return true
+  }
 }
 
 export const mockApi = {
@@ -168,20 +370,22 @@ export const mockApi = {
       throw new ApiRequestError('USERNAME_INVALID', 400)
     }
     if (config.root_requirements.includes('code')) {
-      const invite = inviteCodes.find((c) => c.code === payload.code && !c.used)
+      const invite = inviteCodes.find((c) => c.code === payload.code && c.used_by == null)
       if (!invite) throw new ApiRequestError('INVITE_INVALID', 400)
-      invite.used = true
+      invite.used_by = payload.username
+      invite.used_at = Date.now()
     }
     const user: MockUser = {
-      id: `u-${Date.now().toString(36)}`,
+      actor: actorFor(payload.username),
       username: payload.username,
       password: payload.password,
       is_admin: false,
-      email: payload.email,
+      email: payload.email ?? null,
+      email_verified: false,
     }
     users.push(user)
     const token = makeToken()
-    sessions.set(token, user.id)
+    sessions.set(token, user.actor)
     return delay({ token, user: stripPassword(user) })
   },
 
@@ -189,7 +393,7 @@ export const mockApi = {
     const user = users.find((u) => u.username === payload.username && u.password === payload.password)
     if (!user) throw new ApiRequestError('AUTH_FAILED', 401)
     const token = makeToken()
-    sessions.set(token, user.id)
+    sessions.set(token, user.actor)
     return delay({ token, user: stripPassword(user) })
   },
 
@@ -210,40 +414,201 @@ export const mockApi = {
   },
 
   async createInviteCodes(token: string, count = 1) {
-    requireAdmin(token)
+    const admin = requireAdmin(token)
     const created: InviteCode[] = Array.from({ length: Math.max(1, count) }, () => ({
       code: randomCode(),
-      used: false,
-      created_at: new Date().toISOString(),
+      created_by: admin.actor,
+      created_at: Date.now(),
+      used_by: null,
+      used_at: null,
     }))
     inviteCodes.push(...created)
     return delay([...inviteCodes])
   },
 
+  // ---- strongholds ----------------------------------------------------------
+
+  async listMyStrongholds(token: string): Promise<StrongholdSummary[]> {
+    const user = requireUser(token)
+    const mine = [...strongholds.values()].filter((s) => strongholdMembers.get(s.id)?.some((m) => m.actor === user.actor))
+    return delay(mine.map(toStrongholdSummary))
+  },
+
+  async createStronghold(token: string, payload: CreateStrongholdPayload): Promise<StrongholdConfig> {
+    const user = requireUser(token)
+    const id = `sh-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+    const lobby = makeRoom('lobby', 'channel', '大厅')
+    const posts = makeRoom('posts', 'section', '帖子')
+    const state: MockStrongholdState = {
+      id,
+      name: payload.name,
+      description: payload.description ?? '',
+      cover: '',
+      visibility: payload.visibility ?? 'public',
+      allow_message_edit: true,
+      allow_message_retract: true,
+      edit_window_secs: 300,
+      owner_actor: user.actor,
+      rooms: new Map([
+        [lobby.res_id, lobby],
+        [posts.res_id, posts],
+      ]),
+    }
+    strongholds.set(id, state)
+    strongholdMembers.set(id, [
+      {
+        actor: user.actor,
+        username: user.username,
+        display_name: user.username,
+        role: 'owner',
+        deny_discussion: false,
+        deny_idea: false,
+        deny_comment: false,
+        joined_at: new Date().toISOString(),
+        is_guest: false,
+      },
+    ])
+    strongholdBans.set(id, [])
+    return delay(toStrongholdConfig(state))
+  },
+
+  async joinStronghold(token: string, nodeId: string): Promise<StrongholdMember> {
+    const user = requireUser(token)
+    const state = strongholds.get(nodeId)
+    if (!state) throw new ApiRequestError('NOT_FOUND', 404)
+    const existing = findMember(nodeId, user.actor)
+    if (existing) return delay(existing)
+    const member: StrongholdMember = {
+      actor: user.actor,
+      username: user.username,
+      display_name: user.username,
+      role: 'member',
+      deny_discussion: false,
+      deny_idea: false,
+      deny_comment: false,
+      joined_at: new Date().toISOString(),
+      is_guest: false,
+    }
+    strongholdMembers.get(nodeId)?.push(member)
+    return delay(member)
+  },
+
+  async createRoom(token: string, nodeId: string, payload: CreateRoomPayload): Promise<RoomSummary> {
+    const { member } = requireManager(token, nodeId)
+    if (member.role !== 'owner' && member.role !== 'mod') throw new ApiRequestError('FORBIDDEN', 403)
+    const state = strongholds.get(nodeId)
+    if (!state) throw new ApiRequestError('NOT_FOUND', 404)
+    const resId = `room-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+    const room = makeRoom(resId, payload.type, payload.name)
+    state.rooms.set(resId, room)
+    return delay({ id: room.res_id, name: room.name, type: room.type })
+  },
+
   async getStrongholdConfig(token: string, nodeId: string): Promise<StrongholdConfig> {
     requireUser(token)
-    seedStronghold(nodeId)
-    return delay({ ...strongholdConfigs.get(nodeId)! })
+    const state = strongholds.get(nodeId)
+    if (!state) throw new ApiRequestError('NOT_FOUND', 404)
+    return delay(toStrongholdConfig(state))
   },
 
   async patchStrongholdConfig(token: string, nodeId: string, patch: StrongholdConfigPatch): Promise<StrongholdConfig> {
     const { member } = requireManager(token, nodeId)
     if (patch.visibility !== undefined && member.role !== 'owner') throw new ApiRequestError('FORBIDDEN', 403)
-    const next = { ...strongholdConfigs.get(nodeId)!, ...patch }
-    strongholdConfigs.set(nodeId, next)
-    return delay({ ...next })
+    const state = strongholds.get(nodeId)
+    if (!state) throw new ApiRequestError('NOT_FOUND', 404)
+    Object.assign(state, patch)
+    return delay(toStrongholdConfig(state))
+  },
+
+  // ---- room WS token / history ------------------------------------------------
+
+  async mintRoomToken(token: string, nodeId: string, resId: string): Promise<RoomTokenResponse> {
+    requireUser(token)
+    requireRoom(nodeId, resId)
+    return delay({ token: `mock-room-token-${resId}`, room: `${nodeId}/mock/${resId}`, exp: Math.floor(Date.now() / 1000) + 300 })
+  },
+
+  async getRoomHistory(token: string, nodeId: string, resId: string, before?: number | null, limit = 50): Promise<RoomItem[]> {
+    requireUser(token)
+    const room = requireRoom(nodeId, resId)
+    const visible = room.items.filter((i) => !room.tombstoned.has(i.seq))
+    const filtered = before == null ? visible : visible.filter((i) => i.seq < before)
+    return delay(filtered.slice(-limit).reverse())
+  },
+
+  async editItem(token: string, nodeId: string, resId: string, seq: number, content: unknown): Promise<EditRetractResult> {
+    const user = requireUser(token)
+    const room = requireRoom(nodeId, resId)
+    const item = room.items.find((i) => i.seq === seq)
+    if (!item) throw new ApiRequestError('OMEW_TARGET_NOT_FOUND', 404)
+    if (item.actor !== user.actor) throw new ApiRequestError('OMEW_FORBIDDEN', 403)
+    item.body = content as ItemBody
+    item.edited_at = Date.now()
+    return delay({ seq: item.seq, target_seq: seq })
+  },
+
+  async retractItem(token: string, nodeId: string, resId: string, seq: number): Promise<EditRetractResult> {
+    const user = requireUser(token)
+    const room = requireRoom(nodeId, resId)
+    const item = room.items.find((i) => i.seq === seq)
+    if (!item) throw new ApiRequestError('OMEW_TARGET_NOT_FOUND', 404)
+    const manager = findMember(nodeId, user.actor)
+    const isModerator = manager?.role === 'owner' || manager?.role === 'mod'
+    if (item.actor !== user.actor && !isModerator) throw new ApiRequestError('OMEW_FORBIDDEN', 403)
+    room.tombstoned.add(seq)
+    return delay({ seq, target_seq: seq })
+  },
+
+  // ---- posts ------------------------------------------------------------------
+
+  async listPosts(token: string, nodeId: string, resId: string, after?: string | null, limit = 20): Promise<PostPage> {
+    requireUser(token)
+    const room = requireRoom(nodeId, resId)
+    const posts = room.items
+      .filter((i) => i.parent_seq == null && !room.tombstoned.has(i.seq))
+      .map((i) => toPost(room, i))
+      .sort((a, b) => b.bumped_at - a.bumped_at || b.post_seq - a.post_seq)
+    let startIndex = 0
+    if (after) {
+      const [atPart, seqPart] = after.split(':')
+      const at = Number(atPart)
+      const seq = Number(seqPart)
+      startIndex = posts.findIndex((p) => p.bumped_at < at || (p.bumped_at === at && p.post_seq < seq))
+      if (startIndex < 0) startIndex = posts.length
+    }
+    const page = posts.slice(startIndex, startIndex + limit)
+    const hasMore = startIndex + limit < posts.length
+    const last = page[page.length - 1]
+    return delay({ posts: page, next_cursor: hasMore && last ? `${last.bumped_at}:${last.post_seq}` : null })
+  },
+
+  async getPost(token: string, nodeId: string, resId: string, seq: number, before?: number | null, limit = 50): Promise<PostThread> {
+    requireUser(token)
+    const room = requireRoom(nodeId, resId)
+    const postItem = room.items.find((i) => i.seq === seq && i.parent_seq == null)
+    if (!postItem || room.tombstoned.has(seq)) throw new ApiRequestError('NOT_FOUND', 404)
+    const summary = toPost(room, postItem)
+    const allReplies = room.items
+      .filter((i) => i.root_seq === seq && i.parent_seq != null && !room.tombstoned.has(i.seq))
+      .sort((a, b) => b.seq - a.seq)
+    const filtered = before == null ? allReplies : allReplies.filter((r) => r.seq < before)
+    const page = filtered.slice(0, limit)
+    return delay({
+      post: { ...summary, text: postItem.body.text ?? '' },
+      replies: page.map((r) => ({ seq: r.seq, actor: r.actor, ts: r.ts, body: r.body })),
+      next_before: page.length === limit ? page[page.length - 1]!.seq : null,
+    })
   },
 
   async getStrongholdMembers(token: string, nodeId: string, tab: MemberTab): Promise<MemberPage> {
     requireUser(token)
-    seedStronghold(nodeId)
     if (tab === 'banned') {
       const banned = strongholdBans.get(nodeId) ?? []
       return delay({
         members: banned.map((ban) => ({
           actor: ban.actor,
-          username: ban.username,
-          display_name: ban.display_name,
+          username: ban.actor,
+          display_name: ban.actor,
           role: 'member' as const,
           deny_discussion: true,
           deny_idea: true,
@@ -307,13 +672,7 @@ export const mockApi = {
     if (target.role === 'mod' && manager.role !== 'owner') throw new ApiRequestError('FORBIDDEN', 403)
     strongholdMembers.set(nodeId, (strongholdMembers.get(nodeId) ?? []).filter((m) => m.actor !== actor))
     const bans = strongholdBans.get(nodeId) ?? []
-    bans.push({
-      actor: target.actor,
-      username: target.username,
-      display_name: target.display_name,
-      banned_by: user.username,
-      banned_at: new Date().toISOString(),
-    })
+    bans.push({ actor: target.actor, banned_by: user.username, banned_at: new Date().toISOString() })
     strongholdBans.set(nodeId, bans)
     return delay(undefined)
   },
@@ -327,7 +686,7 @@ export const mockApi = {
   async transferOwnership(token: string, nodeId: string, toActor: string): Promise<void> {
     const { user } = requireManager(token, nodeId)
     const members = strongholdMembers.get(nodeId) ?? []
-    const currentOwner = members.find((m) => m.username === user.username && m.role === 'owner')
+    const currentOwner = members.find((m) => m.actor === user.actor && m.role === 'owner')
     if (!currentOwner) throw new ApiRequestError('FORBIDDEN', 403)
     const target = members.find((m) => m.actor === toActor)
     if (!target) throw new ApiRequestError('NOT_FOUND', 404)

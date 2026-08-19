@@ -1,10 +1,19 @@
 <script setup lang="ts">
-import type { Post } from '../types/models'
+import type { PostSummary } from '../api/types'
 import { usePostModal } from '../composables/usePostModal'
+import { useStrongholdMembers } from '../composables/useStrongholdMembers'
+import { actorLocalpart } from '../utils/actor'
 import AvatarBadge from './AvatarBadge.vue'
 
-const props = defineProps<{ post: Post }>()
+const props = defineProps<{ post: PostSummary }>()
 const { open } = usePostModal()
+const { members } = useStrongholdMembers()
+
+const authorName = () => members.value.find((m) => m.actor === props.post.actor)?.display_name ?? actorLocalpart(props.post.actor)
+
+function formatTime(ts: number): string {
+  return new Date(ts).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
 </script>
 
 <template>
@@ -13,9 +22,9 @@ const { open } = usePostModal()
     :class="{ 'post-card--cover': !!post.cover }"
     role="button"
     tabindex="0"
-    @click="open(props.post)"
-    @keydown.enter="open(props.post)"
-    @keydown.space.prevent="open(props.post)"
+    @click="open(post.post_seq)"
+    @keydown.enter="open(post.post_seq)"
+    @keydown.space.prevent="open(post.post_seq)"
   >
     <img v-if="post.cover" class="post-card__cover" :src="post.cover" alt="" />
     <div class="post-card__body">
@@ -23,10 +32,12 @@ const { open } = usePostModal()
       <p class="post-card__preview">{{ post.preview }}</p>
       <div class="post-card__meta">
         <span class="post-card__author-group">
-          <AvatarBadge :seed="post.avatar" :size="24" />
-          <span class="post-card__author">{{ post.author }}</span>
+          <AvatarBadge :seed="authorName()" :size="24" />
+          <span class="post-card__author">{{ authorName() }}</span>
         </span>
-        <span class="post-card__time">{{ post.timestamp }}</span>
+        <span class="post-card__time">
+          {{ post.reply_count > 0 ? `${post.reply_count} 回复 · ` : '' }}{{ formatTime(post.bumped_at) }}
+        </span>
       </div>
     </div>
   </article>

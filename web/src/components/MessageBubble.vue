@@ -1,18 +1,56 @@
 <script setup lang="ts">
-import type { ChatMessage } from '../types/models'
 import AvatarBadge from './AvatarBadge.vue'
 
-defineProps<{ message: ChatMessage; grouped?: boolean }>()
+export interface MessageVM {
+  key: string
+  seq: number | null
+  actor: string
+  displayName: string
+  content: string
+  timestamp: string
+  editedAt?: number
+  mine: boolean
+  editable: boolean
+  retractable: boolean
+  pending: boolean
+  failed: boolean
+}
+
+defineProps<{ message: MessageVM; grouped?: boolean; editing?: boolean }>()
+const editingText = defineModel<string>('editingText', { default: '' })
+defineEmits<{ edit: []; 'cancel-edit': []; 'submit-edit': []; retract: []; resend: [] }>()
 </script>
 
 <template>
   <div class="message-row" :class="{ 'message-row--mine': message.mine, 'message-row--grouped': grouped }">
-    <AvatarBadge v-if="!grouped" class="message-row__avatar" :seed="message.avatar" :size="36" />
+    <AvatarBadge v-if="!grouped" class="message-row__avatar" :seed="message.displayName" :size="36" />
     <div v-else class="message-row__avatar-spacer" aria-hidden="true"></div>
-    <div class="message-bubble" :class="{ 'message-bubble--mine': message.mine }">
-      <div v-if="!message.mine && !grouped" class="message-bubble__author">{{ message.author }}</div>
-      <div class="message-bubble__content">{{ message.content }}</div>
-      <div class="message-bubble__time">{{ message.timestamp }}</div>
+    <div class="message-bubble" :class="{ 'message-bubble--mine': message.mine, 'message-bubble--failed': message.failed }">
+      <div v-if="!message.mine && !grouped" class="message-bubble__author">{{ message.displayName }}</div>
+
+      <template v-if="editing">
+        <textarea v-model="editingText" class="message-bubble__edit-input" rows="2" @keydown.esc="$emit('cancel-edit')"></textarea>
+        <div class="message-bubble__edit-actions">
+          <button type="button" class="message-bubble__link" @click="$emit('submit-edit')">保存</button>
+          <button type="button" class="message-bubble__link" @click="$emit('cancel-edit')">取消</button>
+        </div>
+      </template>
+      <template v-else>
+        <div class="message-bubble__content">{{ message.content }}</div>
+        <div class="message-bubble__meta">
+          <span v-if="message.pending">发送中…</span>
+          <span v-else-if="message.failed">
+            发送失败
+            <button type="button" class="message-bubble__link" @click="$emit('resend')">重试</button>
+          </span>
+          <template v-else>
+            <span>{{ message.timestamp }}</span>
+            <span v-if="message.editedAt">（已编辑）</span>
+            <button v-if="message.editable" type="button" class="message-bubble__link" @click="$emit('edit')">编辑</button>
+            <button v-if="message.retractable" type="button" class="message-bubble__link" @click="$emit('retract')">撤回</button>
+          </template>
+        </div>
+      </template>
     </div>
   </div>
 </template>
@@ -68,6 +106,10 @@ defineProps<{ message: ChatMessage; grouped?: boolean }>()
   color: var(--on-accent);
 }
 
+.message-bubble--failed {
+  border-color: var(--SystemFillColorCriticalBrush);
+}
+
 .message-bubble__author {
   font-size: 0.75rem;
   color: var(--text-secondary);
@@ -77,21 +119,54 @@ defineProps<{ message: ChatMessage; grouped?: boolean }>()
 .message-bubble__content {
   font-size: 0.9rem;
   line-height: 1.4;
+  white-space: pre-wrap;
 }
 
 .message-bubble--mine .message-bubble__content {
   color: inherit;
 }
 
-.message-bubble__time {
+.message-bubble__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
   font-size: 0.7rem;
   color: var(--text-tertiary);
   margin-top: 0.2rem;
-  text-align: right;
+  justify-content: flex-end;
 }
 
-.message-bubble--mine .message-bubble__time {
+.message-bubble--mine .message-bubble__meta {
   color: color-mix(in srgb, var(--on-accent) 70%, transparent);
+}
+
+.message-bubble__link {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  font-size: 0.7rem;
+  color: inherit;
+  text-decoration: underline;
+}
+
+.message-bubble__edit-input {
+  width: 100%;
+  min-width: 180px;
+  font: inherit;
+  padding: 0.35rem 0.5rem;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--ctrl-border);
+  background: var(--ctrl-fill-secondary);
+  color: var(--text-primary);
+  resize: vertical;
+}
+
+.message-bubble__edit-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 0.3rem;
 }
 
 @media (max-width: 768px) {

@@ -185,8 +185,8 @@ async function generateInviteCodes() {
         <ul v-if="inviteCodes.length" class="admin-invite__list">
           <li v-for="invite in inviteCodes" :key="invite.code" class="admin-invite__item">
             <code>{{ invite.code }}</code>
-            <span class="admin-invite__status" :class="{ 'admin-invite__status--used': invite.used }">
-              {{ invite.used ? '已使用' : '未使用' }}
+            <span class="admin-invite__status" :class="{ 'admin-invite__status--used': invite.used_by != null }">
+              {{ invite.used_by != null ? '已使用' : '未使用' }}
             </span>
           </li>
         </ul>

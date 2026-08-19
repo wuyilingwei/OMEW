@@ -1,13 +1,46 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { usePostModal } from '../composables/usePostModal'
+import { useSectionRoom } from '../composables/useSectionRoom'
+import { useStrongholdMembers } from '../composables/useStrongholdMembers'
+import { actorLocalpart } from '../utils/actor'
 import { WinButton } from '../vendor/winui'
 import AvatarBadge from './AvatarBadge.vue'
 
-const { openPost, close } = usePostModal()
+const { openPostSeq, close } = usePostModal()
+const { thread, threadLoading, threadRepliesLoading, threadHasMore, openThread, closeThread, loadMoreReplies, createReply } =
+  useSectionRoom()
+const { members } = useStrongholdMembers()
+
+const replyDraft = ref('')
+const replyError = ref('')
+
+function displayName(actor: string): string {
+  return members.value.find((m) => m.actor === actor)?.display_name ?? actorLocalpart(actor)
+}
+
+function formatTime(ts: number): string {
+  return new Date(ts).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+watch(openPostSeq, (seq) => {
+  if (seq != null) void openThread(seq)
+  else closeThread()
+})
+
+function submitReply() {
+  replyError.value = ''
+  if (!replyDraft.value.trim()) return
+  const ok = createReply(replyDraft.value)
+  if (!ok) {
+    replyError.value = '发送失败，连接尚未就绪，请稍后再试'
+    return
+  }
+  replyDraft.value = ''
+}
 
 function onKeydown(event: KeyboardEvent) {
-  if (event.key === 'Escape' && openPost.value) close()
+  if (event.key === 'Escape' && openPostSeq.value != null) close()
 }
 
 onMounted(() => window.addEventListener('keydown', onKeydown))
@@ -17,26 +50,53 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 <template>
   <Teleport to="body">
     <Transition name="post-modal">
-      <div v-if="openPost" class="post-modal-overlay" @click.self="close">
-        <div class="post-modal" role="dialog" aria-modal="true" :aria-label="openPost.title">
+      <div v-if="openPostSeq != null" class="post-modal-overlay" @click.self="close">
+        <div class="post-modal" role="dialog" aria-modal="true">
           <WinButton Style="SubtleButtonStyle" class="post-modal__close" @Click="close">关闭</WinButton>
-          <div class="post-modal__scroll">
-            <img v-if="openPost.cover" class="post-modal__cover" :src="openPost.cover" :alt="openPost.title" />
+
+          <div v-if="threadLoading && !thread" class="post-modal__loading">加载中…</div>
+
+          <div v-else-if="thread" class="post-modal__scroll">
+            <img v-if="thread.post.cover" class="post-modal__cover" :src="thread.post.cover" :alt="thread.post.title" />
             <div class="post-modal__body">
-              <h1 class="post-modal__title">{{ openPost.title }}</h1>
+              <h1 class="post-modal__title">{{ thread.post.title }}</h1>
               <div class="post-modal__author-row">
-                <AvatarBadge :seed="openPost.avatar" :size="36" />
+                <AvatarBadge :seed="displayName(thread.post.actor)" :size="36" />
                 <div class="post-modal__author-meta">
-                  <span class="post-modal__author-name">{{ openPost.author }}</span>
-                  <span class="post-modal__time">{{ openPost.timestamp }}</span>
+                  <span class="post-modal__author-name">{{ displayName(thread.post.actor) }}</span>
+                  <span class="post-modal__time">{{ formatTime(thread.post.created_at) }}</span>
                 </div>
               </div>
-              <p v-for="(paragraph, index) in openPost.content.split('\n\n')" :key="index" class="post-modal__paragraph">
+              <p v-for="(paragraph, index) in thread.post.text.split('\n\n')" :key="index" class="post-modal__paragraph">
                 {{ paragraph }}
               </p>
+
               <div class="post-modal__comments">
-                <h2 class="post-modal__comments-title">评论</h2>
-                <p class="post-modal__comments-empty">暂无评论，来说两句吧。</p>
+                <h2 class="post-modal__comments-title">评论（{{ thread.post.reply_count }}）</h2>
+                <p v-if="!thread.replies.length" class="post-modal__comments-empty">暂无评论，来说两句吧。</p>
+                <ul v-else class="post-modal__reply-list">
+                  <li v-for="reply in thread.replies" :key="reply.seq" class="post-modal__reply">
+                    <AvatarBadge :seed="displayName(reply.actor)" :size="28" />
+                    <div class="post-modal__reply-body">
+                      <div class="post-modal__reply-meta">
+                        <span class="post-modal__reply-author">{{ displayName(reply.actor) }}</span>
+                        <span class="post-modal__time">{{ formatTime(reply.ts) }}</span>
+                      </div>
+                      <p class="post-modal__reply-text">{{ reply.body.text }}</p>
+                    </div>
+                  </li>
+                </ul>
+                <div v-if="threadHasMore" class="post-modal__more">
+                  <WinButton Style="SubtleButtonStyle" :IsEnabled="!threadRepliesLoading" @Click="loadMoreReplies">
+                    {{ threadRepliesLoading ? '加载中…' : '加载更多评论' }}
+                  </WinButton>
+                </div>
+
+                <div class="post-modal__reply-form">
+                  <textarea v-model="replyDraft" rows="2" placeholder="写评论…"></textarea>
+                  <p v-if="replyError" class="field__error">{{ replyError }}</p>
+                  <WinButton Style="AccentButtonStyle" class="post-modal__reply-submit" @Click="submitReply">回复</WinButton>
+                </div>
               </div>
             </div>
           </div>
@@ -117,6 +177,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   z-index: 1;
 }
 
+.post-modal__loading {
+  padding: 3rem 1.5rem;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 0.85rem;
+}
+
 .post-modal__scroll {
   overflow-y: auto;
 }
@@ -179,7 +246,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   border-top: 1px solid var(--stroke-divider);
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: 0.6rem;
 }
 
 .post-modal__comments-title {
@@ -193,6 +260,74 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   margin: 0;
   font-size: 0.82rem;
   color: var(--text-tertiary);
+}
+
+.post-modal__reply-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.post-modal__reply {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.post-modal__reply-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.post-modal__reply-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.post-modal__reply-author {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.post-modal__reply-text {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+}
+
+.post-modal__more {
+  display: flex;
+  justify-content: center;
+}
+
+.post-modal__reply-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.3rem;
+}
+
+.post-modal__reply-form textarea {
+  font: inherit;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--ctrl-border);
+  background: var(--ctrl-fill-secondary);
+  color: var(--text-primary);
+  resize: vertical;
+}
+
+.post-modal__reply-submit {
+  align-self: flex-end;
 }
 
 @media (max-width: 768px) {

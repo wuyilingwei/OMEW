@@ -2,9 +2,7 @@
 import { useShellView } from '../composables/useShellView'
 import ChannelSwitcher from './ChannelSwitcher.vue'
 import ChatPane from './ChatPane.vue'
-import { useChannel } from '../composables/useChannel'
 
-const { selectedChannel } = useChannel()
 const { setView } = useShellView()
 </script>
 
@@ -19,7 +17,7 @@ const { setView } = useShellView()
       <div class="middle-column__header-spacer" />
       <ChannelSwitcher />
     </div>
-    <ChatPane :channel="selectedChannel" />
+    <ChatPane />
   </main>
 </template>
 
