@@ -71,7 +71,9 @@ export function newJti(): string {
 }
 
 // Password hashing: WebCrypto PBKDF2-SHA256, random salt per user.
-const PBKDF2_ITERATIONS = 310_000;
+// Workers WebCrypto hard-caps PBKDF2 at 100k iterations (NotSupportedError above);
+// local workerd does not enforce the cap, so only production surfaces it.
+const PBKDF2_ITERATIONS = 100_000;
 const PBKDF2_HASH_BITS = 256;
 const SALT_BYTES = 16;
 
