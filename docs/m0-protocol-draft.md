@@ -825,6 +825,9 @@ claim_input = UTF8("openmew/migration-claim/v1") || 0x00 ||
 - **`root_requirements`** ⊆ {`email`, `phone`, `code`}:作为根节点时的注册门槛,逐项强制。`phone` 为**保留枚举值**——部署未接入短信通道时 MUST 返回明确错误,MUST NOT 静默跳过该项校验。
 - **`trusted_identity_servers`**(承认哪些服务器的身份):域名列表,`"*"` 表示全部。`POST /federation/session` MUST 在验签**之前**按断言 `iss` 域比对该表;不在名单 MUST 返回 403 `OMEW_ORIGIN_NOT_TRUSTED`,且 MUST NOT 因此向该域发起密钥拉取(与 §11.2 未知 origin 零出站一致)。`"*"` 不豁免 §6 密钥验证与 §11 限流。将某域移出名单时,SHOULD 经 §7.3 撤销传播作废该域用户的现存会话;已落库的历史内容不受追溯。
 
+- **`federation_peers`**(要加入的已知服务器):本实例主动发起联邦对等(订阅帖子流、目录聚合、历史回填等**出站**行为)的域名列表,由管理员配置。与 `trusted_identity_servers` 相互独立:后者管**身份准入**(谁的用户可来),本项管**内容对等**(我方主动连谁)。出站订阅与主动拉取 MUST 仅面向本列表中的域(与 §11.2 未知 origin 零出站一致);实例描述符的 `known_peers` 字段 SHOULD 以本列表为源。
+- **`stronghold_creation`** ∈ {`open`, `restricted`, `application`}:据点创建策略——`open` 任何本地用户可建;`restricted` 仅管理员与指定名单(`stronghold_creators`)可建;`application` 须提交申请由管理员审批(三态 pending/approved/rejected,批准即以申请人为 owner 创建)。自运营模式下的实例治理项,属本地策略,不进联邦事件。
+
 策略属实例本地配置,不进入信封与联邦事件;实例描述符(§6.1)MAY 以 `registration: open|invite|closed` 概要宣告注册开放度供客户端与目录展示。
 
 ### 8.1 配置
