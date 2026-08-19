@@ -1,9 +1,14 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
+import { EMPTY_STATE } from '../assets/mew'
+import { useAuth } from '../composables/useAuth'
 import { useSectionRoom } from '../composables/useSectionRoom'
 import { WinButton } from '../vendor/winui'
+import CoverUploader from './CoverUploader.vue'
+import EmptyState from './EmptyState.vue'
 import PostCard from './PostCard.vue'
 
+const auth = useAuth()
 const { posts, postsLoading, hasMorePosts, loadMorePosts, createPost, postRoom } = useSectionRoom()
 
 const showCompose = ref(false)
@@ -49,7 +54,8 @@ function submitPost() {
         <textarea v-model="form.text" rows="4" placeholder="正文"></textarea>
       </div>
       <div class="field">
-        <input v-model="form.cover" type="text" placeholder="封面图 URL（可选）" />
+        <span class="field__label">封面（可选）</span>
+        <CoverUploader v-if="auth.token.value" v-model="form.cover" :token="auth.token.value" />
       </div>
       <p v-if="composeError" class="field__error">{{ composeError }}</p>
       <div class="left-column__compose-actions">
@@ -60,7 +66,7 @@ function submitPost() {
 
     <div class="left-column__feed">
       <PostCard v-for="post in posts" :key="post.post_seq" :post="post" />
-      <p v-if="!posts.length && !postsLoading" class="left-column__empty">暂无帖子</p>
+      <EmptyState v-if="!posts.length && !postsLoading" :image="EMPTY_STATE.posts" text="暂无帖子" />
       <div v-if="hasMorePosts" class="left-column__more">
         <WinButton Style="SubtleButtonStyle" :IsEnabled="!postsLoading" @Click="loadMorePosts">
           {{ postsLoading ? '加载中…' : '加载更多' }}
@@ -117,14 +123,6 @@ function submitPost() {
   flex-direction: column;
   gap: 0.5rem;
   padding: 0 0.75rem 1rem;
-}
-
-.left-column__empty {
-  margin: 0;
-  padding: 1rem 0;
-  text-align: center;
-  font-size: 0.82rem;
-  color: var(--text-tertiary);
 }
 
 .left-column__more {

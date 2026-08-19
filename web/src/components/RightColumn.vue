@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { DEFAULT_NODE_PAGE_BG } from '../assets/mew'
 import { useAuth } from '../composables/useAuth'
 import { useStronghold } from '../composables/useStronghold'
 import { useStrongholdConfig } from '../composables/useStrongholdConfig'
@@ -18,7 +19,7 @@ const { myRole } = useStrongholdMembers()
 
 const strongholdName = computed(() => config.value?.name ?? currentNode.value?.name ?? '')
 const strongholdDescription = computed(() => config.value?.description ?? '')
-const strongholdCover = computed(() => config.value?.cover || currentNode.value?.cover || '')
+const strongholdCover = computed(() => config.value?.cover || currentNode.value?.cover || DEFAULT_NODE_PAGE_BG)
 
 const modeLabel: Record<string, string> = {
   system: '跟随系统',

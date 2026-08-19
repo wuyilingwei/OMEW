@@ -154,8 +154,11 @@ export const realApi = {
   listMyStrongholds: (token: string) =>
     request<StrongholdSummary[]>('/api/me/strongholds', { headers: authHeaders(token) }),
 
+  // under the "application" creation policy the server returns a pending
+  // application instead of a stronghold (202, not 201) - the caller
+  // distinguishes by checking for `application_id`.
   createStronghold: (token: string, payload: CreateStrongholdPayload) =>
-    request<StrongholdConfig>('/api/strongholds', {
+    request<StrongholdConfig | { application_id: string; state: 'pending' }>('/api/strongholds', {
       method: 'POST',
       headers: authHeaders(token),
       body: JSON.stringify(payload),
