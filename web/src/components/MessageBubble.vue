@@ -186,6 +186,12 @@ const pureEmote = computed(() => pureEmoteToken(segments.value))
   color: color-mix(in srgb, var(--on-accent) 70%, transparent);
 }
 
+.message-bubble--emote-only .message-bubble__meta {
+  /* no colored background behind an emote-only bubble - meta text needs the
+     regular tertiary color instead of the on-accent mix above */
+  color: var(--text-tertiary);
+}
+
 .message-bubble__link {
   border: none;
   background: transparent;
