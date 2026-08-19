@@ -60,12 +60,21 @@ export interface SessionTokenClaims {
 // instance_config table (migration 0002).
 export type RootRequirement = "email" | "phone" | "code";
 
+// m0-protocol §7.9: self-operated instance governance policies.
+export type StrongholdCreationPolicy = "open" | "restricted" | "application";
+
 export interface InstanceConfig {
   allow_root: boolean;
   root_requirements: RootRequirement[];
   trusted_identity_servers: string[];
   max_file_bytes: number;
   user_storage_quota_bytes: number;
+  // Outbound content-federation allowlist (migration 0006), independent of
+  // trusted_identity_servers (identity admission). Subscribe/backfill wiring
+  // lands in M5/M6 and MUST target only this list (m0-protocol §7.9).
+  federation_peers: string[];
+  stronghold_creation_policy: StrongholdCreationPolicy;
+  stronghold_creators: string[];
 }
 
 // Shape returned to clients on register/login - never includes pw_hash/pw_salt or
