@@ -5,6 +5,7 @@ import type { Role, RoomTokenClaims, SessionTokenClaims } from "../server/src/ty
 import migration0001 from "../server/migrations/0001_init.sql?raw";
 import migration0002 from "../server/migrations/0002_user_system.sql?raw";
 import migration0003 from "../server/migrations/0003_stronghold_index.sql?raw";
+import migration0004 from "../server/migrations/0004_media.sql?raw";
 
 // Must match vitest.config.ts's miniflare.bindings.DEV_TOKEN_SECRET.
 export const TEST_SECRET = "test-secret-do-not-use-in-prod";
@@ -27,7 +28,7 @@ export async function ensureMigrated(): Promise<void> {
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'instance_config'"
   ).first();
   if (marker) return;
-  for (const sql of [migration0001, migration0002, migration0003]) {
+  for (const sql of [migration0001, migration0002, migration0003, migration0004]) {
     for (const statement of splitStatements(sql)) {
       await env.DB.prepare(statement).run();
     }
@@ -38,6 +39,39 @@ export function apiRequest(path: string, init: RequestInit = {}): Promise<Respon
   const headers = new Headers(init.headers);
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   return worker.fetch(new Request(`http://local${path}`, { ...init, headers }), env);
+}
+
+// Raw-body upload for POST /api/media - callers control Content-Type and
+// Content-Length explicitly, including declaring a length that doesn't match the
+// stream's actual byte count (to exercise the streaming length-mismatch guard).
+export function mediaUploadRequest(opts: {
+  token: string;
+  contentType: string;
+  declaredLength: number;
+  body: Uint8Array | ReadableStream<Uint8Array>;
+}): Promise<Response> {
+  return worker.fetch(
+    new Request("http://local/api/media", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${opts.token}`,
+        "Content-Type": opts.contentType,
+        "Content-Length": String(opts.declaredLength),
+      },
+      body: opts.body,
+      duplex: opts.body instanceof ReadableStream ? "half" : undefined,
+    } as RequestInit),
+    env
+  );
+}
+
+export function streamOf(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
 }
 
 export async function registerUser(
