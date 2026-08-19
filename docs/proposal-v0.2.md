@@ -171,6 +171,7 @@ attachment 是握手期授权快照,MUST 配合失效通道:StrongholdDO 在 `me
 | Queues | 免费档可用:10k ops/天、保留固定 24h;付费 1M ops/月、最长 14 天;完整投递 ≈ 3 ops | 超 24h 重试需 D1 outbox |
 | D1 | FTS5 可用(不可自定义 tokenizer);免费 500MB/库,付费 10GB/库(**硬上限**) | 消息不进 D1 |
 | Ed25519 in WebCrypto | 标准标识符 `"Ed25519"`,无需 compatibility flag;`NODE-ED25519` 已 legacy | 直接使用 |
+| PBKDF2 in WebCrypto | **迭代硬顶 100k**(超出抛 NotSupportedError;本地 workerd 不执行该限制,生产才暴露) | 口令散列固定 100k;更高强度需换 argon2 类库 |
 | 浏览器同域 WS 并发 | Chrome 每源 255、Firefox 全局 200;CF 边缘不宣告 RFC 8441,WS 走 HTTP/1.1 Upgrade 各占一条 TCP | 每客户端 1–5 条,非约束 |
 | 前端托管 | Pages 处于维护模式,新功能仅进 Workers | 用 Workers static assets |
 | DO 单点吞吐 | 串行执行 | 批广播 + 按 actor 限流 |
