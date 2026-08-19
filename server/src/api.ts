@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { dummyPasswordFields, hashPassword, newJti, signToken, verifyPassword, verifyToken } from "./auth";
 import { handleInbox } from "./inbox";
 import type { ConfigRow, MemberRow } from "./stronghold-do";
@@ -16,6 +17,7 @@ import {
   getInstanceConfig,
   isOriginTrusted,
   isValidEmail,
+  isValidPositiveInt,
   isValidRootRequirements,
   isValidTrustedServers,
   isValidUsername,
@@ -288,13 +290,23 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (!isValidRootRequirements(rootRequirements)) return apiError(400, "CONFIG_INVALID");
     const trustedServers = "trusted_identity_servers" in body ? body.trusted_identity_servers : current.trusted_identity_servers;
     if (!isValidTrustedServers(trustedServers)) return apiError(400, "CONFIG_INVALID");
+    const maxFileBytes = "max_file_bytes" in body ? body.max_file_bytes : current.max_file_bytes;
+    if (!isValidPositiveInt(maxFileBytes)) return apiError(400, "CONFIG_INVALID");
+    const userStorageQuotaBytes = "user_storage_quota_bytes" in body ? body.user_storage_quota_bytes : current.user_storage_quota_bytes;
+    if (!isValidPositiveInt(userStorageQuotaBytes)) return apiError(400, "CONFIG_INVALID");
 
     await env.DB.prepare(
-      "UPDATE instance_config SET allow_root = ?, root_requirements = ?, trusted_identity_servers = ? WHERE id = 1"
+      "UPDATE instance_config SET allow_root = ?, root_requirements = ?, trusted_identity_servers = ?, max_file_bytes = ?, user_storage_quota_bytes = ? WHERE id = 1"
     )
-      .bind(allowRoot ? 1 : 0, JSON.stringify(rootRequirements), JSON.stringify(trustedServers))
+      .bind(allowRoot ? 1 : 0, JSON.stringify(rootRequirements), JSON.stringify(trustedServers), maxFileBytes, userStorageQuotaBytes)
       .run();
-    return json({ allow_root: allowRoot, root_requirements: rootRequirements, trusted_identity_servers: trustedServers });
+    return json({
+      allow_root: allowRoot,
+      root_requirements: rootRequirements,
+      trusted_identity_servers: trustedServers,
+      max_file_bytes: maxFileBytes,
+      user_storage_quota_bytes: userStorageQuotaBytes,
+    });
   }
 
   if (method === "POST" && path === "/api/admin/invite-codes") {
@@ -326,6 +338,58 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
       "SELECT code, created_by, created_at, used_by, used_at FROM invite_codes ORDER BY created_at DESC"
     ).all();
     return json({ codes: results });
+  }
+
+  // ---- media upload, retrieval, deletion and storage quota ------------------------
+
+  if (method === "POST" && path === "/api/media") {
+    return handleMediaUpload(request, env);
+  }
+
+  const mediaGetMatch = match("/media/:id", path);
+  if (mediaGetMatch && method === "GET") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const row = await env.DB.prepare("SELECT mime, r2_key FROM media WHERE id = ?")
+      .bind(mediaGetMatch.id!)
+      .first<{ mime: string; r2_key: string }>();
+    if (!row) return apiError(404, "NOT_FOUND");
+    const object = await env.MEDIA.get(row.r2_key);
+    if (!object) return apiError(404, "NOT_FOUND");
+    return new Response(object.body, {
+      headers: {
+        "Content-Type": row.mime,
+        "Cache-Control": "public, max-age=31536000, immutable",
+        ...cors(),
+      },
+    });
+  }
+
+  const mediaDeleteMatch = match("/api/media/:id", path);
+  if (mediaDeleteMatch && method === "DELETE") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const row = await env.DB.prepare("SELECT owner_actor, r2_key, size FROM media WHERE id = ?")
+      .bind(mediaDeleteMatch.id!)
+      .first<{ owner_actor: string; r2_key: string; size: number }>();
+    if (!row) return apiError(404, "NOT_FOUND");
+    if (row.owner_actor !== actor) {
+      const userRow = await env.DB.prepare("SELECT is_admin FROM users WHERE localpart = ?")
+        .bind(localpartOfActor(actor))
+        .first<{ is_admin: number }>();
+      if (!userRow || !userRow.is_admin) return apiError(403, "FORBIDDEN");
+    }
+    await env.MEDIA.delete(row.r2_key);
+    await env.DB.prepare("DELETE FROM media WHERE id = ?").bind(mediaDeleteMatch.id!).run();
+    return new Response(null, { status: 204, headers: cors() });
+  }
+
+  if (method === "GET" && path === "/api/me/storage") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const config = await getInstanceConfig(env);
+    const used = await mediaUsage(env, actor);
+    return json({ used, quota: config.user_storage_quota_bytes, max_file: config.max_file_bytes });
   }
 
   // ---- federation session (m0-protocol S7.2) - trust-list gate only, M6 does the rest ----
@@ -969,6 +1033,170 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   }
 
   return errorResponse(404, "OMEW_NOT_FOUND", "no such route");
+}
+
+// ---- media upload pipeline --------------------------------------------------------
+// Worker-proxied write straight into the R2 binding (no presigned direct-to-R2
+// upload): size/MIME/quota are checked before a byte is written, then the body
+// streams through a counting+hashing transform into R2 so nothing is buffered in
+// full. Content-Length is trusted for the pre-checks but re-verified against the
+// actual byte count as it streams; the declared MIME is re-verified against a
+// magic-byte sniff of the received bytes once the stream ends.
+
+const MEDIA_MIME_WHITELIST = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+  "video/mp4",
+  "audio/mpeg",
+]);
+
+const MEDIA_SNIFF_BYTES = 16;
+
+function sniffMediaMime(bytes: Uint8Array): string | null {
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 &&
+    bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a
+  ) {
+    return "image/png";
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (
+    bytes.length >= 6 &&
+    bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38 &&
+    (bytes[4] === 0x37 || bytes[4] === 0x39) && bytes[5] === 0x61
+  ) {
+    return "image/gif";
+  }
+  if (
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+    bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
+  ) {
+    return "image/webp";
+  }
+  if (bytes.length >= 8 && bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70) {
+    return "video/mp4";
+  }
+  if (bytes.length >= 3 && bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) {
+    return "audio/mpeg"; // ID3-tagged
+  }
+  if (bytes.length >= 2 && bytes[0] === 0xff && (bytes[1]! & 0xe0) === 0xe0) {
+    return "audio/mpeg"; // frame sync, untagged
+  }
+  return null;
+}
+
+function concatBytes(chunks: Uint8Array[]): Uint8Array {
+  const total = chunks.reduce((n, c) => n + c.byteLength, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    out.set(c, offset);
+    offset += c.byteLength;
+  }
+  return out;
+}
+
+async function mediaUsage(env: Env, actor: string): Promise<number> {
+  const row = await env.DB.prepare("SELECT COALESCE(SUM(size), 0) AS used FROM media WHERE owner_actor = ?")
+    .bind(actor)
+    .first<{ used: number }>();
+  return row?.used ?? 0;
+}
+
+async function handleMediaUpload(request: Request, env: Env): Promise<Response> {
+  const actor = await requireActor(request, env);
+  if (!actor) return apiError(401, "AUTH_REQUIRED");
+
+  const contentTypeHeader = request.headers.get("Content-Type");
+  const contentLengthHeader = request.headers.get("Content-Length");
+  if (!contentTypeHeader || !contentLengthHeader) return apiError(400, "PAYLOAD_INVALID");
+  const declaredLength = Number(contentLengthHeader);
+  if (!Number.isInteger(declaredLength) || declaredLength <= 0) return apiError(400, "PAYLOAD_INVALID");
+  const mime = contentTypeHeader.split(";")[0]!.trim().toLowerCase();
+
+  const config = await getInstanceConfig(env);
+  if (declaredLength > config.max_file_bytes) {
+    await request.body?.cancel().catch(() => {});
+    return apiError(413, "FILE_TOO_LARGE");
+  }
+  if (!MEDIA_MIME_WHITELIST.has(mime)) {
+    await request.body?.cancel().catch(() => {});
+    return apiError(415, "MIME_REJECTED");
+  }
+
+  const used = await mediaUsage(env, actor);
+  if (used + declaredLength > config.user_storage_quota_bytes) {
+    await request.body?.cancel().catch(() => {});
+    return apiError(413, "QUOTA_EXCEEDED");
+  }
+
+  if (!request.body) return apiError(400, "PAYLOAD_INVALID");
+
+  const id = crypto.randomUUID();
+  const r2Key = `media/${id}`;
+  const hash = createHash("sha256");
+  let totalBytes = 0;
+  let sniffLen = 0;
+  const sniffChunks: Uint8Array[] = [];
+  let lengthExceeded = false;
+
+  const counter = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      totalBytes += chunk.byteLength;
+      if (totalBytes > declaredLength) {
+        lengthExceeded = true;
+        controller.error(new Error("declared content-length exceeded"));
+        return;
+      }
+      hash.update(chunk);
+      if (sniffLen < MEDIA_SNIFF_BYTES) {
+        sniffChunks.push(chunk);
+        sniffLen += chunk.byteLength;
+      }
+      controller.enqueue(chunk);
+    },
+  });
+
+  // R2Bucket.put() only accepts a stream with a known length (a request/response
+  // body, or the readable half of a FixedLengthStream) - a plain TransformStream's
+  // output doesn't carry that metadata, so the counting/hashing transform feeds a
+  // FixedLengthStream pinned to the declared length before reaching R2.
+  const fixedLength = new FixedLengthStream(declaredLength);
+  const pump = request.body
+    .pipeThrough(counter)
+    .pipeTo(fixedLength.writable)
+    .catch(() => {});
+
+  try {
+    await env.MEDIA.put(r2Key, fixedLength.readable, { httpMetadata: { contentType: mime } });
+  } catch {
+    await pump;
+    await env.MEDIA.delete(r2Key).catch(() => {});
+    if (lengthExceeded) return apiError(400, "LENGTH_MISMATCH");
+    return apiError(400, "UPLOAD_FAILED");
+  }
+  await pump;
+
+  const sniffed = sniffMediaMime(concatBytes(sniffChunks).subarray(0, MEDIA_SNIFF_BYTES));
+  if (sniffed !== mime) {
+    await env.MEDIA.delete(r2Key).catch(() => {});
+    return apiError(415, "MIME_REJECTED");
+  }
+
+  const now = Date.now();
+  await env.DB.prepare(
+    "INSERT INTO media (id, hash, owner_actor, size, mime, r2_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  )
+    .bind(id, hash.digest("hex"), actor, totalBytes, mime, r2Key, now)
+    .run();
+
+  return json({ id, url: `/media/${id}`, size: totalBytes, mime }, 201);
 }
 
 function nowS(): number {

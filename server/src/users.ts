@@ -60,18 +60,36 @@ export function domainOfActor(actor: string): string {
 
 export async function getInstanceConfig(env: Env): Promise<InstanceConfig> {
   const row = await env.DB.prepare(
-    "SELECT allow_root, root_requirements, trusted_identity_servers FROM instance_config WHERE id = 1"
-  ).first<{ allow_root: number; root_requirements: string; trusted_identity_servers: string }>();
+    "SELECT allow_root, root_requirements, trusted_identity_servers, max_file_bytes, user_storage_quota_bytes FROM instance_config WHERE id = 1"
+  ).first<{
+    allow_root: number;
+    root_requirements: string;
+    trusted_identity_servers: string;
+    max_file_bytes: number;
+    user_storage_quota_bytes: number;
+  }>();
   if (!row) {
     // Unreachable once migration 0002 has run (it seeds the single row) - fail
     // closed to the most restrictive policy rather than 500 if it somehow isn't.
-    return { allow_root: false, root_requirements: [], trusted_identity_servers: ["*"] };
+    return {
+      allow_root: false,
+      root_requirements: [],
+      trusted_identity_servers: ["*"],
+      max_file_bytes: 10485760,
+      user_storage_quota_bytes: 209715200,
+    };
   }
   return {
     allow_root: Boolean(row.allow_root),
     root_requirements: JSON.parse(row.root_requirements) as RootRequirement[],
     trusted_identity_servers: JSON.parse(row.trusted_identity_servers) as string[],
+    max_file_bytes: row.max_file_bytes,
+    user_storage_quota_bytes: row.user_storage_quota_bytes,
   };
+}
+
+export function isValidPositiveInt(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
 export function isOriginTrusted(config: InstanceConfig, origin: string): boolean {

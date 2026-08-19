@@ -64,6 +64,8 @@ export interface InstanceConfig {
   allow_root: boolean;
   root_requirements: RootRequirement[];
   trusted_identity_servers: string[];
+  max_file_bytes: number;
+  user_storage_quota_bytes: number;
 }
 
 // Shape returned to clients on register/login - never includes pw_hash/pw_salt or
