@@ -6,6 +6,7 @@ import migration0001 from "../server/migrations/0001_init.sql?raw";
 import migration0002 from "../server/migrations/0002_user_system.sql?raw";
 import migration0003 from "../server/migrations/0003_stronghold_index.sql?raw";
 import migration0004 from "../server/migrations/0004_media.sql?raw";
+import migration0005 from "../server/migrations/0005_emotes.sql?raw";
 
 // Must match vitest.config.ts's miniflare.bindings.DEV_TOKEN_SECRET.
 export const TEST_SECRET = "test-secret-do-not-use-in-prod";
@@ -28,7 +29,7 @@ export async function ensureMigrated(): Promise<void> {
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'instance_config'"
   ).first();
   if (marker) return;
-  for (const sql of [migration0001, migration0002, migration0003, migration0004]) {
+  for (const sql of [migration0001, migration0002, migration0003, migration0004, migration0005]) {
     for (const statement of splitStatements(sql)) {
       await env.DB.prepare(statement).run();
     }

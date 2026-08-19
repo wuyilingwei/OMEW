@@ -392,6 +392,158 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     return json({ used, quota: config.user_storage_quota_bytes, max_file: config.max_file_bytes });
   }
 
+  // ---- emote packs & emotes (v1: instance-level, admin-managed; each emote wraps
+  // an existing media row) - :pack:name: rendering is a web-side concern, not this
+  // API's ----------------------------------------------------------------------
+
+  if (method === "GET" && path === "/api/emotes") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    return json({ packs: await listEmotePacks(env) });
+  }
+
+  if (method === "POST" && path === "/api/admin/emote-packs") {
+    const gate = await requireAdmin(request, env);
+    if (gate instanceof Response) return gate;
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!isValidEmoteName(name)) return apiError(400, "PACK_NAME_INVALID");
+
+    const id = crypto.randomUUID();
+    const now = Date.now();
+    try {
+      await env.DB.prepare("INSERT INTO emote_packs (id, name, created_by, created_at) VALUES (?, ?, ?, ?)")
+        .bind(id, name, gate.actor, now)
+        .run();
+    } catch {
+      return apiError(409, "PACK_NAME_TAKEN");
+    }
+    return json({ id, name, created_by: gate.actor, created_at: now, emotes: [] }, 201);
+  }
+
+  const emotePackDeleteMatch = match("/api/admin/emote-packs/:id", path);
+  if (emotePackDeleteMatch && method === "DELETE") {
+    const gate = await requireAdmin(request, env);
+    if (gate instanceof Response) return gate;
+    const pack = await env.DB.prepare("SELECT id FROM emote_packs WHERE id = ?").bind(emotePackDeleteMatch.id!).first();
+    if (!pack) return apiError(404, "NOT_FOUND");
+    // Cascades the pack's emote rows only - the underlying media rows/objects
+    // outlive the pack (proposal §11: asset lifecycle stays with 017's pipeline).
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM emotes WHERE pack_id = ?").bind(emotePackDeleteMatch.id!),
+      env.DB.prepare("DELETE FROM emote_packs WHERE id = ?").bind(emotePackDeleteMatch.id!),
+    ]);
+    return new Response(null, { status: 204, headers: cors() });
+  }
+
+  const emoteCreateMatch = match("/api/admin/emote-packs/:id/emotes", path);
+  if (emoteCreateMatch && method === "POST") {
+    const gate = await requireAdmin(request, env);
+    if (gate instanceof Response) return gate;
+    const pack = await env.DB.prepare("SELECT id FROM emote_packs WHERE id = ?").bind(emoteCreateMatch.id!).first();
+    if (!pack) return apiError(404, "NOT_FOUND");
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!isValidEmoteName(name)) return apiError(400, "EMOTE_NAME_INVALID");
+    const mediaId = typeof body.media_id === "string" ? body.media_id : "";
+    const media = await env.DB.prepare("SELECT id FROM media WHERE id = ?").bind(mediaId).first();
+    if (!media) return apiError(400, "MEDIA_NOT_FOUND");
+
+    const id = crypto.randomUUID();
+    const now = Date.now();
+    try {
+      await env.DB.prepare("INSERT INTO emotes (id, pack_id, name, media_id, created_at) VALUES (?, ?, ?, ?, ?)")
+        .bind(id, emoteCreateMatch.id!, name, mediaId, now)
+        .run();
+    } catch {
+      return apiError(409, "EMOTE_NAME_TAKEN");
+    }
+    return json({ id, name, media_id: mediaId, url: `/media/${mediaId}` }, 201);
+  }
+
+  const emoteDeleteMatch = match("/api/admin/emotes/:id", path);
+  if (emoteDeleteMatch && method === "DELETE") {
+    const gate = await requireAdmin(request, env);
+    if (gate instanceof Response) return gate;
+    const result = await env.DB.prepare("DELETE FROM emotes WHERE id = ?").bind(emoteDeleteMatch.id!).run();
+    if (result.meta.changes === 0) return apiError(404, "NOT_FOUND");
+    return new Response(null, { status: 204, headers: cors() });
+  }
+
+  const emoteExportMatch = match("/api/admin/emote-packs/:id/export", path);
+  if (emoteExportMatch && method === "GET") {
+    const gate = await requireAdmin(request, env);
+    if (gate instanceof Response) return gate;
+    const pack = await env.DB.prepare("SELECT id, name FROM emote_packs WHERE id = ?")
+      .bind(emoteExportMatch.id!)
+      .first<{ id: string; name: string }>();
+    if (!pack) return apiError(404, "NOT_FOUND");
+    const { results } = await env.DB.prepare("SELECT name, media_id FROM emotes WHERE pack_id = ? ORDER BY created_at ASC")
+      .bind(emoteExportMatch.id!)
+      .all<{ name: string; media_id: string }>();
+    return json({
+      format: "omew-emotes/v1",
+      pack: { name: pack.name },
+      emotes: results.map((r) => ({ name: r.name, media_id: r.media_id })),
+      metadata: { exported_at: Date.now() },
+    });
+  }
+
+  if (method === "POST" && path === "/api/admin/emote-packs/import") {
+    const gate = await requireAdmin(request, env);
+    if (gate instanceof Response) return gate;
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    if (body.format !== "omew-emotes/v1") return apiError(400, "FORMAT_INVALID");
+    const packField = body.pack as Record<string, unknown> | undefined;
+    const packName = typeof packField?.name === "string" ? packField.name.trim() : "";
+    if (!isValidEmoteName(packName)) return apiError(400, "PACK_NAME_INVALID");
+    const entries = Array.isArray(body.emotes) ? body.emotes : [];
+
+    const packId = crypto.randomUUID();
+    const now = Date.now();
+    try {
+      await env.DB.prepare("INSERT INTO emote_packs (id, name, created_by, created_at) VALUES (?, ?, ?, ?)")
+        .bind(packId, packName, gate.actor, now)
+        .run();
+    } catch {
+      return apiError(409, "PACK_NAME_TAKEN");
+    }
+
+    const imported: { id: string; name: string; media_id: string; url: string }[] = [];
+    const skipped: { name: unknown; media_id: unknown; reason: string }[] = [];
+    const seenNames = new Set<string>();
+
+    for (const raw of entries) {
+      const entry = (raw ?? {}) as Record<string, unknown>;
+      const name = typeof entry.name === "string" ? entry.name.trim() : "";
+      const mediaId = typeof entry.media_id === "string" ? entry.media_id : "";
+      if (!isValidEmoteName(name)) {
+        skipped.push({ name: entry.name, media_id: entry.media_id, reason: "NAME_INVALID" });
+        continue;
+      }
+      if (seenNames.has(name)) {
+        skipped.push({ name, media_id: entry.media_id, reason: "NAME_DUPLICATE" });
+        continue;
+      }
+      const media = await env.DB.prepare("SELECT id FROM media WHERE id = ?").bind(mediaId).first();
+      if (!media) {
+        skipped.push({ name, media_id: entry.media_id, reason: "MEDIA_NOT_FOUND" });
+        continue;
+      }
+      seenNames.add(name);
+      const emoteId = crypto.randomUUID();
+      await env.DB.prepare("INSERT INTO emotes (id, pack_id, name, media_id, created_at) VALUES (?, ?, ?, ?, ?)")
+        .bind(emoteId, packId, name, mediaId, now)
+        .run();
+      imported.push({ id: emoteId, name, media_id: mediaId, url: `/media/${mediaId}` });
+    }
+
+    return json({ pack: { id: packId, name: packName, emotes: imported }, skipped }, 201);
+  }
+
   // ---- federation session (m0-protocol S7.2) - trust-list gate only, M6 does the rest ----
 
   if (method === "POST" && path === "/federation/session") {
@@ -1197,6 +1349,39 @@ async function handleMediaUpload(request: Request, env: Env): Promise<Response> 
     .run();
 
   return json({ id, url: `/media/${id}`, size: totalBytes, mime }, 201);
+}
+
+// ---- emote pack helpers ------------------------------------------------------------
+// Colon is the `:pack:name:` delimiter (web-side rendering, see 018 task notes), so
+// pack/emote names exclude it; otherwise a name is just a non-empty string <= 32 chars.
+
+function isValidEmoteName(name: string): boolean {
+  return name.length > 0 && name.length <= 32 && !name.includes(":");
+}
+
+interface EmoteEntry {
+  id: string;
+  name: string;
+  media_id: string;
+  url: string;
+}
+
+async function listEmotePacks(env: Env): Promise<{ id: string; name: string; emotes: EmoteEntry[] }[]> {
+  const { results: packRows } = await env.DB.prepare("SELECT id, name FROM emote_packs ORDER BY created_at ASC").all<{
+    id: string;
+    name: string;
+  }>();
+  const { results: emoteRows } = await env.DB.prepare(
+    "SELECT id, pack_id, name, media_id FROM emotes ORDER BY created_at ASC"
+  ).all<{ id: string; pack_id: string; name: string; media_id: string }>();
+
+  const byPack = new Map<string, EmoteEntry[]>();
+  for (const row of emoteRows) {
+    const list = byPack.get(row.pack_id) ?? [];
+    list.push({ id: row.id, name: row.name, media_id: row.media_id, url: `/media/${row.media_id}` });
+    byPack.set(row.pack_id, list);
+  }
+  return packRows.map((pack) => ({ id: pack.id, name: pack.name, emotes: byPack.get(pack.id) ?? [] }));
 }
 
 function nowS(): number {
