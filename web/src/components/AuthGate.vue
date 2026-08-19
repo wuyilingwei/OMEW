@@ -26,7 +26,7 @@ onMounted(async () => {
     // a fresh visitor lands on the register tab when the instance takes open
     // signups - a session that got kicked back here by a 401 stays on login
     // (App.vue only mounts this gate once auth.isAuthenticated goes false).
-    if (instanceConfig.value.allow_root) tab.value = 'register'
+    if (instanceConfig.value.allow_root && !auth.sessionExpired.value) tab.value = 'register'
   } catch {
     configError.value = '无法获取节点配置，请稍后重试'
   } finally {

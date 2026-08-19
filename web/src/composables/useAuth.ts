@@ -18,6 +18,9 @@ function readStoredUser(): AuthUser | null {
 
 const token = ref<string | null>(localStorage.getItem(TOKEN_KEY))
 const user = ref<AuthUser | null>(readStoredUser())
+// set when a 401 kicks an existing session out, so the auth gate keeps the
+// login tab for returning users instead of the fresh-visitor register default
+const sessionExpired = ref(false)
 
 function persist() {
   if (token.value && user.value) {
@@ -32,6 +35,7 @@ function persist() {
 function setSession(session: AuthResponse) {
   token.value = session.token
   user.value = session.user
+  sessionExpired.value = false
   persist()
 }
 
@@ -53,13 +57,17 @@ function logout() {
   persist()
 }
 
-setUnauthorizedHandler(logout)
+setUnauthorizedHandler(() => {
+  sessionExpired.value = true
+  logout()
+})
 
 export function useAuth() {
   return {
     token,
     user,
     isAuthenticated: computed(() => !!token.value),
+    sessionExpired,
     isAdmin: computed(() => !!user.value?.is_admin),
     login,
     register,
