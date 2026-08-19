@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+import { useEmotes } from '../composables/useEmotes'
+import { buildEmoteLookup, parseMessageText, pureEmoteToken } from '../utils/emote'
 import AvatarBadge from './AvatarBadge.vue'
 
 export interface MessageVM {
@@ -16,16 +19,28 @@ export interface MessageVM {
   failed: boolean
 }
 
-defineProps<{ message: MessageVM; grouped?: boolean; editing?: boolean }>()
+const props = defineProps<{ message: MessageVM; grouped?: boolean; editing?: boolean }>()
 const editingText = defineModel<string>('editingText', { default: '' })
 defineEmits<{ edit: []; 'cancel-edit': []; 'submit-edit': []; retract: []; resend: [] }>()
+
+const { packs } = useEmotes()
+const emoteLookup = computed(() => buildEmoteLookup(packs.value))
+const segments = computed(() => parseMessageText(props.message.content.trim(), emoteLookup.value))
+const pureEmote = computed(() => pureEmoteToken(segments.value))
 </script>
 
 <template>
   <div class="message-row" :class="{ 'message-row--mine': message.mine, 'message-row--grouped': grouped }">
     <AvatarBadge v-if="!grouped" class="message-row__avatar" :seed="message.displayName" :size="36" />
     <div v-else class="message-row__avatar-spacer" aria-hidden="true"></div>
-    <div class="message-bubble" :class="{ 'message-bubble--mine': message.mine, 'message-bubble--failed': message.failed }">
+    <div
+      class="message-bubble"
+      :class="{
+        'message-bubble--mine': message.mine,
+        'message-bubble--failed': message.failed,
+        'message-bubble--emote-only': !editing && pureEmote,
+      }"
+    >
       <div v-if="!message.mine && !grouped" class="message-bubble__author">{{ message.displayName }}</div>
 
       <template v-if="editing">
@@ -36,7 +51,18 @@ defineEmits<{ edit: []; 'cancel-edit': []; 'submit-edit': []; retract: []; resen
         </div>
       </template>
       <template v-else>
-        <div class="message-bubble__content">{{ message.content }}</div>
+        <img v-if="pureEmote" class="message-bubble__big-emote" :src="pureEmote.url" :alt="message.content" />
+        <div v-else class="message-bubble__content">
+          <template v-for="(segment, index) in segments" :key="index">
+            <img
+              v-if="segment.type === 'emote'"
+              class="message-bubble__inline-emote"
+              :src="segment.token.url"
+              :alt="`:${segment.token.pack}:${segment.token.name}:`"
+            />
+            <template v-else>{{ segment.value }}</template>
+          </template>
+        </div>
         <div class="message-bubble__meta">
           <span v-if="message.pending">发送中…</span>
           <span v-else-if="message.failed">
@@ -110,6 +136,26 @@ defineEmits<{ edit: []; 'cancel-edit': []; 'submit-edit': []; retract: []; resen
   border-color: var(--SystemFillColorCriticalBrush);
 }
 
+.message-bubble--emote-only {
+  background: transparent;
+  border-color: transparent;
+  padding: 0;
+}
+
+.message-bubble__big-emote {
+  display: block;
+  max-width: 128px;
+  max-height: 128px;
+  object-fit: contain;
+}
+
+.message-bubble__inline-emote {
+  height: 1.5em;
+  width: auto;
+  vertical-align: -0.3em;
+  object-fit: contain;
+}
+
 .message-bubble__author {
   font-size: 0.75rem;
   color: var(--text-secondary);
@@ -138,6 +184,12 @@ defineEmits<{ edit: []; 'cancel-edit': []; 'submit-edit': []; retract: []; resen
 
 .message-bubble--mine .message-bubble__meta {
   color: color-mix(in srgb, var(--on-accent) 70%, transparent);
+}
+
+.message-bubble--emote-only .message-bubble__meta {
+  /* no colored background behind an emote-only bubble - meta text needs the
+     regular tertiary color instead of the on-accent mix above */
+  color: var(--text-tertiary);
 }
 
 .message-bubble__link {

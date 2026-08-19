@@ -18,11 +18,15 @@ const tab = ref<Tab>('login')
 
 const configLoading = ref(true)
 const configError = ref('')
-const instanceConfig = ref<InstanceConfig>({ allow_root: false, root_requirements: [] })
+const instanceConfig = ref<InstanceConfig>({ allow_root: false, root_requirements: [], stronghold_creation: 'open' })
 
 onMounted(async () => {
   try {
     instanceConfig.value = await api.getInstanceConfig()
+    // a fresh visitor lands on the register tab when the instance takes open
+    // signups - a session that got kicked back here by a 401 stays on login
+    // (App.vue only mounts this gate once auth.isAuthenticated goes false).
+    if (instanceConfig.value.allow_root) tab.value = 'register'
   } catch {
     configError.value = '无法获取节点配置，请稍后重试'
   } finally {

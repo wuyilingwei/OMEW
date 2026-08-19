@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { api, ApiRequestError } from '../api'
-import type { MemberPatch, MemberTab, StrongholdConfigPatch, StrongholdMember } from '../api/types'
+import type { MemberPatch, MemberTab, StorageUsage, StrongholdConfigPatch, StrongholdMember } from '../api/types'
+import { EMPTY_STATE } from '../assets/mew'
 import { useAuth } from '../composables/useAuth'
 import { useStronghold } from '../composables/useStronghold'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
 import { WinButton } from '../vendor/winui'
 import AvatarBadge from './AvatarBadge.vue'
+import CoverUploader from './CoverUploader.vue'
+import EmptyState from './EmptyState.vue'
 import MemberInfoCard from './MemberInfoCard.vue'
 
 const props = withDefaults(defineProps<{ initialTab?: 'members' | 'settings' }>(), { initialTab: 'members' })
@@ -143,6 +146,33 @@ async function loadSettings() {
 
 watch(selectedNodeId, loadSettings, { immediate: true })
 
+// storage usage: informational only, shown alongside the settings tab so an
+// owner/mod can see how much of the instance quota this account has used.
+const storage = ref<StorageUsage | null>(null)
+
+async function loadStorage() {
+  if (!auth.token.value) return
+  try {
+    storage.value = await api.getStorageUsage(auth.token.value)
+  } catch {
+    storage.value = null
+  }
+}
+
+onMounted(loadStorage)
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB']
+  let value = bytes / 1024
+  let unitIndex = 0
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex += 1
+  }
+  return `${value.toFixed(1)} ${units[unitIndex]}`
+}
+
 async function saveSettings() {
   if (!auth.token.value) return
   settingsSaving.value = true
@@ -212,7 +242,7 @@ async function saveSettings() {
       <p v-if="actionError" class="field__error">{{ actionError }}</p>
       <div v-if="membersLoading" class="stronghold-panel__loading">加载中…</div>
       <p v-else-if="membersError" class="notice notice--error">{{ membersError }}</p>
-      <p v-else-if="!members.length" class="stronghold-panel__empty">暂无成员</p>
+      <EmptyState v-else-if="!members.length" :image="EMPTY_STATE.members" text="暂无成员" />
 
       <ul v-else class="member-list">
         <li v-for="member in members" :key="member.actor" class="member-row">
@@ -292,8 +322,8 @@ async function saveSettings() {
           <textarea id="sh-desc" v-model="form.description" rows="3"></textarea>
         </div>
         <div class="field">
-          <label class="field__label" for="sh-cover">封面图 URL</label>
-          <input id="sh-cover" v-model="form.cover" type="text" />
+          <span class="field__label">封面</span>
+          <CoverUploader v-if="auth.token.value" v-model="form.cover" :token="auth.token.value" />
         </div>
         <div class="field">
           <label class="field__label" for="sh-visibility">可见性</label>
@@ -322,6 +352,10 @@ async function saveSettings() {
             {{ settingsSaving ? '保存中…' : '保存设置' }}
           </WinButton>
         </div>
+
+        <p v-if="storage" class="stronghold-panel__storage">
+          存储用量：{{ formatBytes(storage.used) }} / {{ formatBytes(storage.quota) }}（单文件上限 {{ formatBytes(storage.max_file) }}）
+        </p>
       </template>
     </div>
 
@@ -391,10 +425,15 @@ async function saveSettings() {
   gap: 0.9rem;
 }
 
-.stronghold-panel__loading,
-.stronghold-panel__empty {
+.stronghold-panel__loading {
   color: var(--text-tertiary);
   font-size: 0.85rem;
+}
+
+.stronghold-panel__storage {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-tertiary);
 }
 
 .member-subtabs {

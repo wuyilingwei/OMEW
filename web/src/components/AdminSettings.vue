@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { api, ApiRequestError } from '../api'
-import type { InviteCode, RootRequirement } from '../api/types'
+import type { InviteCode, RootRequirement, StrongholdApplication, StrongholdCreationPolicy } from '../api/types'
 import { useAuth } from '../composables/useAuth'
 import { WinButton } from '../vendor/winui'
 
@@ -15,6 +15,12 @@ const REQUIREMENT_OPTIONS: { value: RootRequirement; label: string }[] = [
   { value: 'code', label: '邀请码' },
 ]
 
+const CREATION_POLICY_OPTIONS: { value: StrongholdCreationPolicy; label: string; hint: string }[] = [
+  { value: 'open', label: '开放', hint: '任何用户都可以创建据点' },
+  { value: 'restricted', label: '限制', hint: '仅名单内的用户可以创建据点' },
+  { value: 'application', label: '申请制', hint: '用户提交申请，由管理员审批' },
+]
+
 const loading = ref(true)
 const loadError = ref('')
 const saving = ref(false)
@@ -25,12 +31,20 @@ const form = reactive({
   allow_root: false,
   root_requirements: [] as RootRequirement[],
   trusted_identity_servers_text: '',
+  federation_peers_text: '',
+  stronghold_creation_policy: 'open' as StrongholdCreationPolicy,
+  stronghold_creators_text: '',
 })
 
 const inviteCodes = ref<InviteCode[]>([])
 const inviteCount = ref(1)
 const inviteBusy = ref(false)
 const inviteError = ref('')
+
+const pendingApplications = ref<StrongholdApplication[]>([])
+const applicationsError = ref('')
+const decidingId = ref('')
+const approvedNotice = ref('')
 
 async function loadConfig() {
   if (!auth.token.value) return
@@ -41,6 +55,9 @@ async function loadConfig() {
     form.allow_root = config.allow_root
     form.root_requirements = [...config.root_requirements]
     form.trusted_identity_servers_text = config.trusted_identity_servers.join('\n')
+    form.federation_peers_text = config.federation_peers.join('\n')
+    form.stronghold_creation_policy = config.stronghold_creation_policy
+    form.stronghold_creators_text = config.stronghold_creators.join('\n')
   } catch {
     loadError.value = '无法加载设置，请稍后重试'
   } finally {
@@ -57,8 +74,42 @@ async function loadInviteCodes() {
   }
 }
 
+async function loadPendingApplications() {
+  if (!auth.token.value) return
+  applicationsError.value = ''
+  try {
+    pendingApplications.value = await api.getAdminStrongholdApplications(auth.token.value, 'pending')
+  } catch {
+    applicationsError.value = '无法加载待审申请'
+  }
+}
+
+watch(
+  () => form.stronghold_creation_policy,
+  (policy) => {
+    if (policy === 'application') void loadPendingApplications()
+  },
+)
+
+async function decideApplication(id: string, state: 'approved' | 'rejected') {
+  if (!auth.token.value || decidingId.value) return
+  decidingId.value = id
+  approvedNotice.value = ''
+  try {
+    await api.decideStrongholdApplication(auth.token.value, id, state)
+    if (state === 'approved') approvedNotice.value = '已批准，据点已创建'
+    await loadPendingApplications()
+  } catch (err) {
+    applicationsError.value = err instanceof ApiRequestError ? `操作失败：${err.code}` : '操作失败，请稍后重试'
+  } finally {
+    decidingId.value = ''
+  }
+}
+
 onMounted(() => {
-  loadConfig()
+  loadConfig().then(() => {
+    if (form.stronghold_creation_policy === 'application') void loadPendingApplications()
+  })
   loadInviteCodes()
 })
 
@@ -70,12 +121,16 @@ function toggleRequirement(value: RootRequirement, checked: boolean) {
   }
 }
 
-const trustedServers = computed(() =>
-  form.trusted_identity_servers_text
+function linesToList(text: string): string[] {
+  return text
     .split('\n')
     .map((line) => line.trim())
-    .filter(Boolean),
-)
+    .filter(Boolean)
+}
+
+const trustedServers = computed(() => linesToList(form.trusted_identity_servers_text))
+const federationPeers = computed(() => linesToList(form.federation_peers_text))
+const strongholdCreators = computed(() => linesToList(form.stronghold_creators_text))
 
 async function save() {
   if (!auth.token.value) return
@@ -88,8 +143,12 @@ async function save() {
       allow_root: form.allow_root,
       root_requirements: form.root_requirements,
       trusted_identity_servers: trustedServers.value,
+      federation_peers: federationPeers.value,
+      stronghold_creation_policy: form.stronghold_creation_policy,
+      stronghold_creators: strongholdCreators.value,
     })
     saveOk.value = true
+    if (form.stronghold_creation_policy === 'application') void loadPendingApplications()
   } catch (err) {
     saveError.value = err instanceof ApiRequestError ? `保存失败：${err.code}` : '保存失败，请稍后重试'
   } finally {
@@ -158,6 +217,66 @@ async function generateInviteCodes() {
             rows="5"
             placeholder="example.com&#10;*"
           ></textarea>
+        </div>
+      </section>
+
+      <section class="admin-card">
+        <h2 class="admin-card__title">联邦对等实例</h2>
+        <p class="field__hint">每行一个域名，内容联邦仅向此列表投递。</p>
+        <div class="field">
+          <textarea
+            v-model="form.federation_peers_text"
+            rows="4"
+            placeholder="peer.example.com"
+          ></textarea>
+        </div>
+      </section>
+
+      <section class="admin-card">
+        <h2 class="admin-card__title">建据点策略</h2>
+        <div class="admin-radio-group">
+          <label v-for="option in CREATION_POLICY_OPTIONS" :key="option.value" class="admin-toggle">
+            <input v-model="form.stronghold_creation_policy" type="radio" name="creation-policy" :value="option.value" />
+            <span>{{ option.label }}——{{ option.hint }}</span>
+          </label>
+        </div>
+
+        <div v-if="form.stronghold_creation_policy === 'restricted'" class="field">
+          <label class="field__label" for="creators-text">允许创建的用户（actor，每行一个）</label>
+          <textarea
+            id="creators-text"
+            v-model="form.stronghold_creators_text"
+            rows="4"
+            placeholder="@alice:example.com"
+          ></textarea>
+        </div>
+
+        <div v-if="form.stronghold_creation_policy === 'application'" class="admin-applications">
+          <h3 class="admin-applications__title">待审申请</h3>
+          <p v-if="approvedNotice" class="admin-settings__save-ok">{{ approvedNotice }}</p>
+          <p v-if="applicationsError" class="field__error">{{ applicationsError }}</p>
+          <p v-if="!pendingApplications.length" class="field__hint">暂无待审申请</p>
+          <ul v-else class="admin-applications__list">
+            <li v-for="app in pendingApplications" :key="app.id" class="admin-applications__item">
+              <div class="admin-applications__meta">
+                <span class="admin-applications__name">{{ app.name }}</span>
+                <span class="admin-applications__actor">{{ app.actor }}</span>
+                <p v-if="app.description" class="admin-applications__desc">{{ app.description }}</p>
+              </div>
+              <div class="admin-applications__actions">
+                <WinButton
+                  Style="AccentButtonStyle"
+                  :IsEnabled="!decidingId"
+                  @Click="decideApplication(app.id, 'approved')"
+                >
+                  批准
+                </WinButton>
+                <WinButton Style="SubtleButtonStyle" :IsEnabled="!decidingId" @Click="decideApplication(app.id, 'rejected')">
+                  拒绝
+                </WinButton>
+              </div>
+            </li>
+          </ul>
         </div>
       </section>
 
@@ -264,6 +383,76 @@ async function generateInviteCodes() {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem 1.25rem;
+}
+
+.admin-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.admin-applications {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--stroke-divider);
+}
+
+.admin-applications__title {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.admin-applications__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.admin-applications__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--radius-xs);
+  background: var(--ctrl-fill-secondary);
+}
+
+.admin-applications__meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.admin-applications__name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.admin-applications__actor {
+  font-size: 0.72rem;
+  color: var(--text-tertiary);
+}
+
+.admin-applications__desc {
+  margin: 0.2rem 0 0;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.admin-applications__actions {
+  display: flex;
+  gap: 0.4rem;
+  flex: 0 0 auto;
 }
 
 .admin-settings__save {
