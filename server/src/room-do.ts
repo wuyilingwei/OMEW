@@ -829,7 +829,7 @@ export class RoomDO extends DurableObject<Env> {
     const hasMore = rows.length > cappedLimit;
     const page = rows.slice(0, cappedLimit);
     const posts = page.map((r) => {
-      const body = JSON.parse(r.body) as { title?: string; cover?: string; preview?: string };
+      const body = JSON.parse(r.body) as { title?: string; cover?: string; preview?: string; media?: unknown };
       return {
         post_seq: r.post_seq,
         actor: r.actor,
@@ -837,6 +837,7 @@ export class RoomDO extends DurableObject<Env> {
         title: body.title ?? "",
         cover: body.cover ?? null,
         preview: body.preview ?? "",
+        media: body.media ?? [],
         last_reply_seq: r.last_reply_seq,
         reply_count: r.reply_count,
         bumped_at: r.bumped_at,
@@ -864,7 +865,7 @@ export class RoomDO extends DurableObject<Env> {
         "SELECT last_reply_seq, reply_count, bumped_at FROM post_index WHERE post_seq = ?", postSeq
       )
       .toArray()[0];
-    const body = JSON.parse(postRow.body) as { title?: string; text?: string; cover?: string; preview?: string };
+    const body = JSON.parse(postRow.body) as { title?: string; text?: string; cover?: string; preview?: string; media?: unknown };
     const post = {
       post_seq: postSeq,
       actor: postRow.actor,
@@ -873,6 +874,7 @@ export class RoomDO extends DurableObject<Env> {
       text: body.text ?? "",
       cover: body.cover ?? null,
       preview: body.preview ?? "",
+      media: body.media ?? [],
       last_reply_seq: idx?.last_reply_seq ?? postSeq,
       reply_count: idx?.reply_count ?? 0,
       bumped_at: idx?.bumped_at ?? postRow.ts,

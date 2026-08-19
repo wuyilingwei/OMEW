@@ -287,3 +287,28 @@ describe("GET /api/stronghold/:id/rooms/:resId/posts/:seq", () => {
     ws.close();
   });
 });
+
+it("post media survives the list and detail projections", async () => {
+  const owner = "@mediaposter:local";
+  const { id, resId, roomRef } = await freshSectionStronghold(owner);
+  const { ws } = await connectRoom(roomRef, owner, "owner");
+
+  const media = [{ id: "m1", url: "/media/m1", mime: "image/webp" }];
+  ws.send(JSON.stringify({ type: "item.create", client_id: "mp1", kind: "post", body: { title: "with pic", text: "look", media } }));
+  const ack = await nextMessage(ws);
+  expect(ack).toMatchObject({ type: "ack", status: "ok" });
+  ws.close();
+
+  const token = await sessionToken(owner);
+  const listRes = await apiRequest(`/api/stronghold/${id}/rooms/${resId}/posts`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const list = (await listRes.json()) as { posts: Array<Record<string, unknown>> };
+  expect(list.posts[0].media).toEqual(media);
+
+  const detailRes = await apiRequest(`/api/stronghold/${id}/rooms/${resId}/posts/${ack.seq}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const detail = (await detailRes.json()) as { post: Record<string, unknown> };
+  expect(detail.post.media).toEqual(media);
+});
