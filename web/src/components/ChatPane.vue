@@ -1,37 +1,162 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { mockMessages } from '../data/mock'
-import type { ChannelSummary } from '../types/models'
+import { computed, nextTick, ref, watch } from 'vue'
+import { useAuth } from '../composables/useAuth'
+import { useChatRoom } from '../composables/useChatRoom'
+import { useStrongholdConfig } from '../composables/useStrongholdConfig'
+import { useStrongholdMembers } from '../composables/useStrongholdMembers'
+import { actorLocalpart } from '../utils/actor'
 import { WinButton } from '../vendor/winui'
-import MessageBubble from './MessageBubble.vue'
+import MessageBubble, { type MessageVM } from './MessageBubble.vue'
 
-defineProps<{ channel: ChannelSummary }>()
+const auth = useAuth()
+const { config } = useStrongholdConfig()
+const { members } = useStrongholdMembers()
+const { items, pending, historyLoading, hasMoreHistory, loadOlder, sendText, resend, editMessage, retractMessage } = useChatRoom()
 
-// a message is "grouped" with the one before it when the same speaker
-// (same author, same mine state) sent both — drives tighter spacing and
-// hides the repeated avatar/author label in MessageBubble
+const draft = ref('')
+const editingSeq = ref<number | null>(null)
+const editingText = ref('')
+const scrollEl = ref<HTMLElement | null>(null)
+
+function displayName(actor: string): string {
+  return members.value.find((m) => m.actor === actor)?.display_name ?? actorLocalpart(actor)
+}
+
+function formatTime(ts: number): string {
+  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+function canEdit(actor: string, ts: number): boolean {
+  if (actor !== auth.user.value?.actor || !config.value?.allow_message_edit) return false
+  const windowSecs = config.value.edit_window_secs
+  return windowSecs <= 0 || (Date.now() - ts) / 1000 <= windowSecs
+}
+
+function canRetract(actor: string, ts: number): boolean {
+  if (actor !== auth.user.value?.actor || !config.value?.allow_message_retract) return false
+  const windowSecs = config.value.edit_window_secs
+  return windowSecs <= 0 || (Date.now() - ts) / 1000 <= windowSecs
+}
+
+const messages = computed<MessageVM[]>(() => {
+  const confirmed: MessageVM[] = items.value.map((item) => ({
+    key: `s${item.seq}`,
+    seq: item.seq,
+    actor: item.actor,
+    displayName: displayName(item.actor),
+    content: item.body.text ?? '',
+    timestamp: formatTime(item.ts),
+    editedAt: item.edited_at,
+    mine: item.actor === auth.user.value?.actor,
+    editable: canEdit(item.actor, item.ts),
+    retractable: canRetract(item.actor, item.ts),
+    pending: false,
+    failed: false,
+  }))
+  const optimistic: MessageVM[] = pending.value.map((p) => ({
+    key: `p${p.clientId}`,
+    seq: null,
+    actor: auth.user.value?.actor ?? '',
+    displayName: displayName(auth.user.value?.actor ?? ''),
+    content: p.text,
+    timestamp: formatTime(p.ts),
+    mine: true,
+    editable: false,
+    retractable: false,
+    pending: p.status === 'sending',
+    failed: p.status === 'failed',
+  }))
+  return [...confirmed, ...optimistic]
+})
+
 const groupedMessages = computed(() =>
-  mockMessages.map((message, index) => {
-    const previous = mockMessages[index - 1]
-    const grouped = previous !== undefined && previous.author === message.author && previous.mine === message.mine
+  messages.value.map((message, index) => {
+    const previous = messages.value[index - 1]
+    const grouped = previous !== undefined && previous.actor === message.actor && previous.mine === message.mine
     return { message, grouped }
   }),
+)
+
+function submit() {
+  const text = draft.value
+  draft.value = ''
+  sendText(text)
+}
+
+function onEnter(event: KeyboardEvent) {
+  if (event.shiftKey) return
+  event.preventDefault()
+  submit()
+}
+
+function startEdit(message: MessageVM) {
+  if (message.seq == null) return
+  editingSeq.value = message.seq
+  editingText.value = message.content
+}
+
+function cancelEdit() {
+  editingSeq.value = null
+  editingText.value = ''
+}
+
+async function submitEdit() {
+  if (editingSeq.value == null) return
+  const ok = await editMessage(editingSeq.value, editingText.value)
+  if (ok) cancelEdit()
+}
+
+async function onRetract(message: MessageVM) {
+  if (message.seq == null) return
+  if (!confirm('撤回这条消息？')) return
+  await retractMessage(message.seq)
+}
+
+function onResend(message: MessageVM) {
+  const clientId = message.key.startsWith('p') ? message.key.slice(1) : ''
+  if (clientId) resend(clientId)
+}
+
+watch(
+  () => messages.value.length,
+  async () => {
+    await nextTick()
+    if (scrollEl.value) scrollEl.value.scrollTop = scrollEl.value.scrollHeight
+  },
 )
 </script>
 
 <template>
   <section class="chat-pane">
-    <div class="chat-pane__messages">
+    <div ref="scrollEl" class="chat-pane__messages">
+      <div v-if="hasMoreHistory" class="chat-pane__load-more">
+        <WinButton Style="SubtleButtonStyle" :IsEnabled="!historyLoading" @Click="loadOlder">
+          {{ historyLoading ? '加载中…' : '加载更早的消息' }}
+        </WinButton>
+      </div>
       <MessageBubble
         v-for="entry in groupedMessages"
-        :key="entry.message.id"
+        :key="entry.message.key"
         :message="entry.message"
         :grouped="entry.grouped"
+        :editing="editingSeq === entry.message.seq"
+        v-model:editing-text="editingText"
+        @edit="startEdit(entry.message)"
+        @cancel-edit="cancelEdit"
+        @submit-edit="submitEdit"
+        @retract="onRetract(entry.message)"
+        @resend="onResend(entry.message)"
       />
     </div>
     <div class="chat-pane__compose">
-      <textarea class="chat-pane__input" rows="1" placeholder="说点什么…"></textarea>
-      <WinButton Style="AccentButtonStyle" class="chat-pane__send">发送</WinButton>
+      <textarea
+        v-model="draft"
+        class="chat-pane__input"
+        rows="1"
+        placeholder="说点什么…"
+        @keydown.enter="onEnter"
+      ></textarea>
+      <WinButton Style="AccentButtonStyle" class="chat-pane__send" @Click="submit">发送</WinButton>
     </div>
   </section>
 </template>
@@ -53,6 +178,12 @@ const groupedMessages = computed(() =>
   flex-direction: column;
   /* vertical rhythm between rows now lives in MessageBubble's own margin
      (grouped vs. ungrouped), so no uniform gap here */
+}
+
+.chat-pane__load-more {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 0.75rem;
 }
 
 .chat-pane__compose {

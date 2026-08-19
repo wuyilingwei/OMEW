@@ -1,15 +1,21 @@
 <script setup lang="ts">
-import { mockNodes } from '../data/mock'
+import { ref } from 'vue'
 import { useStronghold } from '../composables/useStronghold'
+import CreateStrongholdCard from './CreateStrongholdCard.vue'
 
-const { selectedNodeId, selectNode } = useStronghold()
+const { nodes, selectedNodeId, selectNode } = useStronghold()
+const showCreate = ref(false)
+
+function onCreated() {
+  showCreate.value = false
+}
 </script>
 
 <template>
   <nav class="node-rail">
     <div class="node-rail__logo">OM</div>
     <ul class="node-rail__list">
-      <li v-for="node in mockNodes" :key="node.id">
+      <li v-for="node in nodes" :key="node.id">
         <button
           class="node-rail__item"
           :class="{ 'node-rail__item--active': node.id === selectedNodeId }"
@@ -17,10 +23,24 @@ const { selectedNodeId, selectNode } = useStronghold()
           :title="node.name"
           @click="selectNode(node.id)"
         >
-          {{ node.iconLabel }}
+          {{ node.name.slice(0, 1) }}
+        </button>
+      </li>
+      <li>
+        <button class="node-rail__item node-rail__item--add" type="button" title="创建据点" @click="showCreate = true">
+          +
         </button>
       </li>
     </ul>
+
+    <Teleport to="body">
+      <div v-if="showCreate" class="node-rail__overlay" @click.self="showCreate = false">
+        <div class="node-rail__dialog">
+          <h2 class="node-rail__dialog-title">创建据点</h2>
+          <CreateStrongholdCard @created="onCreated" />
+        </div>
+      </div>
+    </Teleport>
   </nav>
 </template>
 
@@ -85,6 +105,44 @@ const { selectedNodeId, selectNode } = useStronghold()
 
 .node-rail__item--active {
   border-color: rgb(var(--colors-primary));
+  color: var(--text-primary);
+}
+
+.node-rail__item--add {
+  font-size: 1.1rem;
+  font-weight: 600;
+  border-style: dashed;
+  border-color: var(--ctrl-border);
+}
+
+.node-rail__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.node-rail__dialog {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.5rem;
+  border-radius: var(--radius-md);
+  background: var(--flyout-bg, var(--layer-default));
+  border: 1px solid var(--card-stroke);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.28);
+}
+
+.node-rail__dialog-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
   color: var(--text-primary);
 }
 

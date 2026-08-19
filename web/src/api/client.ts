@@ -3,26 +3,101 @@ import type {
   AdminInstanceConfig,
   AuthResponse,
   BanEntry,
+  CreateRoomPayload,
+  CreateStrongholdPayload,
+  EditRetractResult,
   InstanceConfig,
   InviteCode,
   LoginPayload,
   MemberPage,
   MemberPatch,
   MemberTab,
+  PostPage,
+  PostThread,
   PublicUser,
   RegisterPayload,
+  RoomSummary,
+  RoomTokenResponse,
   StrongholdConfig,
   StrongholdConfigPatch,
+  StrongholdMember,
+  StrongholdSummary,
 } from './types'
 
+// production always talks same-origin (the worker serves both /api and the
+// built static assets, see server/wrangler.jsonc's `assets` block). Local dev
+// normally reaches the backend through vite's server.proxy on the same
+// origin too; VITE_API_BASE is only needed when the dev server and
+// `wrangler dev` aren't reachable from each other on the same origin (split
+// local ports without a working proxy in front) - empty string is the
+// default and means "same origin".
+export const API_BASE = import.meta.env.VITE_API_BASE ?? ''
+
+// deny is a bitmask on the wire (types.ts DENY_CHANNEL_SPEAK=1 / DENY_SECTION_POST=2 /
+// DENY_SECTION_REPLY=4 on the server); the UI works with three named booleans instead.
+const DENY_DISCUSSION_BIT = 1
+const DENY_IDEA_BIT = 2
+const DENY_COMMENT_BIT = 4
+
+function actorLocalpart(actor: string): string {
+  return actor.replace(/^@/, '').split(':')[0] ?? actor
+}
+
+function denyToBooleans(deny: number): Pick<StrongholdMember, 'deny_discussion' | 'deny_idea' | 'deny_comment'> {
+  return {
+    deny_discussion: (deny & DENY_DISCUSSION_BIT) !== 0,
+    deny_idea: (deny & DENY_IDEA_BIT) !== 0,
+    deny_comment: (deny & DENY_COMMENT_BIT) !== 0,
+  }
+}
+
+function booleansToDeny(patch: MemberPatch): number | undefined {
+  if (patch.deny_discussion === undefined && patch.deny_idea === undefined && patch.deny_comment === undefined) {
+    return undefined
+  }
+  let deny = 0
+  if (patch.deny_discussion) deny |= DENY_DISCUSSION_BIT
+  if (patch.deny_idea) deny |= DENY_IDEA_BIT
+  if (patch.deny_comment) deny |= DENY_COMMENT_BIT
+  return deny
+}
+
+interface WireMemberEntry {
+  actor: string
+  display_name: string
+  role: StrongholdMember['role']
+  deny: number
+  joined_at: number
+  is_guest: boolean
+  home_domain?: string
+}
+
+function toStrongholdMember(entry: WireMemberEntry): StrongholdMember {
+  return {
+    actor: entry.actor,
+    username: actorLocalpart(entry.actor),
+    display_name: entry.display_name,
+    role: entry.role,
+    ...denyToBooleans(entry.deny),
+    joined_at: new Date(entry.joined_at).toISOString(),
+    is_guest: entry.is_guest,
+    home_domain: entry.home_domain,
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
+  const res = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
   })
+  if (res.status === 204) return undefined as T
   const body = await res.json().catch(() => ({}))
-  if (!res.ok || body?.error) {
-    throw new ApiRequestError(body?.error ?? 'UNKNOWN_ERROR', res.status)
+  // /api/* uses the flat {error: "CODE"} shape; the /stronghold/* dev-convenience
+  // routes (WS token mint, history) use the nested {error: {code, message}} shape.
+  const errVal = body?.error
+  if (!res.ok || errVal) {
+    const code = typeof errVal === 'string' ? errVal : (errVal?.code ?? 'UNKNOWN_ERROR')
+    throw new ApiRequestError(code, res.status)
   }
   return body as T
 }
@@ -51,13 +126,35 @@ export const realApi = {
     }),
 
   listInviteCodes: (token: string) =>
-    request<InviteCode[]>('/api/admin/invite-codes', { headers: authHeaders(token) }),
+    request<{ codes: InviteCode[] }>('/api/admin/invite-codes', { headers: authHeaders(token) }).then((r) => r.codes),
 
   createInviteCodes: (token: string, count?: number) =>
-    request<InviteCode[]>('/api/admin/invite-codes', {
+    request<{ codes: InviteCode[] }>('/api/admin/invite-codes', {
       method: 'POST',
       headers: authHeaders(token),
       body: JSON.stringify({ count }),
+    }).then((r) => r.codes),
+
+  // ---- strongholds ----------------------------------------------------------
+
+  listMyStrongholds: (token: string) =>
+    request<StrongholdSummary[]>('/api/me/strongholds', { headers: authHeaders(token) }),
+
+  createStronghold: (token: string, payload: CreateStrongholdPayload) =>
+    request<StrongholdConfig>('/api/strongholds', {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify(payload),
+    }),
+
+  joinStronghold: (token: string, nodeId: string) =>
+    request<unknown>(`/api/stronghold/${nodeId}/join`, { method: 'POST', headers: authHeaders(token) }),
+
+  createRoom: (token: string, nodeId: string, payload: CreateRoomPayload) =>
+    request<RoomSummary>(`/api/stronghold/${nodeId}/rooms`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify(payload),
     }),
 
   getStrongholdConfig: (token: string, nodeId: string) =>
@@ -70,18 +167,76 @@ export const realApi = {
       body: JSON.stringify(patch),
     }),
 
-  getStrongholdMembers: (token: string, nodeId: string, tab: MemberTab, after?: string) =>
-    request<MemberPage>(
-      `/api/stronghold/${nodeId}/members?tab=${tab}${after ? `&after=${encodeURIComponent(after)}` : ''}`,
-      { headers: authHeaders(token) },
-    ),
+  // ---- room WS token / history ------------------------------------------------
+  // Note: these two live at /stronghold/* (not /api/*) - matches the server's
+  // dev-convenience route family that also owns the WS upgrade itself.
 
-  patchMember: (token: string, nodeId: string, actor: string, patch: MemberPatch) =>
-    request<void>(`/api/stronghold/${nodeId}/members/${encodeURIComponent(actor)}`, {
+  mintRoomToken: (token: string, nodeId: string, resId: string) =>
+    request<RoomTokenResponse>(`/stronghold/${nodeId}/rooms/${resId}/token`, {
+      method: 'POST',
+      headers: authHeaders(token),
+    }),
+
+  getRoomHistory: (token: string, nodeId: string, resId: string, before?: number | null, limit?: number) => {
+    const params = new URLSearchParams()
+    if (before != null) params.set('before', String(before))
+    if (limit != null) params.set('limit', String(limit))
+    const qs = params.toString()
+    return request<{ items: import('./types').RoomItem[] }>(
+      `/stronghold/${nodeId}/rooms/${resId}/history${qs ? `?${qs}` : ''}`,
+      { headers: authHeaders(token) },
+    ).then((r) => r.items)
+  },
+
+  editItem: (token: string, nodeId: string, resId: string, seq: number, content: unknown) =>
+    request<EditRetractResult>(`/api/stronghold/${nodeId}/rooms/${resId}/items/${seq}`, {
       method: 'PATCH',
       headers: authHeaders(token),
-      body: JSON.stringify(patch),
+      body: JSON.stringify({ content }),
     }),
+
+  retractItem: (token: string, nodeId: string, resId: string, seq: number) =>
+    request<EditRetractResult>(`/api/stronghold/${nodeId}/rooms/${resId}/items/${seq}`, {
+      method: 'DELETE',
+      headers: authHeaders(token),
+    }),
+
+  // ---- posts (section rooms, read-only; writes go over the room WS) -----------
+
+  listPosts: (token: string, nodeId: string, resId: string, after?: string | null, limit?: number) => {
+    const params = new URLSearchParams()
+    if (after) params.set('after', after)
+    if (limit != null) params.set('limit', String(limit))
+    const qs = params.toString()
+    return request<PostPage>(`/api/stronghold/${nodeId}/rooms/${resId}/posts${qs ? `?${qs}` : ''}`, {
+      headers: authHeaders(token),
+    })
+  },
+
+  getPost: (token: string, nodeId: string, resId: string, seq: number, before?: number | null, limit?: number) => {
+    const params = new URLSearchParams()
+    if (before != null) params.set('before', String(before))
+    if (limit != null) params.set('limit', String(limit))
+    const qs = params.toString()
+    return request<PostThread>(`/api/stronghold/${nodeId}/rooms/${resId}/posts/${seq}${qs ? `?${qs}` : ''}`, {
+      headers: authHeaders(token),
+    })
+  },
+
+  // ---- members / bans / ownership ----------------------------------------------
+
+  getStrongholdMembers: (token: string, nodeId: string, tab: MemberTab, after?: string) =>
+    request<{ entries: WireMemberEntry[]; next_cursor: string | null }>(
+      `/api/stronghold/${nodeId}/members?tab=${tab}${after ? `&after=${encodeURIComponent(after)}` : ''}`,
+      { headers: authHeaders(token) },
+    ).then((r): MemberPage => ({ members: r.entries.map(toStrongholdMember), next_cursor: r.next_cursor })),
+
+  patchMember: (token: string, nodeId: string, actor: string, patch: MemberPatch) =>
+    request<WireMemberEntry>(`/api/stronghold/${nodeId}/members/${encodeURIComponent(actor)}`, {
+      method: 'PATCH',
+      headers: authHeaders(token),
+      body: JSON.stringify({ role: patch.role, deny: booleansToDeny(patch) }),
+    }).then(toStrongholdMember),
 
   removeMember: (token: string, nodeId: string, actor: string) =>
     request<void>(`/api/stronghold/${nodeId}/members/${encodeURIComponent(actor)}`, {
@@ -90,7 +245,10 @@ export const realApi = {
     }),
 
   listBans: (token: string, nodeId: string) =>
-    request<BanEntry[]>(`/api/stronghold/${nodeId}/bans`, { headers: authHeaders(token) }),
+    request<{ entries: { actor: string; operator: string; banned_at: number }[] }>(
+      `/api/stronghold/${nodeId}/bans`,
+      { headers: authHeaders(token) },
+    ).then((r): BanEntry[] => r.entries.map((e) => ({ actor: e.actor, banned_by: e.operator, banned_at: new Date(e.banned_at).toISOString() }))),
 
   banMember: (token: string, nodeId: string, actor: string) =>
     request<void>(`/api/stronghold/${nodeId}/bans/${encodeURIComponent(actor)}`, {
@@ -112,5 +270,16 @@ export const realApi = {
     }),
 
   getUser: (token: string, actor: string) =>
-    request<PublicUser>(`/api/users/${encodeURIComponent(actor)}`, { headers: authHeaders(token) }),
+    request<{ actor: string; display_name: string; is_guest: boolean; home_domain?: string }>(
+      `/api/users/${encodeURIComponent(actor)}`,
+      { headers: authHeaders(token) },
+    ).then(
+      (u): PublicUser => ({
+        actor: u.actor,
+        username: actorLocalpart(u.actor),
+        display_name: u.display_name,
+        is_guest: u.is_guest,
+        home_domain: u.home_domain,
+      }),
+    ),
 }

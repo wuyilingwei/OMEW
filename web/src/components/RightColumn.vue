@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useAuth } from '../composables/useAuth'
 import { useStronghold } from '../composables/useStronghold'
+import { useStrongholdConfig } from '../composables/useStrongholdConfig'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
 import { useTheme } from '../composables/useTheme'
 import { WinButton, WinDropDownButton } from '../vendor/winui'
@@ -12,7 +13,12 @@ const emit = defineEmits<{ 'open-admin-settings': []; 'open-panel': ['members' |
 const { mode, cycleTheme } = useTheme()
 const auth = useAuth()
 const { currentNode } = useStronghold()
+const { config } = useStrongholdConfig()
 const { myRole } = useStrongholdMembers()
+
+const strongholdName = computed(() => config.value?.name ?? currentNode.value?.name ?? '')
+const strongholdDescription = computed(() => config.value?.description ?? '')
+const strongholdCover = computed(() => config.value?.cover || currentNode.value?.cover || '')
 
 const modeLabel: Record<string, string> = {
   system: '跟随系统',
@@ -50,10 +56,10 @@ function onUserMenuSelect(item: { Value: string }) {
     </div>
 
     <div class="right-column__stronghold">
-      <img class="right-column__cover" :src="currentNode.cover" :alt="currentNode.name" />
+      <img v-if="strongholdCover" class="right-column__cover" :src="strongholdCover" :alt="strongholdName" />
       <div class="right-column__stronghold-body">
-        <h2 class="right-column__stronghold-name">{{ currentNode.name }}</h2>
-        <p class="right-column__stronghold-description">{{ currentNode.description }}</p>
+        <h2 class="right-column__stronghold-name">{{ strongholdName }}</h2>
+        <p class="right-column__stronghold-description">{{ strongholdDescription }}</p>
       </div>
     </div>
 

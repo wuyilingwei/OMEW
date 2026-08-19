@@ -67,7 +67,15 @@ async function runAction(action: (token: string) => Promise<unknown>) {
 }
 
 function toggleDeny(member: StrongholdMember, field: 'deny_discussion' | 'deny_idea' | 'deny_comment') {
-  const patch: MemberPatch = { [field]: !member[field] }
+  // the real API's deny is a single bitmask overwrite (not per-bit), so the
+  // patch always carries the full current tri-state with just the toggled
+  // field flipped - client.ts recombines these three into one deny value.
+  const patch: MemberPatch = {
+    deny_discussion: member.deny_discussion,
+    deny_idea: member.deny_idea,
+    deny_comment: member.deny_comment,
+    [field]: !member[field],
+  }
   runAction((token) => api.patchMember(token, selectedNodeId.value, member.actor, patch))
 }
 
@@ -164,7 +172,7 @@ async function saveSettings() {
   <div class="stronghold-panel">
     <div class="stronghold-panel__header">
       <WinButton Style="SubtleButtonStyle" @Click="$emit('close')">返回</WinButton>
-      <h1 class="stronghold-panel__title">{{ currentNode.name }}</h1>
+      <h1 class="stronghold-panel__title">{{ currentNode?.name }}</h1>
     </div>
 
     <div class="stronghold-panel__tabs">
@@ -212,7 +220,7 @@ async function saveSettings() {
             <AvatarBadge :seed="member.username" :size="36" />
             <span class="member-row__names">
               <span class="member-row__display-name">{{ member.display_name }}</span>
-              <span class="member-row__actor">@{{ member.actor }}</span>
+              <span class="member-row__actor">{{ member.actor }}</span>
             </span>
           </button>
           <span class="member-row__role" :class="`member-row__role--${member.role}`">{{ ROLE_LABEL[member.role] }}</span>

@@ -1,16 +1,15 @@
 import { ref } from 'vue'
-import type { Post } from '../types/models'
 
-const openPost = ref<Post | null>(null)
+const openPostSeq = ref<number | null>(null)
 
-function open(post: Post) {
-  openPost.value = post
+function open(postSeq: number) {
+  openPostSeq.value = postSeq
 }
 
 function close() {
-  openPost.value = null
+  openPostSeq.value = null
 }
 
 export function usePostModal() {
-  return { openPost, open, close }
+  return { openPostSeq, open, close }
 }
