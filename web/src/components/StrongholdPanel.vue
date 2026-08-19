@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { api, ApiRequestError } from '../api'
-import type { MemberPatch, MemberTab, StorageUsage, StrongholdConfigPatch, StrongholdMember } from '../api/types'
+import type { MemberPatch, MemberTab, StrongholdConfigPatch, StrongholdMember } from '../api/types'
 import { EMPTY_STATE } from '../assets/mew'
 import { useAuth } from '../composables/useAuth'
+import { useStorageUsage } from '../composables/useStorageUsage'
 import { useStronghold } from '../composables/useStronghold'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
-import { WinButton } from '../vendor/winui'
+import { formatBytes, nonNegativeIntError, requiredMaxLengthError } from '../utils/validate'
+import { WinButton, WinInfoBar, WinSelectorBar, WinToggleSwitch } from '../vendor/winui'
 import AvatarBadge from './AvatarBadge.vue'
 import CoverUploader from './CoverUploader.vue'
 import EmptyState from './EmptyState.vue'
@@ -20,15 +22,30 @@ const { currentNode, selectedNodeId } = useStronghold()
 const { myRole } = useStrongholdMembers()
 
 const ROLE_LABEL: Record<string, string> = { owner: '领主', mod: '管理员', member: '成员' }
-const MEMBER_TABS: { value: MemberTab; label: string }[] = [
-  { value: 'all', label: '全部' },
-  { value: 'restricted', label: '受限' },
-  { value: 'banned', label: '黑名单' },
+const MEMBER_TABS: { Text: string; value: MemberTab }[] = [
+  { Text: '全部', value: 'all' },
+  { Text: '受限', value: 'restricted' },
+  { Text: '黑名单', value: 'banned' },
 ]
 
 const panelTab = ref<'members' | 'settings'>(props.initialTab)
 const canManage = computed(() => myRole.value === 'owner' || myRole.value === 'mod')
 const isOwner = computed(() => myRole.value === 'owner')
+
+const panelTabOptions = computed(() => {
+  const opts: { Text: string; value: 'members' | 'settings' }[] = [{ Text: '成员列表', value: 'members' }]
+  if (canManage.value) opts.push({ Text: '据点设置', value: 'settings' })
+  return opts
+})
+const panelTabSelected = computed(() => panelTabOptions.value.find((o) => o.value === panelTab.value))
+function onPanelTabSelect(item: { value: 'members' | 'settings' }) {
+  panelTab.value = item.value
+}
+
+const memberTabSelected = computed(() => MEMBER_TABS.find((o) => o.value === memberTab.value))
+function onMemberTabSelect(item: { value: MemberTab }) {
+  memberTab.value = item.value
+}
 
 function isSelf(member: StrongholdMember) {
   return member.username === auth.user.value?.username
@@ -148,36 +165,14 @@ watch(selectedNodeId, loadSettings, { immediate: true })
 
 // storage usage: informational only, shown alongside the settings tab so an
 // owner/mod can see how much of the instance quota this account has used.
-const storage = ref<StorageUsage | null>(null)
-
-async function loadStorage() {
-  if (!auth.token.value) return
-  try {
-    storage.value = await api.getStorageUsage(auth.token.value)
-  } catch {
-    storage.value = null
-  }
-}
-
-onMounted(loadStorage)
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  const units = ['KB', 'MB', 'GB']
-  let value = bytes / 1024
-  let unitIndex = 0
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024
-    unitIndex += 1
-  }
-  return `${value.toFixed(1)} ${units[unitIndex]}`
-}
+const { usage: storage } = useStorageUsage()
 
 async function saveSettings() {
   if (!auth.token.value) return
+  settingsError.value = requiredMaxLengthError(form.name, 32, '名称') || nonNegativeIntError(form.edit_window_secs, '编辑/撤回窗口秒数')
+  if (settingsError.value) return
   settingsSaving.value = true
   settingsSaveOk.value = false
-  settingsError.value = ''
   const patch: StrongholdConfigPatch = {
     name: form.name,
     description: form.description,
@@ -205,43 +200,26 @@ async function saveSettings() {
       <h1 class="stronghold-panel__title">{{ currentNode?.name }}</h1>
     </div>
 
-    <div class="stronghold-panel__tabs">
-      <button
-        type="button"
-        class="stronghold-panel__tab"
-        :class="{ 'stronghold-panel__tab--active': panelTab === 'members' }"
-        @click="panelTab = 'members'"
-      >
-        成员列表
-      </button>
-      <button
-        v-if="canManage"
-        type="button"
-        class="stronghold-panel__tab"
-        :class="{ 'stronghold-panel__tab--active': panelTab === 'settings' }"
-        @click="panelTab = 'settings'"
-      >
-        据点设置
-      </button>
-    </div>
+    <WinSelectorBar
+      class="stronghold-panel__tabs"
+      :Items="panelTabOptions"
+      :SelectedItem="panelTabSelected"
+      @update:SelectedItem="onPanelTabSelect"
+    />
 
     <div v-if="panelTab === 'members'" class="stronghold-panel__body">
-      <div class="member-subtabs">
-        <button
-          v-for="t in MEMBER_TABS"
-          :key="t.value"
-          type="button"
-          class="member-subtabs__item"
-          :class="{ 'member-subtabs__item--active': memberTab === t.value }"
-          @click="memberTab = t.value"
-        >
-          {{ t.label }}
-        </button>
-      </div>
+      <WinSelectorBar
+        class="member-subtabs"
+        :Items="MEMBER_TABS"
+        :SelectedItem="memberTabSelected"
+        @update:SelectedItem="onMemberTabSelect"
+      />
 
       <p v-if="actionError" class="field__error">{{ actionError }}</p>
       <div v-if="membersLoading" class="stronghold-panel__loading">加载中…</div>
-      <p v-else-if="membersError" class="notice notice--error">{{ membersError }}</p>
+      <WinInfoBar v-else-if="membersError" :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Error">
+        {{ membersError }}
+      </WinInfoBar>
       <EmptyState v-else-if="!members.length" :image="EMPTY_STATE.members" text="暂无成员" />
 
       <ul v-else class="member-list">
@@ -257,33 +235,27 @@ async function saveSettings() {
 
           <template v-if="memberTab !== 'banned'">
             <div class="member-row__deny">
-              <label class="member-row__deny-item">
-                <input
-                  type="checkbox"
-                  :checked="member.deny_discussion"
-                  :disabled="!canManage || isSelf(member) || member.role !== 'member'"
-                  @change="toggleDeny(member, 'deny_discussion')"
-                />
+              <WinToggleSwitch
+                :modelValue="member.deny_discussion"
+                :IsEnabled="canManage && !isSelf(member) && member.role === 'member'"
+                @update:modelValue="toggleDeny(member, 'deny_discussion')"
+              >
                 讨论
-              </label>
-              <label class="member-row__deny-item">
-                <input
-                  type="checkbox"
-                  :checked="member.deny_idea"
-                  :disabled="!canManage || isSelf(member) || member.role !== 'member'"
-                  @change="toggleDeny(member, 'deny_idea')"
-                />
+              </WinToggleSwitch>
+              <WinToggleSwitch
+                :modelValue="member.deny_idea"
+                :IsEnabled="canManage && !isSelf(member) && member.role === 'member'"
+                @update:modelValue="toggleDeny(member, 'deny_idea')"
+              >
                 想法
-              </label>
-              <label class="member-row__deny-item">
-                <input
-                  type="checkbox"
-                  :checked="member.deny_comment"
-                  :disabled="!canManage || isSelf(member) || member.role !== 'member'"
-                  @change="toggleDeny(member, 'deny_comment')"
-                />
+              </WinToggleSwitch>
+              <WinToggleSwitch
+                :modelValue="member.deny_comment"
+                :IsEnabled="canManage && !isSelf(member) && member.role === 'member'"
+                @update:modelValue="toggleDeny(member, 'deny_comment')"
+              >
                 评论
-              </label>
+              </WinToggleSwitch>
             </div>
 
             <div v-if="canManage && !isSelf(member) && member.role !== 'owner'" class="member-row__actions">
@@ -295,9 +267,11 @@ async function saveSettings() {
               </WinButton>
               <template v-if="isOwner || member.role !== 'mod'">
                 <WinButton Style="SubtleButtonStyle" @Click="kick(member)">踢出</WinButton>
-                <WinButton Style="SubtleButtonStyle" @Click="ban(member)">拉黑</WinButton>
+                <WinButton Style="AccentButtonStyle" class="win-btn--danger" @Click="ban(member)">拉黑</WinButton>
               </template>
-              <WinButton v-if="isOwner" Style="SubtleButtonStyle" @Click="transfer(member)">转让领主</WinButton>
+              <WinButton v-if="isOwner" Style="AccentButtonStyle" class="win-btn--danger" @Click="transfer(member)">
+                转让领主
+              </WinButton>
             </div>
           </template>
 
@@ -311,11 +285,13 @@ async function saveSettings() {
     <div v-else class="stronghold-panel__body">
       <div v-if="settingsLoading" class="stronghold-panel__loading">加载中…</div>
       <template v-else>
-        <p v-if="settingsError" class="notice notice--error">{{ settingsError }}</p>
+        <WinInfoBar v-if="settingsError" :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Error">
+          {{ settingsError }}
+        </WinInfoBar>
 
         <div class="field">
           <label class="field__label" for="sh-name">名称</label>
-          <input id="sh-name" v-model="form.name" type="text" />
+          <input id="sh-name" v-model="form.name" type="text" maxlength="32" />
         </div>
         <div class="field">
           <label class="field__label" for="sh-desc">描述</label>
@@ -333,17 +309,11 @@ async function saveSettings() {
           </select>
           <p v-if="!isOwner" class="field__hint">仅领主可修改可见性</p>
         </div>
-        <label class="stronghold-panel__toggle">
-          <input v-model="form.allow_message_edit" type="checkbox" />
-          <span>允许编辑消息</span>
-        </label>
-        <label class="stronghold-panel__toggle">
-          <input v-model="form.allow_message_retract" type="checkbox" />
-          <span>允许撤回消息</span>
-        </label>
+        <WinToggleSwitch v-model="form.allow_message_edit">允许编辑消息</WinToggleSwitch>
+        <WinToggleSwitch v-model="form.allow_message_retract">允许撤回消息</WinToggleSwitch>
         <div class="field">
           <label class="field__label" for="sh-window">编辑/撤回窗口（秒，0 表示不限）</label>
-          <input id="sh-window" v-model.number="form.edit_window_secs" type="number" min="0" />
+          <input id="sh-window" v-model.number="form.edit_window_secs" type="number" min="0" step="1" />
         </div>
 
         <div class="stronghold-panel__save">
@@ -392,29 +362,10 @@ async function saveSettings() {
 .stronghold-panel__tabs {
   width: 100%;
   max-width: 640px;
-  display: flex;
-  gap: 0.25rem;
   padding: 0.25rem;
   margin-bottom: 1rem;
   border-radius: var(--radius-sm);
   background: var(--ctrl-fill-secondary);
-}
-
-.stronghold-panel__tab {
-  flex: 1;
-  padding: 0.45rem;
-  border: none;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--text-secondary);
-  font-weight: 600;
-  font-size: 0.85rem;
-  transition: background var(--fast-duration) var(--fast-out-slow-in), color var(--fast-duration);
-}
-
-.stronghold-panel__tab--active {
-  background: rgb(var(--colors-primary));
-  color: var(--on-accent);
 }
 
 .stronghold-panel__body {
@@ -437,24 +388,7 @@ async function saveSettings() {
 }
 
 .member-subtabs {
-  display: flex;
-  gap: 0.4rem;
-}
-
-.member-subtabs__item {
-  padding: 0.3rem 0.7rem;
-  border-radius: 999px;
-  border: 1px solid var(--ctrl-border);
-  background: var(--ctrl-fill-secondary);
-  color: var(--text-secondary);
-  font-size: 0.78rem;
-  transition: background var(--fast-duration) var(--fast-out-slow-in), color var(--fast-duration);
-}
-
-.member-subtabs__item--active {
-  background: rgb(var(--colors-primary));
-  border-color: transparent;
-  color: var(--on-accent);
+  margin-bottom: 0.2rem;
 }
 
 .member-list {
@@ -531,15 +465,19 @@ async function saveSettings() {
 .member-row__deny {
   display: flex;
   align-items: center;
-  gap: 0.65rem;
+  flex-wrap: wrap;
+  gap: 0.4rem;
   font-size: 0.76rem;
   color: var(--text-secondary);
 }
 
-.member-row__deny-item {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
+.member-row__deny :deep(.win-switch-root) {
+  min-width: 0;
+}
+
+.member-row__deny :deep(.win-switch-wrap) {
+  gap: 6px;
+  min-height: auto;
 }
 
 .member-row__actions {
@@ -547,14 +485,6 @@ async function saveSettings() {
   flex-wrap: wrap;
   gap: 0.35rem;
   margin-left: auto;
-}
-
-.stronghold-panel__toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.85rem;
-  color: var(--text-primary);
 }
 
 .stronghold-panel__save {

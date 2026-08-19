@@ -4,7 +4,8 @@ import { api, ApiRequestError } from '../api'
 import type { StrongholdApplication, StrongholdCreationPolicy } from '../api/types'
 import { useAuth } from '../composables/useAuth'
 import { useStronghold } from '../composables/useStronghold'
-import { WinButton } from '../vendor/winui'
+import { requiredMaxLengthError } from '../utils/validate'
+import { WinButton, WinInfoBar } from '../vendor/winui'
 
 const emit = defineEmits<{ created: [] }>()
 
@@ -52,9 +53,10 @@ onMounted(async () => {
 })
 
 async function submit() {
-  if (!auth.token.value || !form.name.trim() || busy.value) return
+  if (!auth.token.value || busy.value) return
+  error.value = requiredMaxLengthError(form.name, 32, '名称')
+  if (error.value) return
   busy.value = true
-  error.value = ''
   try {
     const result = await api.createStronghold(auth.token.value, {
       name: form.name.trim(),
@@ -85,10 +87,14 @@ async function submit() {
   <div class="create-stronghold">
     <div v-if="policyLoading" class="create-stronghold__notice">正在加载节点配置…</div>
 
-    <p v-else-if="restrictedDenied" class="notice notice--info">本实例仅特定成员可创建据点。</p>
+    <WinInfoBar v-else-if="restrictedDenied" :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Informational">
+      本实例仅特定成员可创建据点。
+    </WinInfoBar>
 
     <template v-else-if="policy === 'application' && submittedApplication">
-      <p class="notice notice--info">申请已提交，等待管理员审核。</p>
+      <WinInfoBar :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Informational">
+        申请已提交，等待管理员审核。
+      </WinInfoBar>
     </template>
 
     <template v-else>
@@ -104,7 +110,7 @@ async function submit() {
       <form @submit.prevent="submit">
         <div class="field">
           <label class="field__label" for="cs-name">名称</label>
-          <input id="cs-name" v-model.trim="form.name" type="text" required maxlength="40" placeholder="给据点起个名字" />
+          <input id="cs-name" v-model.trim="form.name" type="text" required maxlength="32" placeholder="给据点起个名字（≤32 字）" />
         </div>
         <div class="field">
           <label class="field__label" for="cs-desc">描述（可选）</label>

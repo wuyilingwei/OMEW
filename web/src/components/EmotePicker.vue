@@ -5,25 +5,37 @@ import { useEmotes } from '../composables/useEmotes'
 const emit = defineEmits<{ pick: [code: string]; close: [] }>()
 const { packs, loading } = useEmotes()
 
-const allEmotes = computed(() => packs.value.flatMap((pack) => pack.emotes.map((emote) => ({ pack: pack.name, ...emote }))))
+// built-in pack always shows first ("官方" heading) regardless of load order,
+// instance-defined packs follow in whatever order the API returned them.
+const groups = computed(() => {
+  const builtin = packs.value.filter((pack) => pack.id === 'builtin-mew')
+  const custom = packs.value.filter((pack) => pack.id !== 'builtin-mew')
+  return [...builtin, ...custom].filter((pack) => pack.emotes.length > 0)
+})
+const isEmpty = computed(() => !loading.value && groups.value.length === 0)
 </script>
 
 <template>
   <div class="emote-picker-overlay" @click.self="emit('close')">
     <div class="emote-picker" role="dialog" aria-label="表情选择器">
-      <div v-if="loading && !allEmotes.length" class="emote-picker__notice">加载中…</div>
-      <p v-else-if="!allEmotes.length" class="emote-picker__notice">暂无表情包</p>
-      <div v-else class="emote-picker__grid">
-        <button
-          v-for="emote in allEmotes"
-          :key="`${emote.pack}:${emote.name}`"
-          type="button"
-          class="emote-picker__item"
-          :title="`:${emote.pack}:${emote.name}:`"
-          @click="emit('pick', `:${emote.pack}:${emote.name}:`)"
-        >
-          <img :src="emote.url" :alt="emote.name" loading="lazy" />
-        </button>
+      <div v-if="loading && !groups.length" class="emote-picker__notice">加载中…</div>
+      <p v-else-if="isEmpty" class="emote-picker__notice">暂无表情包</p>
+      <div v-else class="emote-picker__groups">
+        <section v-for="pack in groups" :key="pack.id" class="emote-picker__group">
+          <h3 class="emote-picker__group-title">{{ pack.id === 'builtin-mew' ? '官方' : (pack.display ?? pack.name) }}</h3>
+          <div class="emote-picker__grid">
+            <button
+              v-for="emote in pack.emotes"
+              :key="`${pack.name}:${emote.name}`"
+              type="button"
+              class="emote-picker__item"
+              :title="`:${pack.name}:${emote.name}:`"
+              @click="emit('pick', `:${pack.name}:${emote.name}:`)"
+            >
+              <img :src="emote.url" :alt="emote.name" loading="lazy" />
+            </button>
+          </div>
+        </section>
       </div>
     </div>
   </div>
@@ -57,6 +69,19 @@ const allEmotes = computed(() => packs.value.flatMap((pack) => pack.emotes.map((
   padding: 1.5rem 0.5rem;
   text-align: center;
   font-size: 0.82rem;
+  color: var(--text-tertiary);
+}
+
+.emote-picker__groups {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.emote-picker__group-title {
+  margin: 0 0 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 600;
   color: var(--text-tertiary);
 }
 

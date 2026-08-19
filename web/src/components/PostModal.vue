@@ -6,6 +6,7 @@ import { useStrongholdMembers } from '../composables/useStrongholdMembers'
 import { actorLocalpart } from '../utils/actor'
 import { WinButton } from '../vendor/winui'
 import AvatarBadge from './AvatarBadge.vue'
+import MediaGrid from './MediaGrid.vue'
 
 const { openPostSeq, close } = usePostModal()
 const { thread, threadLoading, threadRepliesLoading, threadHasMore, openThread, closeThread, loadMoreReplies, createReply } =
@@ -70,6 +71,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               <p v-for="(paragraph, index) in thread.post.text.split('\n\n')" :key="index" class="post-modal__paragraph">
                 {{ paragraph }}
               </p>
+              <MediaGrid v-if="thread.post.media?.length" :media="thread.post.media" />
 
               <div class="post-modal__comments">
                 <h2 class="post-modal__comments-title">评论（{{ thread.post.reply_count }}）</h2>
@@ -83,6 +85,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                         <span class="post-modal__time">{{ formatTime(reply.ts) }}</span>
                       </div>
                       <p class="post-modal__reply-text">{{ reply.body.text }}</p>
+                      <MediaGrid v-if="reply.body.media?.length" :media="reply.body.media" />
                     </div>
                   </li>
                 </ul>

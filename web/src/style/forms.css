@@ -48,28 +48,9 @@
   color: var(--SystemFillColorCriticalBrush);
 }
 
-.notice {
-  padding: 0.6rem 0.75rem;
-  border-radius: var(--radius-sm);
-  font-size: 0.8rem;
-  line-height: 1.5;
-  border: 1px solid transparent;
-}
-
-.notice--caution {
-  background: var(--SystemFillColorCautionBackgroundBrush);
-  border-color: var(--SystemFillColorCautionBrush);
-  color: var(--text-primary);
-}
-
-.notice--info {
-  background: var(--SystemFillColorAttentionBackgroundBrush);
-  border-color: var(--SystemFillColorAttentionBrush);
-  color: var(--text-primary);
-}
-
-.notice--error {
-  background: var(--SystemFillColorCriticalBackgroundBrush);
-  border-color: var(--SystemFillColorCriticalBrush);
-  color: var(--text-primary);
+/* danger variant for WinButton (upstream has no Danger Style) */
+.win-btn.win-btn--danger.AccentButtonStyle {
+  --AccentButtonBackground: var(--SystemFillColorCriticalBrush);
+  --AccentButtonBackgroundPointerOver: var(--SystemFillColorCriticalBrush);
+  --AccentButtonBackgroundPressed: var(--SystemFillColorCriticalBrush);
 }

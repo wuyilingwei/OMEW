@@ -18,15 +18,24 @@ endorsed by Microsoft.
   - `components/i18n/index.ts` (transitive dep of WinTextBlock)
   - `components/Strings/en-US/Resources.ts` (transitive dep of i18n/index.ts)
   - `components/Strings/zh-CN/Resources.ts` (transitive dep of i18n/index.ts)
+  - `components/WinToggleSwitch.vue` (added 2026-08-19; depends only on
+    `WinTextBlock` + `i18n/index.ts`, both already vendored above — no new
+    transitive files)
+  - `components/WinInfoBar.vue` (added 2026-08-19; depends on `WinButton` +
+    `WinTextBlock`, both already vendored above — no new transitive files)
+  - `components/WinSelectorBar.vue` (added 2026-08-19; zero dependencies
+    beyond `vue` itself — `WinSelectorBarItem.vue` is not vendored since this
+    project only uses the `:Items` array API, never the slot-children form)
   - `styles/theme.css` (full Fluent token layer, light + dark)
   - `styles/animations.css` (needed for `WinDropDownButton`'s chevron
     animation and `WinMenuFlyout`'s open/close motion — not optional here,
     contrary to the common case where a control's `<style>` block is
     self-contained)
 
-Only `WinButton` and `WinDropDownButton` are re-exported from `index.ts` for
-consumption; the rest is internal plumbing pulled in by the dependency
-closure and is not meant to be imported directly.
+`WinButton`, `WinDropDownButton`, `WinToggleSwitch`, `WinInfoBar` and
+`WinSelectorBar` are re-exported from `index.ts` for consumption; the rest is
+internal plumbing pulled in by the dependency closure and is not meant to be
+imported directly.
 
 ## Licensing compatibility
 
@@ -53,9 +62,21 @@ they're used in this project:
   nested/toggle menu items, add the same icon-font escape hatch used
   elsewhere in this codebase before doing so, rather than shipping a
   missing-glyph box.
+- `WinToggleSwitch` renders no glyphs at all (a CSS-drawn track/knob) — no
+  icon-font dependency.
+- `WinInfoBar` references icon-font private-use codepoints for its severity
+  icon, but this project always sets `:IsIconVisible="false"`, so that path
+  is never reached.
+- `WinSelectorBar` maps an `Icon` prop through icon-font codepoints
+  (`iconMap` for named icons like `Add`/`Back`/`Settings`), but this project
+  never passes `Icon` on any item, so that path is never reached either. If a
+  future change adds icons to a selector item, add the same escape hatch
+  instead of shipping a missing-glyph box.
 
 ## Not vendored
 
-Everything else in WinUIonWeb (the other ~85 components, the icon font, the
-demo gallery app) was left out — only the dependency closure needed for the
-channel-switcher dropdown was pulled in, per the project's vendoring policy.
+Everything else in WinUIonWeb (the other ~85 components, `WinSelectorBarItem`
+(the `:Items` array API supersedes the need for its slot-children form here),
+the icon font, the demo gallery app) was left out — only the dependency
+closure actually consumed by this project was pulled in, per the project's
+vendoring policy.

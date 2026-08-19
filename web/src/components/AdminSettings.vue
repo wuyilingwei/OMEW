@@ -3,7 +3,8 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { api, ApiRequestError } from '../api'
 import type { InviteCode, RootRequirement, StrongholdApplication, StrongholdCreationPolicy } from '../api/types'
 import { useAuth } from '../composables/useAuth'
-import { WinButton } from '../vendor/winui'
+import { actorListError, domainListError, trustedServersError } from '../utils/validate'
+import { WinButton, WinInfoBar, WinSelectorBar, WinToggleSwitch } from '../vendor/winui'
 
 defineEmits<{ close: [] }>()
 
@@ -15,10 +16,10 @@ const REQUIREMENT_OPTIONS: { value: RootRequirement; label: string }[] = [
   { value: 'code', label: '邀请码' },
 ]
 
-const CREATION_POLICY_OPTIONS: { value: StrongholdCreationPolicy; label: string; hint: string }[] = [
-  { value: 'open', label: '开放', hint: '任何用户都可以创建据点' },
-  { value: 'restricted', label: '限制', hint: '仅名单内的用户可以创建据点' },
-  { value: 'application', label: '申请制', hint: '用户提交申请，由管理员审批' },
+const CREATION_POLICY_OPTIONS: { Text: string; value: StrongholdCreationPolicy; hint: string }[] = [
+  { Text: '开放', value: 'open', hint: '任何用户都可以创建据点' },
+  { Text: '限制', value: 'restricted', hint: '仅名单内的用户可以创建据点' },
+  { Text: '申请制', value: 'application', hint: '用户提交申请，由管理员审批' },
 ]
 
 const loading = ref(true)
@@ -132,10 +133,18 @@ const trustedServers = computed(() => linesToList(form.trusted_identity_servers_
 const federationPeers = computed(() => linesToList(form.federation_peers_text))
 const strongholdCreators = computed(() => linesToList(form.stronghold_creators_text))
 
+const creationPolicySelected = computed(() => CREATION_POLICY_OPTIONS.find((o) => o.value === form.stronghold_creation_policy))
+function onCreationPolicySelect(item: { value: StrongholdCreationPolicy }) {
+  form.stronghold_creation_policy = item.value
+}
+
 async function save() {
   if (!auth.token.value) return
-  saving.value = false
-  saveError.value = ''
+  saveError.value =
+    trustedServersError(form.trusted_identity_servers_text) ||
+    domainListError(form.federation_peers_text) ||
+    (form.stronghold_creation_policy === 'restricted' ? actorListError(form.stronghold_creators_text) : '')
+  if (saveError.value) return
   saveOk.value = false
   saving.value = true
   try {
@@ -178,15 +187,14 @@ async function generateInviteCodes() {
     </div>
 
     <div v-if="loading" class="admin-settings__loading">正在加载设置…</div>
-    <p v-else-if="loadError" class="notice notice--error">{{ loadError }}</p>
+    <WinInfoBar v-else-if="loadError" :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Error">
+      {{ loadError }}
+    </WinInfoBar>
 
     <div v-else class="admin-settings__body">
       <section class="admin-card">
         <h2 class="admin-card__title">根节点</h2>
-        <label class="admin-toggle">
-          <input v-model="form.allow_root" type="checkbox" />
-          <span>作为根节点（开放独立注册）</span>
-        </label>
+        <WinToggleSwitch v-model="form.allow_root">作为根节点（开放独立注册）</WinToggleSwitch>
         <p class="field__hint">关闭后本节点仅接受已存在账号登录，新用户无法在本节点直接注册。</p>
       </section>
 
@@ -194,18 +202,24 @@ async function generateInviteCodes() {
         <h2 class="admin-card__title">注册门槛</h2>
         <p class="field__hint">注册时要求提交的附加信息，可多选。</p>
         <div class="admin-checkbox-group">
-          <label v-for="option in REQUIREMENT_OPTIONS" :key="option.value" class="admin-toggle">
-            <input
-              type="checkbox"
-              :checked="form.root_requirements.includes(option.value)"
-              @change="toggleRequirement(option.value, ($event.target as HTMLInputElement).checked)"
-            />
-            <span>{{ option.label }}</span>
-          </label>
+          <WinToggleSwitch
+            v-for="option in REQUIREMENT_OPTIONS"
+            :key="option.value"
+            :modelValue="form.root_requirements.includes(option.value)"
+            @update:modelValue="(checked: boolean) => toggleRequirement(option.value, checked)"
+          >
+            {{ option.label }}
+          </WinToggleSwitch>
         </div>
-        <p v-if="form.root_requirements.includes('phone')" class="notice notice--caution">
+        <WinInfoBar
+          v-if="form.root_requirements.includes('phone')"
+          :IsOpen="true"
+          :IsClosable="false"
+          :IsIconVisible="false"
+          Severity="Warning"
+        >
           手机号注册目前客户端暂未实现，勾选后新用户注册会被拒绝。
-        </p>
+        </WinInfoBar>
       </section>
 
       <section class="admin-card">
@@ -234,12 +248,13 @@ async function generateInviteCodes() {
 
       <section class="admin-card">
         <h2 class="admin-card__title">建据点策略</h2>
-        <div class="admin-radio-group">
-          <label v-for="option in CREATION_POLICY_OPTIONS" :key="option.value" class="admin-toggle">
-            <input v-model="form.stronghold_creation_policy" type="radio" name="creation-policy" :value="option.value" />
-            <span>{{ option.label }}——{{ option.hint }}</span>
-          </label>
-        </div>
+        <WinSelectorBar
+          class="admin-radio-group"
+          :Items="CREATION_POLICY_OPTIONS"
+          :SelectedItem="creationPolicySelected"
+          @update:SelectedItem="onCreationPolicySelect"
+        />
+        <p class="field__hint">{{ creationPolicySelected?.hint }}</p>
 
         <div v-if="form.stronghold_creation_policy === 'restricted'" class="field">
           <label class="field__label" for="creators-text">允许创建的用户（actor，每行一个）</label>
@@ -371,24 +386,10 @@ async function generateInviteCodes() {
   color: var(--text-primary);
 }
 
-.admin-toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.85rem;
-  color: var(--text-primary);
-}
-
 .admin-checkbox-group {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem 1.25rem;
-}
-
-.admin-radio-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
 }
 
 .admin-applications {

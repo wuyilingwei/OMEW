@@ -1,7 +1,7 @@
 import { ref, watch } from 'vue'
 import { api } from '../api'
 import { createRoomTransport } from '../api/transport'
-import type { RoomItem, RoomSummary } from '../api/types'
+import type { MediaAttachment, RoomItem, RoomSummary } from '../api/types'
 import type { RoomTransport } from '../api/roomSocket'
 import { useAuth } from './useAuth'
 import { useChannel } from './useChannel'
@@ -10,6 +10,7 @@ import { useStronghold } from './useStronghold'
 export interface PendingSend {
   clientId: string
   text: string
+  media?: MediaAttachment[]
   ts: number
   status: 'sending' | 'failed'
 }
@@ -142,12 +143,14 @@ export function useChatRoom() {
     void loadHistory(nodeId, room.id, oldest)
   }
 
-  function sendText(text: string) {
+  function sendText(text: string, media?: MediaAttachment[]) {
     const trimmed = text.trim()
-    if (!trimmed || !transport) return
+    if ((!trimmed && !media?.length) || !transport) return
     const clientId = crypto.randomUUID()
-    pending.value.push({ clientId, text: trimmed, ts: Date.now(), status: 'sending' })
-    const ok = transport.createItem(clientId, 'post', { text: trimmed })
+    pending.value.push({ clientId, text: trimmed, media, ts: Date.now(), status: 'sending' })
+    const body: Record<string, unknown> = { text: trimmed }
+    if (media?.length) body.media = media
+    const ok = transport.createItem(clientId, 'post', body)
     if (!ok) {
       const entry = pending.value.find((p) => p.clientId === clientId)
       if (entry) entry.status = 'failed'
@@ -168,7 +171,9 @@ export function useChatRoom() {
     entry.status = 'sending'
     // same client_id: server's (origin, client_id) unique index makes this
     // safe even if the original send actually landed and only the ack was lost.
-    const ok = transport.createItem(clientId, 'post', { text: entry.text })
+    const body: Record<string, unknown> = { text: entry.text }
+    if (entry.media?.length) body.media = entry.media
+    const ok = transport.createItem(clientId, 'post', body)
     if (!ok) {
       entry.status = 'failed'
       return
