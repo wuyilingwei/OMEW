@@ -1,0 +1,12 @@
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="OMEW">
+  <!-- ring = the "O" of OpenMew; letterforms redrawn in homage style, not copied -->
+  <circle cx="256" cy="258" r="192" fill="none" stroke="#D9E4F7" stroke-width="42"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 88 336 L 118 194 L 162 298 L 206 180 L 234 324"
+          stroke="#345BAC" stroke-width="40" transform="rotate(-5 160 258)"/>
+    <path d="M 300 210 L 258 222 L 294 258 L 258 294 L 300 306"
+          stroke="#4573D1" stroke-width="30" transform="rotate(4 279 258)"/>
+    <path d="M 328 216 L 350 324 L 388 254 L 426 316 L 444 202"
+          stroke="#5288F6" stroke-width="38" transform="rotate(7 386 262)"/>
+  </g>
+</svg>
