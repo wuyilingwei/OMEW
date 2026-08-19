@@ -4,9 +4,10 @@
 // themselves are unchanged - see auth.ts.
 
 import { base64UrlEncode } from "./auth";
-import type { InstanceConfig, PublicUser, RootRequirement } from "./types";
+import type { InstanceConfig, PublicUser, RootRequirement, StrongholdCreationPolicy } from "./types";
 
 const ROOT_REQUIREMENTS: readonly RootRequirement[] = ["email", "phone", "code"];
+const STRONGHOLD_CREATION_POLICIES: readonly StrongholdCreationPolicy[] = ["open", "restricted", "application"];
 
 // m0-protocol §1.3 calls for PRECIS UsernameCaseMapped; this is an approximation
 // (case-fold to lowercase, then restrict to the wire ASCII subset). Full PRECIS /
@@ -15,6 +16,10 @@ const USERNAME_RE = /^[a-z0-9_-]{2,32}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DOMAIN_OR_WILDCARD_RE =
   /^(\*|[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+)$/;
+// federation_peers: real domains only (no "*" - unlike trusted_identity_servers,
+// this list targets specific peers, see m0-protocol §7.9).
+const DOMAIN_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
+const ACTOR_RE = /^@[^\s:]{1,64}:[^\s:]{1,255}$/;
 
 const INVITE_CODE_BYTES = 15; // -> 20 base64url chars, ~120 bits
 
@@ -40,6 +45,18 @@ export function isValidTrustedServers(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((v) => typeof v === "string" && DOMAIN_OR_WILDCARD_RE.test(v));
 }
 
+export function isValidDomainList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((v) => typeof v === "string" && DOMAIN_RE.test(v));
+}
+
+export function isValidStrongholdCreationPolicy(value: unknown): value is StrongholdCreationPolicy {
+  return typeof value === "string" && STRONGHOLD_CREATION_POLICIES.includes(value as StrongholdCreationPolicy);
+}
+
+export function isValidActorList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((v) => typeof v === "string" && ACTOR_RE.test(v));
+}
+
 export function generateInviteCode(): string {
   return base64UrlEncode(crypto.getRandomValues(new Uint8Array(INVITE_CODE_BYTES)));
 }
@@ -60,13 +77,17 @@ export function domainOfActor(actor: string): string {
 
 export async function getInstanceConfig(env: Env): Promise<InstanceConfig> {
   const row = await env.DB.prepare(
-    "SELECT allow_root, root_requirements, trusted_identity_servers, max_file_bytes, user_storage_quota_bytes FROM instance_config WHERE id = 1"
+    "SELECT allow_root, root_requirements, trusted_identity_servers, max_file_bytes, user_storage_quota_bytes, " +
+      "federation_peers, stronghold_creation_policy, stronghold_creators FROM instance_config WHERE id = 1"
   ).first<{
     allow_root: number;
     root_requirements: string;
     trusted_identity_servers: string;
     max_file_bytes: number;
     user_storage_quota_bytes: number;
+    federation_peers: string;
+    stronghold_creation_policy: StrongholdCreationPolicy;
+    stronghold_creators: string;
   }>();
   if (!row) {
     // Unreachable once migration 0002 has run (it seeds the single row) - fail
@@ -77,6 +98,9 @@ export async function getInstanceConfig(env: Env): Promise<InstanceConfig> {
       trusted_identity_servers: ["*"],
       max_file_bytes: 10485760,
       user_storage_quota_bytes: 209715200,
+      federation_peers: [],
+      stronghold_creation_policy: "restricted",
+      stronghold_creators: [],
     };
   }
   return {
@@ -85,6 +109,9 @@ export async function getInstanceConfig(env: Env): Promise<InstanceConfig> {
     trusted_identity_servers: JSON.parse(row.trusted_identity_servers) as string[],
     max_file_bytes: row.max_file_bytes,
     user_storage_quota_bytes: row.user_storage_quota_bytes,
+    federation_peers: JSON.parse(row.federation_peers) as string[],
+    stronghold_creation_policy: row.stronghold_creation_policy,
+    stronghold_creators: JSON.parse(row.stronghold_creators) as string[],
   };
 }
 

@@ -16,9 +16,12 @@ import {
   generateInviteCode,
   getInstanceConfig,
   isOriginTrusted,
+  isValidActorList,
+  isValidDomainList,
   isValidEmail,
   isValidPositiveInt,
   isValidRootRequirements,
+  isValidStrongholdCreationPolicy,
   isValidTrustedServers,
   isValidUsername,
   localpartOfActor,
@@ -88,11 +91,19 @@ async function requireActor(request: Request, env: Env): Promise<string | null> 
 async function requireAdmin(request: Request, env: Env): Promise<{ actor: string } | Response> {
   const actor = await requireActor(request, env);
   if (!actor) return apiError(401, "AUTH_REQUIRED");
+  if (!(await isActorAdmin(env, actor))) return apiError(403, "ADMIN_REQUIRED");
+  return { actor };
+}
+
+// Same is_admin lookup as requireAdmin, but for an actor already known from
+// elsewhere (m0-protocol §7.9 policy gate) rather than off the request's bearer
+// token. Guest actors (foreign domain) are never local admins.
+async function isActorAdmin(env: Env, actor: string): Promise<boolean> {
+  if (domainOfActor(actor) !== HOME_DOMAIN) return false;
   const row = await env.DB.prepare("SELECT is_admin FROM users WHERE localpart = ?")
     .bind(localpartOfActor(actor))
     .first<{ is_admin: number }>();
-  if (!row || !row.is_admin) return apiError(403, "ADMIN_REQUIRED");
-  return { actor };
+  return Boolean(row?.is_admin);
 }
 
 function match(pattern: string, path: string): Record<string, string> | null {
@@ -141,7 +152,13 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
   if (method === "GET" && path === "/api/instance/config") {
     const config = await getInstanceConfig(env);
-    return json({ allow_root: config.allow_root, root_requirements: config.root_requirements });
+    return json({
+      allow_root: config.allow_root,
+      root_requirements: config.root_requirements,
+      // Policy value only (open/restricted/application) - enough for the client
+      // to shape its "create stronghold" entry point; creators/peers stay admin-only.
+      stronghold_creation: config.stronghold_creation_policy,
+    });
   }
 
   if (method === "POST" && path === "/api/register") {
@@ -294,11 +311,30 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (!isValidPositiveInt(maxFileBytes)) return apiError(400, "CONFIG_INVALID");
     const userStorageQuotaBytes = "user_storage_quota_bytes" in body ? body.user_storage_quota_bytes : current.user_storage_quota_bytes;
     if (!isValidPositiveInt(userStorageQuotaBytes)) return apiError(400, "CONFIG_INVALID");
+    // federation_peers: outbound content-federation allowlist. Subscribe/backfill
+    // wiring lands in M5/M6 and MUST target only this list (m0-protocol §7.9).
+    const federationPeers = "federation_peers" in body ? body.federation_peers : current.federation_peers;
+    if (!isValidDomainList(federationPeers)) return apiError(400, "CONFIG_INVALID");
+    const strongholdCreationPolicy =
+      "stronghold_creation_policy" in body ? body.stronghold_creation_policy : current.stronghold_creation_policy;
+    if (!isValidStrongholdCreationPolicy(strongholdCreationPolicy)) return apiError(400, "CONFIG_INVALID");
+    const strongholdCreators = "stronghold_creators" in body ? body.stronghold_creators : current.stronghold_creators;
+    if (!isValidActorList(strongholdCreators)) return apiError(400, "CONFIG_INVALID");
 
     await env.DB.prepare(
-      "UPDATE instance_config SET allow_root = ?, root_requirements = ?, trusted_identity_servers = ?, max_file_bytes = ?, user_storage_quota_bytes = ? WHERE id = 1"
+      "UPDATE instance_config SET allow_root = ?, root_requirements = ?, trusted_identity_servers = ?, max_file_bytes = ?, " +
+        "user_storage_quota_bytes = ?, federation_peers = ?, stronghold_creation_policy = ?, stronghold_creators = ? WHERE id = 1"
     )
-      .bind(allowRoot ? 1 : 0, JSON.stringify(rootRequirements), JSON.stringify(trustedServers), maxFileBytes, userStorageQuotaBytes)
+      .bind(
+        allowRoot ? 1 : 0,
+        JSON.stringify(rootRequirements),
+        JSON.stringify(trustedServers),
+        maxFileBytes,
+        userStorageQuotaBytes,
+        JSON.stringify(federationPeers),
+        strongholdCreationPolicy,
+        JSON.stringify(strongholdCreators)
+      )
       .run();
     return json({
       allow_root: allowRoot,
@@ -306,6 +342,9 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
       trusted_identity_servers: trustedServers,
       max_file_bytes: maxFileBytes,
       user_storage_quota_bytes: userStorageQuotaBytes,
+      federation_peers: federationPeers,
+      stronghold_creation_policy: strongholdCreationPolicy,
+      stronghold_creators: strongholdCreators,
     });
   }
 
@@ -695,14 +734,95 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const visibility = body.visibility === "private" ? "private" : "public";
     const description = asOptionalString(body.description);
 
-    const id = generateResId();
-    const stub = env.STRONGHOLD_DO.getByName(id);
-    const config = await stub.initConfig(id, name, visibility, actor, description);
-    // Every stronghold starts with one real channel and one real section - tips
-    // and room lookups work immediately, no separate "register this room" step.
-    await stub.createRoom("lobby", "channel", "大厅", ["text"], false);
-    await stub.createRoom("posts", "section", "帖子", ["text"], false);
-    return json(toApiConfig(config), 201);
+    // m0-protocol §7.9: creation policy gate. Admins always take the direct path,
+    // regardless of policy - they don't file applications against themselves.
+    const config = await getInstanceConfig(env);
+    const isAdmin = await isActorAdmin(env, actor);
+    if (!isAdmin && config.stronghold_creation_policy === "restricted" && !config.stronghold_creators.includes(actor)) {
+      return apiError(403, "CREATION_RESTRICTED");
+    }
+    if (!isAdmin && config.stronghold_creation_policy === "application") {
+      const applicationId = crypto.randomUUID();
+      const now = Date.now();
+      await env.DB.prepare(
+        "INSERT INTO stronghold_applications (id, actor, name, description, visibility, state, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)"
+      )
+        .bind(applicationId, actor, name, description ?? null, visibility, now)
+        .run();
+      return json({ application_id: applicationId, state: "pending" }, 202);
+    }
+
+    const created = await createStrongholdWithDefaults(env, name, visibility, actor, description);
+    return json(toApiConfig(created), 201);
+  }
+
+  if (method === "GET" && path === "/api/me/stronghold-applications") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const { results } = await env.DB.prepare(
+      "SELECT id, actor, name, description, visibility, state, created_at, decided_by, decided_at " +
+        "FROM stronghold_applications WHERE actor = ? ORDER BY created_at DESC"
+    )
+      .bind(actor)
+      .all();
+    return json({ applications: results });
+  }
+
+  if (method === "GET" && path === "/api/admin/stronghold-applications") {
+    const gate = await requireAdmin(request, env);
+    if (gate instanceof Response) return gate;
+    const state = url.searchParams.get("state");
+    if (state && state !== "pending" && state !== "approved" && state !== "rejected") return apiError(400, "STATE_INVALID");
+    const { results } = state
+      ? await env.DB.prepare(
+          "SELECT id, actor, name, description, visibility, state, created_at, decided_by, decided_at " +
+            "FROM stronghold_applications WHERE state = ? ORDER BY created_at DESC"
+        )
+          .bind(state)
+          .all()
+      : await env.DB.prepare(
+          "SELECT id, actor, name, description, visibility, state, created_at, decided_by, decided_at " +
+            "FROM stronghold_applications ORDER BY created_at DESC"
+        ).all();
+    return json({ applications: results });
+  }
+
+  const applicationDecideMatch = match("/api/admin/stronghold-applications/:id", path);
+  if (applicationDecideMatch && method === "PATCH") {
+    const gate = await requireAdmin(request, env);
+    if (gate instanceof Response) return gate;
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    if (body.state !== "approved" && body.state !== "rejected") return apiError(400, "STATE_INVALID");
+
+    const application = await env.DB.prepare(
+      "SELECT id, actor, name, description, visibility, state FROM stronghold_applications WHERE id = ?"
+    )
+      .bind(applicationDecideMatch.id!)
+      .first<{ id: string; actor: string; name: string; description: string | null; visibility: "public" | "private"; state: string }>();
+    if (!application) return apiError(404, "NOT_FOUND");
+
+    const now = Date.now();
+    // Conditional UPDATE (not a separate read-then-write) so two concurrent
+    // decisions on the same application can't both win.
+    const decided = await env.DB.prepare(
+      "UPDATE stronghold_applications SET state = ?, decided_by = ?, decided_at = ? WHERE id = ? AND state = 'pending'"
+    )
+      .bind(body.state, gate.actor, now, applicationDecideMatch.id!)
+      .run();
+    if (decided.meta.changes === 0) return apiError(409, "ALREADY_DECIDED");
+
+    if (body.state === "rejected") {
+      return json({ id: application.id, state: "rejected" });
+    }
+    const created = await createStrongholdWithDefaults(
+      env,
+      application.name,
+      application.visibility,
+      application.actor,
+      application.description ?? undefined
+    );
+    return json({ id: application.id, state: "approved", stronghold: toApiConfig(created) });
   }
 
   m = match("/api/stronghold/:id/rooms", path);
@@ -1401,6 +1521,25 @@ function asOptionalNumber(v: unknown): number | undefined {
 // satisfies RES_ID_RE.
 function generateResId(): string {
   return crypto.randomUUID().replace(/-/g, "").slice(0, 20);
+}
+
+// Shared by the open-policy path in POST /api/strongholds and by approving a
+// stronghold_applications row - both end with the same owner + default rooms.
+async function createStrongholdWithDefaults(
+  env: Env,
+  name: string,
+  visibility: "public" | "private",
+  ownerActor: string,
+  description?: string
+): Promise<ConfigRow> {
+  const id = generateResId();
+  const stub = env.STRONGHOLD_DO.getByName(id);
+  const config = await stub.initConfig(id, name, visibility, ownerActor, description);
+  // Every stronghold starts with one real channel and one real section - tips
+  // and room lookups work immediately, no separate "register this room" step.
+  await stub.createRoom("lobby", "channel", "大厅", ["text"], false);
+  await stub.createRoom("posts", "section", "帖子", ["text"], false);
+  return config;
 }
 
 // ---- stronghold settings & member management helpers -----------------------------
