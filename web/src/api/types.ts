@@ -1,12 +1,19 @@
 export type RootRequirement = 'email' | 'phone' | 'code'
+export type StrongholdCreationPolicy = 'open' | 'restricted' | 'application'
 
 export interface InstanceConfig {
   allow_root: boolean
   root_requirements: RootRequirement[]
+  stronghold_creation: StrongholdCreationPolicy
 }
 
 export interface AdminInstanceConfig extends InstanceConfig {
   trusted_identity_servers: string[]
+  federation_peers: string[]
+  max_file_bytes: number
+  user_storage_quota_bytes: number
+  stronghold_creation_policy: StrongholdCreationPolicy
+  stronghold_creators: string[]
 }
 
 export interface AuthUser {
@@ -203,4 +210,48 @@ export interface PostThread {
   post: PostDetail
   replies: PostReply[]
   next_before: number | null
+}
+
+// ---- stronghold creation applications (application policy) ----------------
+
+export type StrongholdApplicationState = 'pending' | 'approved' | 'rejected'
+
+export interface StrongholdApplication {
+  id: string
+  actor: string
+  name: string
+  description: string | null
+  visibility: StrongholdVisibility
+  state: StrongholdApplicationState
+  created_at: number
+  decided_by: string | null
+  decided_at: number | null
+}
+
+// ---- media / emotes / storage ----------------------------------------------
+
+export interface MediaUploadResult {
+  id: string
+  url: string
+  size: number
+  mime: string
+}
+
+export interface StorageUsage {
+  used: number
+  quota: number
+  max_file: number
+}
+
+export interface Emote {
+  id: string
+  name: string
+  media_id: string
+  url: string
+}
+
+export interface EmotePack {
+  id: string
+  name: string
+  emotes: Emote[]
 }

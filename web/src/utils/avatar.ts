@@ -1,4 +1,6 @@
-// deterministic placeholder avatar: same seed always yields the same hue + initial
+import { DEFAULT_AVATARS } from '../assets/mew'
+
+// deterministic default-avatar pick: same seed always yields the same image
 function hashSeed(seed: string): number {
   let hash = 0
   for (let i = 0; i < seed.length; i += 1) {
@@ -8,11 +10,6 @@ function hashSeed(seed: string): number {
   return Math.abs(hash)
 }
 
-export function avatarBackground(seed: string): string {
-  const hue = hashSeed(seed) % 360
-  return `hsl(${hue} 58% 42%)`
-}
-
-export function avatarInitial(seed: string): string {
-  return seed.trim().charAt(0).toUpperCase() || '?'
+export function defaultAvatarUrl(seed: string): string {
+  return DEFAULT_AVATARS[hashSeed(seed) % DEFAULT_AVATARS.length]!
 }

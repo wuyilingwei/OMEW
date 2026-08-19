@@ -6,9 +6,11 @@ import type {
   CreateRoomPayload,
   CreateStrongholdPayload,
   EditRetractResult,
+  EmotePack,
   InstanceConfig,
   InviteCode,
   LoginPayload,
+  MediaUploadResult,
   MemberPage,
   MemberPatch,
   MemberTab,
@@ -18,6 +20,9 @@ import type {
   RegisterPayload,
   RoomSummary,
   RoomTokenResponse,
+  StorageUsage,
+  StrongholdApplication,
+  StrongholdApplicationState,
   StrongholdConfig,
   StrongholdConfigPatch,
   StrongholdMember,
@@ -291,4 +296,64 @@ export const realApi = {
         home_domain: u.home_domain,
       }),
     ),
+
+  // ---- emotes -----------------------------------------------------------------
+
+  getEmotes: (token: string) => request<{ packs: EmotePack[] }>('/api/emotes', { headers: authHeaders(token) }).then((r) => r.packs),
+
+  // ---- media / storage ----------------------------------------------------------
+  // POST /api/media takes the file as a raw request body (Content-Type: the file's
+  // mime, browser sets Content-Length) - not multipart/form-data. XHR (not fetch) so
+  // upload progress is observable.
+
+  uploadMedia: (token: string, file: File | Blob, onProgress?: (percent: number) => void) =>
+    new Promise<MediaUploadResult>((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open('POST', `${API_BASE}/api/media`)
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+      xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
+      xhr.upload.onprogress = (event) => {
+        if (onProgress && event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100))
+      }
+      xhr.onload = () => {
+        let body: { error?: string | { code?: string } } & Partial<MediaUploadResult> = {}
+        try {
+          body = JSON.parse(xhr.responseText || '{}')
+        } catch {
+          // non-JSON body treated as UNKNOWN_ERROR below
+        }
+        const errVal = body.error
+        if (xhr.status < 200 || xhr.status >= 300 || errVal) {
+          const code = typeof errVal === 'string' ? errVal : (errVal?.code ?? 'UNKNOWN_ERROR')
+          if (xhr.status === 401) onUnauthorized?.()
+          reject(new ApiRequestError(code, xhr.status))
+          return
+        }
+        resolve(body as MediaUploadResult)
+      }
+      xhr.onerror = () => reject(new ApiRequestError('NETWORK_ERROR', 0))
+      xhr.send(file)
+    }),
+
+  getStorageUsage: (token: string) => request<StorageUsage>('/api/me/storage', { headers: authHeaders(token) }),
+
+  // ---- stronghold creation applications -----------------------------------------
+
+  getMyStrongholdApplications: (token: string) =>
+    request<{ applications: StrongholdApplication[] }>('/api/me/stronghold-applications', {
+      headers: authHeaders(token),
+    }).then((r) => r.applications),
+
+  getAdminStrongholdApplications: (token: string, state?: StrongholdApplicationState) =>
+    request<{ applications: StrongholdApplication[] }>(
+      `/api/admin/stronghold-applications${state ? `?state=${state}` : ''}`,
+      { headers: authHeaders(token) },
+    ).then((r) => r.applications),
+
+  decideStrongholdApplication: (token: string, id: string, state: 'approved' | 'rejected') =>
+    request<{ id: string; state: string }>(`/api/admin/stronghold-applications/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: authHeaders(token),
+      body: JSON.stringify({ state }),
+    }),
 }

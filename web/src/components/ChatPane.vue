@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import { EMPTY_STATE } from '../assets/mew'
 import { useAuth } from '../composables/useAuth'
 import { useChatRoom } from '../composables/useChatRoom'
 import { useStrongholdConfig } from '../composables/useStrongholdConfig'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
 import { actorLocalpart } from '../utils/actor'
 import { WinButton } from '../vendor/winui'
+import EmotePicker from './EmotePicker.vue'
+import EmptyState from './EmptyState.vue'
 import MessageBubble, { type MessageVM } from './MessageBubble.vue'
 
 const auth = useAuth()
@@ -17,6 +20,7 @@ const draft = ref('')
 const editingSeq = ref<number | null>(null)
 const editingText = ref('')
 const scrollEl = ref<HTMLElement | null>(null)
+const showEmotePicker = ref(false)
 
 function displayName(actor: string): string {
   return members.value.find((m) => m.actor === actor)?.display_name ?? actorLocalpart(actor)
@@ -83,6 +87,11 @@ function submit() {
   sendText(text)
 }
 
+function pickEmote(code: string) {
+  showEmotePicker.value = false
+  sendText(code)
+}
+
 function onEnter(event: KeyboardEvent) {
   if (event.shiftKey) return
   event.preventDefault()
@@ -134,6 +143,7 @@ watch(
           {{ historyLoading ? '加载中…' : '加载更早的消息' }}
         </WinButton>
       </div>
+      <EmptyState v-if="!groupedMessages.length && !historyLoading" :image="EMPTY_STATE.chat" text="还没有消息，说点什么吧" />
       <MessageBubble
         v-for="entry in groupedMessages"
         :key="entry.message.key"
@@ -149,6 +159,10 @@ watch(
       />
     </div>
     <div class="chat-pane__compose">
+      <EmotePicker v-if="showEmotePicker" @pick="pickEmote" @close="showEmotePicker = false" />
+      <WinButton Style="SubtleButtonStyle" class="chat-pane__emote-btn" title="表情" @Click="showEmotePicker = !showEmotePicker">
+        😀
+      </WinButton>
       <textarea
         v-model="draft"
         class="chat-pane__input"
@@ -187,6 +201,7 @@ watch(
 }
 
 .chat-pane__compose {
+  position: relative;
   flex: 0 0 auto;
   display: flex;
   align-items: flex-end;
@@ -196,6 +211,13 @@ watch(
   backdrop-filter: blur(24px) saturate(160%);
   -webkit-backdrop-filter: blur(24px) saturate(160%);
   border-top: 1px solid var(--stroke-divider);
+}
+
+.chat-pane__emote-btn {
+  min-height: 40px;
+  padding: 0 0.7rem;
+  border-radius: var(--radius-md);
+  font-size: 1.1rem;
 }
 
 .chat-pane__input {
