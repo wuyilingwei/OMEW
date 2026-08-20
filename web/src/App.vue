@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import AdminSettings from './components/AdminSettings.vue'
 import AuthGate from './components/AuthGate.vue'
 import AuthModal from './components/AuthModal.vue'
 import ColumnResizer from './components/ColumnResizer.vue'
@@ -10,6 +9,7 @@ import MobileNavBar from './components/MobileNavBar.vue'
 import NodeRail from './components/NodeRail.vue'
 import PostModal from './components/PostModal.vue'
 import RightColumn from './components/RightColumn.vue'
+import ServerAdminPanel from './components/ServerAdminPanel.vue'
 import StrongholdOnboarding from './components/StrongholdOnboarding.vue'
 import StrongholdPanel from './components/StrongholdPanel.vue'
 import { useAuth } from './composables/useAuth'
@@ -20,8 +20,11 @@ import { useShellView } from './composables/useShellView'
 import { useStronghold } from './composables/useStronghold'
 
 const auth = useAuth()
-const view = ref<'app' | 'admin' | 'stronghold-panel'>('app')
-const strongholdPanelTab = ref<'members' | 'settings'>('members')
+// 'server-admin' (ServerAdminPanel) and 'stronghold-panel' (StrongholdPanel)
+// are two independent full-screen overlays with separate entry points (task
+// 039 split) - never share navigation state beyond this top-level view key.
+const view = ref<'app' | 'server-admin' | 'stronghold-panel'>('app')
+const strongholdPanelTab = ref<'members' | 'groups' | 'settings'>('members')
 const { activeView } = useShellView()
 const { config: instanceConfig } = useInstanceConfig()
 const { nodes, loading: strongholdsLoading } = useStronghold()
@@ -34,7 +37,7 @@ useDocumentTitle()
 // directly in its read-only guest state (useStronghold's isGuestMode).
 const showAuthGate = computed(() => !auth.isAuthenticated.value && !instanceConfig.value?.allow_guest_browsing)
 
-function openStrongholdPanel(tab: 'members' | 'settings') {
+function openStrongholdPanel(tab: 'members' | 'groups' | 'settings') {
   strongholdPanelTab.value = tab
   view.value = 'stronghold-panel'
 }
@@ -54,7 +57,7 @@ watch(auth.isAuthenticated, (authenticated) => {
 
     <StrongholdOnboarding v-else-if="auth.isAuthenticated.value && !hasStrongholds" />
 
-    <AdminSettings v-else-if="view === 'admin'" @close="view = 'app'" />
+    <ServerAdminPanel v-else-if="view === 'server-admin'" @close="view = 'app'" />
 
     <StrongholdPanel
       v-else-if="view === 'stronghold-panel'"
@@ -74,7 +77,7 @@ watch(auth.isAuthenticated, (authenticated) => {
           :default-percent="RIGHT_WIDTH_DEFAULT"
           invert
         />
-        <RightColumn @open-admin-settings="view = 'admin'" @open-panel="openStrongholdPanel" />
+        <RightColumn @open-server-admin="view = 'server-admin'" @open-panel="openStrongholdPanel" />
       </div>
       <MobileNavBar />
       <PostModal />

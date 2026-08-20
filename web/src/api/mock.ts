@@ -6,6 +6,7 @@ import { ApiRequestError } from './errors'
 import type { RoomSocketHandlers, RoomTransport } from './roomSocket'
 import type {
   AdminInstanceConfig,
+  AdminUsersPage,
   AuthResponse,
   AuthUser,
   BanEntry,
@@ -15,10 +16,14 @@ import type {
   EditRetractResult,
   Emote,
   EmotePack,
+  Group,
+  GroupCreatePayload,
+  GroupPatch,
   InviteCode,
   ItemBody,
   LoginPayload,
   MediaUploadResult,
+  MemberGroupRef,
   MemberPage,
   MemberPatch,
   MemberTab,
@@ -31,6 +36,7 @@ import type {
   RoomSummary,
   RoomTokenResponse,
   RoomType,
+  ServerRole,
   StorageUsage,
   StrongholdApplication,
   StrongholdApplicationState,
@@ -44,16 +50,22 @@ interface MockUser extends AuthUser {
   password: string
   ownership_pubkey: string
   ownership_ciphertext: string
+  created_at: number
 }
 
-let config: AdminInstanceConfig = {
+// task 035: real instance policy is env-config, read-only through the API -
+// this fixed object stands in for that env snapshot. stronghold_creation_policy
+// is seeded 'application' (not 'open') specifically so the read-only admin
+// panel's pending-applications section has something to show during a mock
+// visual check.
+const config: AdminInstanceConfig = {
   allow_root: true,
   root_requirements: ['email'],
   trusted_identity_servers: ['*'],
   federation_peers: [],
   max_file_bytes: 8 * 1024 * 1024,
   user_storage_quota_bytes: 100 * 1024 * 1024,
-  stronghold_creation_policy: 'open',
+  stronghold_creation_policy: 'application',
   stronghold_creators: [],
   allow_guest_browsing: true,
 }
@@ -71,23 +83,55 @@ const emotePacks: EmotePack[] = [
 
 const mediaStore = new Map<string, MediaUploadResult>()
 const storageUsage = { used: 0 }
-const strongholdApplications: StrongholdApplication[] = []
+// seeded pending entry so the admin panel's applications review section
+// (still a live data operation under the read-only policy, task 039) has
+// something to approve/reject during a mock visual check.
+const strongholdApplications: StrongholdApplication[] = [
+  {
+    id: 'app-seed-1',
+    actor: actorFor('newcomer'),
+    name: '同好会驿站',
+    description: '面向同好交流的小型据点，日常闲聊为主。',
+    visibility: 'public',
+    state: 'pending',
+    created_at: Date.now() - 3600_000,
+    decided_by: null,
+    decided_at: null,
+  },
+]
 
 function actorFor(username: string): string {
   return `@${username}:local`
 }
 
 // seeded so the admin view has something to log into during dev/visual checks
+// - 'admin' is the server_owner (bootstrap account, m0-protocol §7.10), 'mod2'
+// is a plain server_admin so the owner-only appointment UI (task 039) has a
+// second row to demote during a visual check.
 const users: MockUser[] = [
   {
     actor: actorFor('admin'),
     username: 'admin',
     password: 'admin123',
     is_admin: true,
+    server_role: 'owner',
     email: 'admin@example.com',
     email_verified: true,
     ownership_pubkey: 'mock-seed-pubkey',
     ownership_ciphertext: 'mock-seed-ciphertext',
+    created_at: Date.now() - 30 * 86_400_000,
+  },
+  {
+    actor: actorFor('mod2'),
+    username: 'mod2',
+    password: 'mod2pass1',
+    is_admin: true,
+    server_role: 'admin',
+    email: null,
+    email_verified: false,
+    ownership_pubkey: 'mock-seed-pubkey',
+    ownership_ciphertext: 'mock-seed-ciphertext',
+    created_at: Date.now() - 12 * 86_400_000,
   },
 ]
 
@@ -119,6 +163,15 @@ function requireAdmin(token: string): MockUser {
   const actor = sessions.get(token)
   const user = users.find((candidate) => candidate.actor === actor)
   if (!user?.is_admin) throw new ApiRequestError('AUTH_FAILED', 403)
+  return user
+}
+
+// server_owner-only gate (task 035/039), mirrors server's requireServerRole(min="owner").
+function requireOwner(token: string): MockUser {
+  const actor = sessions.get(token)
+  if (!actor) throw new ApiRequestError('AUTH_REQUIRED', 401)
+  const user = users.find((candidate) => candidate.actor === actor)
+  if (!user || user.server_role !== 'owner') throw new ApiRequestError('ADMIN_REQUIRED', 403)
   return user
 }
 
@@ -169,6 +222,24 @@ interface MockStrongholdState {
 const strongholds = new Map<string, MockStrongholdState>()
 const strongholdMembers = new Map<string, StrongholdMember[]>()
 const strongholdBans = new Map<string, BanEntry[]>()
+
+// task 037/039: per-stronghold custom groups, and each member's group
+// membership as a set of group ids - mirrors the server's `groups` /
+// `member_groups` tables closely enough for a dev/visual check.
+const strongholdGroups = new Map<string, Group[]>()
+const memberGroupIds = new Map<string, Map<string, Set<string>>>() // nodeId -> actor -> group ids
+
+function groupsFor(nodeId: string): Group[] {
+  return strongholdGroups.get(nodeId) ?? []
+}
+
+function memberGroupsFor(nodeId: string, actor: string): MemberGroupRef[] {
+  const ids = memberGroupIds.get(nodeId)?.get(actor)
+  if (!ids || ids.size === 0) return []
+  return groupsFor(nodeId)
+    .filter((g) => ids.has(g.id))
+    .map((g) => ({ id: g.id, name: g.name, color: g.color }))
+}
 
 function daysAgo(days: number): string {
   return new Date(Date.now() - days * 86_400_000).toISOString()
@@ -253,6 +324,31 @@ function seedDemoStronghold(): void {
     ]),
   })
 
+  // task 037/039: two demo groups + one assignment, so the groups tab and a
+  // member badge both have something to show during a mock visual check.
+  const testerGroup: Group = {
+    id: 'grp-tester',
+    name: '内测成员',
+    color: '#4b9dd7',
+    position: 0,
+    perm_speak: 0,
+    perm_post: 1,
+    perm_reply: 0,
+    is_moderator: false,
+  }
+  const quietedGroup: Group = {
+    id: 'grp-quieted',
+    name: '禁言观察',
+    color: '#af5d3e',
+    position: 1,
+    perm_speak: -1,
+    perm_post: -1,
+    perm_reply: -1,
+    is_moderator: false,
+  }
+  strongholdGroups.set(id, [testerGroup, quietedGroup])
+  memberGroupIds.set(id, new Map([[actorFor('aki'), new Set([testerGroup.id])]]))
+
   strongholdMembers.set(id, [
     {
       actor: actorFor('admin'),
@@ -264,6 +360,7 @@ function seedDemoStronghold(): void {
       deny_comment: false,
       joined_at: daysAgo(30),
       is_guest: false,
+      groups: [],
     },
     {
       actor: actorFor('rin'),
@@ -275,6 +372,7 @@ function seedDemoStronghold(): void {
       deny_comment: false,
       joined_at: daysAgo(20),
       is_guest: false,
+      groups: [],
     },
     {
       actor: actorFor('aki'),
@@ -286,6 +384,7 @@ function seedDemoStronghold(): void {
       deny_comment: false,
       joined_at: daysAgo(10),
       is_guest: false,
+      groups: memberGroupsFor(id, actorFor('aki')),
     },
   ])
   strongholdBans.set(id, [])
@@ -468,10 +567,12 @@ export const mockApi = {
       username: payload.username,
       password: payload.password,
       is_admin: false,
+      server_role: 'user',
       email: payload.email ?? null,
       email_verified: false,
       ownership_pubkey: payload.ownership_pubkey,
       ownership_ciphertext: payload.ownership_ciphertext,
+      created_at: Date.now(),
     }
     users.push(user)
     const token = makeToken()
@@ -492,10 +593,11 @@ export const mockApi = {
     return delay({ ...config })
   },
 
-  async patchAdminConfig(token: string, patch: Partial<AdminInstanceConfig>) {
+  // task 035: policy is env-config now - PATCH always 409s, same as the real
+  // server (nothing in the UI calls this anymore; kept for contract fidelity).
+  async patchAdminConfig(token: string, _patch: Partial<AdminInstanceConfig>) {
     requireAdmin(token)
-    config = { ...config, ...patch }
-    return delay({ ...config })
+    throw new ApiRequestError('POLICY_IS_ENV', 409)
   },
 
   async listInviteCodes(token: string) {
@@ -577,9 +679,12 @@ export const mockApi = {
         deny_comment: false,
         joined_at: new Date().toISOString(),
         is_guest: false,
+        groups: [],
       },
     ])
     strongholdBans.set(id, [])
+    strongholdGroups.set(id, [])
+    memberGroupIds.set(id, new Map())
     return delay(toStrongholdConfig(state))
   },
 
@@ -599,6 +704,7 @@ export const mockApi = {
       deny_comment: false,
       joined_at: new Date().toISOString(),
       is_guest: false,
+      groups: [],
     }
     strongholdMembers.get(nodeId)?.push(member)
     return delay(member)
@@ -733,6 +839,7 @@ export const mockApi = {
           deny_comment: true,
           joined_at: ban.banned_at,
           is_guest: false,
+          groups: memberGroupsFor(nodeId, ban.actor),
         })),
         next_cursor: null,
       })
@@ -843,6 +950,50 @@ export const mockApi = {
     return delay(emotePacks.map((pack) => ({ ...pack, emotes: [...pack.emotes] })))
   },
 
+  // ---- instance emote pack administration (018 admin endpoints, task 039 UI) ---
+
+  async createEmotePack(token: string, name: string): Promise<EmotePack> {
+    requireAdmin(token)
+    if (!name || name.length > 32 || name.includes(':')) throw new ApiRequestError('PACK_NAME_INVALID', 400)
+    if (emotePacks.some((p) => p.name === name)) throw new ApiRequestError('PACK_NAME_TAKEN', 409)
+    const pack: EmotePack = { id: `mock-pack-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, name, emotes: [] }
+    emotePacks.push(pack)
+    return delay(pack, 120)
+  },
+
+  async deleteEmotePack(token: string, packId: string): Promise<void> {
+    requireAdmin(token)
+    const idx = emotePacks.findIndex((p) => p.id === packId)
+    if (idx < 0) throw new ApiRequestError('NOT_FOUND', 404)
+    emotePacks.splice(idx, 1)
+    return delay(undefined, 120)
+  },
+
+  async createEmote(token: string, packId: string, name: string, mediaId: string): Promise<Emote> {
+    requireAdmin(token)
+    const pack = emotePacks.find((p) => p.id === packId)
+    if (!pack) throw new ApiRequestError('NOT_FOUND', 404)
+    if (!name || name.length > 32 || name.includes(':')) throw new ApiRequestError('EMOTE_NAME_INVALID', 400)
+    if (pack.emotes.some((e) => e.name === name)) throw new ApiRequestError('EMOTE_NAME_TAKEN', 409)
+    const media = mediaStore.get(mediaId)
+    if (!media) throw new ApiRequestError('MEDIA_NOT_FOUND', 400)
+    const emote: Emote = { id: `mock-emote-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, name, media_id: mediaId, url: media.url }
+    pack.emotes.push(emote)
+    return delay(emote, 120)
+  },
+
+  async deleteEmote(token: string, emoteId: string): Promise<void> {
+    requireAdmin(token)
+    for (const pack of emotePacks) {
+      const idx = pack.emotes.findIndex((e) => e.id === emoteId)
+      if (idx >= 0) {
+        pack.emotes.splice(idx, 1)
+        return delay(undefined, 120)
+      }
+    }
+    throw new ApiRequestError('NOT_FOUND', 404)
+  },
+
   async uploadMedia(token: string, file: File | Blob, onProgress?: (percent: number) => void): Promise<MediaUploadResult> {
     requireUser(token)
     const maxFile = config.max_file_bytes
@@ -916,10 +1067,129 @@ export const mockApi = {
           deny_comment: false,
           joined_at: new Date().toISOString(),
           is_guest: false,
+          groups: [],
         },
       ])
       strongholdBans.set(nodeId, [])
+      strongholdGroups.set(nodeId, [])
+      memberGroupIds.set(nodeId, new Map())
     }
     return delay({ id: application.id, state: application.state })
+  },
+
+  // ---- custom groups (task 037/039) --------------------------------------------
+
+  async getGroups(token: string, nodeId: string): Promise<Group[]> {
+    requireManager(token, nodeId)
+    return delay([...groupsFor(nodeId)])
+  },
+
+  async createGroup(token: string, nodeId: string, payload: GroupCreatePayload): Promise<Group> {
+    requireManager(token, nodeId)
+    if (!payload.name || payload.name.length > 32) throw new ApiRequestError('GROUP_NAME_INVALID', 400)
+    const list = strongholdGroups.get(nodeId) ?? []
+    const position = list.length ? Math.max(...list.map((g) => g.position)) + 1 : 0
+    const group: Group = {
+      id: `grp-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+      name: payload.name,
+      color: payload.color ?? null,
+      position,
+      perm_speak: payload.perm_speak ?? 0,
+      perm_post: payload.perm_post ?? 0,
+      perm_reply: payload.perm_reply ?? 0,
+      is_moderator: payload.is_moderator ?? false,
+    }
+    strongholdGroups.set(nodeId, [...list, group])
+    return delay(group, 120)
+  },
+
+  async updateGroup(token: string, nodeId: string, groupId: string, patch: GroupPatch): Promise<Group> {
+    requireManager(token, nodeId)
+    if (patch.name !== undefined && (!patch.name || patch.name.length > 32)) throw new ApiRequestError('GROUP_NAME_INVALID', 400)
+    const list = strongholdGroups.get(nodeId) ?? []
+    const idx = list.findIndex((g) => g.id === groupId)
+    if (idx < 0) throw new ApiRequestError('NOT_FOUND', 404)
+    const updated = { ...list[idx]!, ...patch }
+    const next = [...list]
+    next[idx] = updated
+    strongholdGroups.set(nodeId, next)
+    return delay(updated, 120)
+  },
+
+  async deleteGroup(token: string, nodeId: string, groupId: string): Promise<void> {
+    requireManager(token, nodeId)
+    const list = strongholdGroups.get(nodeId) ?? []
+    if (!list.some((g) => g.id === groupId)) throw new ApiRequestError('NOT_FOUND', 404)
+    strongholdGroups.set(
+      nodeId,
+      list.filter((g) => g.id !== groupId),
+    )
+    for (const assigned of memberGroupIds.get(nodeId)?.values() ?? []) assigned.delete(groupId)
+    return delay(undefined, 120)
+  },
+
+  async reorderGroups(token: string, nodeId: string, positions: { id: string; position: number }[]): Promise<Group[]> {
+    requireManager(token, nodeId)
+    const list = strongholdGroups.get(nodeId) ?? []
+    const byId = new Map(positions.map((p) => [p.id, p.position]))
+    const next = list.map((g) => (byId.has(g.id) ? { ...g, position: byId.get(g.id)! } : g)).sort((a, b) => a.position - b.position)
+    strongholdGroups.set(nodeId, next)
+    return delay([...next])
+  },
+
+  async addMemberToGroup(token: string, nodeId: string, actor: string, groupId: string): Promise<void> {
+    requireManager(token, nodeId)
+    const target = findMember(nodeId, actor)
+    if (!target) throw new ApiRequestError('NOT_FOUND', 404)
+    if (target.role === 'owner') throw new ApiRequestError('FORBIDDEN', 403)
+    if (!groupsFor(nodeId).some((g) => g.id === groupId)) throw new ApiRequestError('NOT_FOUND', 404)
+    let byActor = memberGroupIds.get(nodeId)
+    if (!byActor) {
+      byActor = new Map()
+      memberGroupIds.set(nodeId, byActor)
+    }
+    let ids = byActor.get(actor)
+    if (!ids) {
+      ids = new Set()
+      byActor.set(actor, ids)
+    }
+    ids.add(groupId)
+    target.groups = memberGroupsFor(nodeId, actor)
+    return delay(undefined, 80)
+  },
+
+  async removeMemberFromGroup(token: string, nodeId: string, actor: string, groupId: string): Promise<void> {
+    requireManager(token, nodeId)
+    memberGroupIds.get(nodeId)?.get(actor)?.delete(groupId)
+    const target = findMember(nodeId, actor)
+    if (target) target.groups = memberGroupsFor(nodeId, actor)
+    return delay(undefined, 80)
+  },
+
+  // ---- server-level role appointment (task 035/039, server_owner only) --------
+
+  async getAdminUsers(token: string, after?: string): Promise<AdminUsersPage> {
+    requireOwner(token)
+    const sorted = [...users].sort((a, b) => a.username.localeCompare(b.username))
+    const startIndex = after ? sorted.findIndex((u) => u.username === after) + 1 : 0
+    const page = sorted.slice(startIndex, startIndex + 50)
+    return delay({
+      users: page.map((u) => ({ localpart: u.username, server_role: u.server_role, created_at: u.created_at })),
+      next_cursor: sorted.length > startIndex + 50 ? page[page.length - 1]!.username : null,
+    })
+  },
+
+  async patchAdminUserRole(
+    token: string,
+    localpart: string,
+    serverRole: Extract<ServerRole, 'admin' | 'user'>,
+  ): Promise<{ localpart: string; server_role: ServerRole }> {
+    const owner = requireOwner(token)
+    if (localpart === owner.username) throw new ApiRequestError('ROLE_INVALID', 400)
+    const target = users.find((u) => u.username === localpart)
+    if (!target || target.server_role === 'owner') throw new ApiRequestError('NOT_FOUND', 404)
+    target.server_role = serverRole
+    target.is_admin = serverRole === 'admin'
+    return delay({ localpart, server_role: serverRole }, 120)
   },
 }
