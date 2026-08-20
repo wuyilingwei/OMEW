@@ -32,7 +32,7 @@ const modeLabel: Record<string, string> = {
 
 // m0-protocol §7.10: a server owner/admin manages every stronghold with
 // owner-equivalent permission even without a membership row - same overlay
-// StrongholdPanel applies to its own canManage.
+// StrongholdAdminModal applies to its own canManage.
 const canManage = computed(() => myRole.value === 'owner' || myRole.value === 'mod' || auth.isAdmin.value)
 
 const showChangePassword = ref(false)

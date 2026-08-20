@@ -104,6 +104,10 @@ function actorFor(username: string): string {
   return `@${username}:local`
 }
 
+function localpartOf(actor: string): string {
+  return actor.replace(/^@/, '').split(':')[0] ?? actor
+}
+
 // seeded so the admin view has something to log into during dev/visual checks
 // - 'admin' is the server_owner (bootstrap account, m0-protocol §7.10), 'mod2'
 // is a plain server_admin so the owner-only appointment UI (task 039) has a
@@ -223,18 +227,19 @@ const strongholds = new Map<string, MockStrongholdState>()
 const strongholdMembers = new Map<string, StrongholdMember[]>()
 const strongholdBans = new Map<string, BanEntry[]>()
 
-// task 048: server-wide user groups, and each local user's group membership
+// task 048: server-level user groups, and each local user's group membership
 // as a set of group ids - mirrors the server's `server_groups` /
-// `user_server_groups` tables closely enough for a dev/visual check.
+// `user_server_groups` D1 tables closely enough for a dev/visual check.
+// Keyed by bare localpart (design point 1: only local users are assignable).
 const serverGroups: ServerGroup[] = []
 const userGroupIds = new Map<string, Set<string>>() // localpart -> group ids
 
 function memberGroupsFor(localpart: string): MemberGroupRef[] {
   const ids = userGroupIds.get(localpart)
   if (!ids || ids.size === 0) return []
-  return [...serverGroups]
-    .sort((a, b) => a.position - b.position)
+  return serverGroups
     .filter((g) => ids.has(g.id))
+    .sort((a, b) => a.position - b.position)
     .map((g) => ({ id: g.id, name: g.name, color: g.color }))
 }
 
@@ -321,32 +326,15 @@ function seedDemoStronghold(): void {
     ]),
   })
 
-  // task 048: two demo server groups + one assignment, so the server-groups
-  // admin tab and a member badge both have something to show during a mock
-  // visual check.
-  if (serverGroups.length === 0) {
-    const testerGroup: ServerGroup = {
-      id: 'grp-tester',
-      name: '内测成员',
-      color: '#4b9dd7',
-      position: 0,
-      allow_speak: 0,
-      allow_post: 1,
-      allow_reply: 0,
-      is_moderator: false,
-    }
-    const quietedGroup: ServerGroup = {
-      id: 'grp-quieted',
-      name: '禁言观察',
-      color: '#af5d3e',
-      position: 1,
-      allow_speak: -1,
-      allow_post: -1,
-      allow_reply: -1,
-      is_moderator: false,
-    }
-    serverGroups.push(testerGroup, quietedGroup)
-    userGroupIds.set('aki', new Set([testerGroup.id]))
+  // task 048: two demo server groups + one assignment, so the server admin
+  // panel's groups tab and a member badge both have something to show
+  // during a mock visual check.
+  if (!serverGroups.length) {
+    serverGroups.push(
+      { id: 'grp-tester', name: '内测成员', color: '#4b9dd7', position: 0, allow_speak: 0, allow_post: 1, allow_reply: 0, is_moderator: false },
+      { id: 'grp-quieted', name: '禁言观察', color: '#af5d3e', position: 1, allow_speak: -1, allow_post: -1, allow_reply: -1, is_moderator: false },
+    )
+    userGroupIds.set('Aki', new Set(['grp-tester']))
   }
 
   strongholdMembers.set(id, [
@@ -360,6 +348,7 @@ function seedDemoStronghold(): void {
       deny_comment: false,
       joined_at: daysAgo(30),
       is_guest: false,
+      groups: [],
     },
     {
       actor: actorFor('rin'),
@@ -371,6 +360,7 @@ function seedDemoStronghold(): void {
       deny_comment: false,
       joined_at: daysAgo(20),
       is_guest: false,
+      groups: [],
     },
     {
       actor: actorFor('aki'),
@@ -382,6 +372,7 @@ function seedDemoStronghold(): void {
       deny_comment: false,
       joined_at: daysAgo(10),
       is_guest: false,
+      groups: memberGroupsFor('Aki'),
     },
   ])
   strongholdBans.set(id, [])
@@ -676,6 +667,7 @@ export const mockApi = {
         deny_comment: false,
         joined_at: new Date().toISOString(),
         is_guest: false,
+        groups: [],
       },
     ])
     strongholdBans.set(id, [])
@@ -698,6 +690,7 @@ export const mockApi = {
       deny_comment: false,
       joined_at: new Date().toISOString(),
       is_guest: false,
+      groups: [],
     }
     strongholdMembers.get(nodeId)?.push(member)
     return delay(member)
@@ -832,6 +825,7 @@ export const mockApi = {
           deny_comment: true,
           joined_at: ban.banned_at,
           is_guest: false,
+          groups: memberGroupsFor(localpartOf(ban.actor)),
         })),
         next_cursor: null,
       })
@@ -841,7 +835,13 @@ export const mockApi = {
       tab === 'restricted'
         ? all.filter((member) => member.deny_discussion || member.deny_idea || member.deny_comment)
         : all
-    return delay({ members: [...filtered], next_cursor: null })
+    // groups are server-level (task 048) - recomputed at read time rather
+    // than mutated in place, since assignment now happens through a
+    // separate D1-backed surface with no per-stronghold storage.
+    return delay({
+      members: filtered.map((member) => ({ ...member, groups: member.is_guest ? [] : memberGroupsFor(member.username) })),
+      next_cursor: null,
+    })
   },
 
   async patchMember(token: string, nodeId: string, actor: string, patch: MemberPatch): Promise<StrongholdMember> {
@@ -1059,6 +1059,7 @@ export const mockApi = {
           deny_comment: false,
           joined_at: new Date().toISOString(),
           is_guest: false,
+          groups: [],
         },
       ])
       strongholdBans.set(nodeId, [])
@@ -1066,7 +1067,7 @@ export const mockApi = {
     return delay({ id: application.id, state: application.state })
   },
 
-  // ---- server-level user groups (task 048, m0-protocol §7.10a) -----------------
+  // ---- server-level user groups (task 048, server_role admin/owner gate) ------
 
   async getServerGroups(token: string): Promise<ServerGroup[]> {
     requireAdmin(token)
@@ -1076,7 +1077,8 @@ export const mockApi = {
   async createServerGroup(token: string, payload: ServerGroupCreatePayload): Promise<ServerGroup> {
     requireAdmin(token)
     if (!payload.name || payload.name.length > 32) throw new ApiRequestError('GROUP_NAME_INVALID', 400)
-    const position = serverGroups.length ? Math.max(...serverGroups.map((g) => g.position)) + 1 : 0
+    if (payload.color != null && !/^#[0-9a-fA-F]{6}$/.test(payload.color)) throw new ApiRequestError('GROUP_COLOR_INVALID', 400)
+    const position = payload.position ?? (serverGroups.length ? Math.max(...serverGroups.map((g) => g.position)) + 1 : 0)
     const group: ServerGroup = {
       id: `grp-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
       name: payload.name,
@@ -1094,6 +1096,9 @@ export const mockApi = {
   async updateServerGroup(token: string, groupId: string, patch: ServerGroupPatch): Promise<ServerGroup> {
     requireAdmin(token)
     if (patch.name !== undefined && (!patch.name || patch.name.length > 32)) throw new ApiRequestError('GROUP_NAME_INVALID', 400)
+    if (patch.color !== undefined && patch.color != null && !/^#[0-9a-fA-F]{6}$/.test(patch.color)) {
+      throw new ApiRequestError('GROUP_COLOR_INVALID', 400)
+    }
     const idx = serverGroups.findIndex((g) => g.id === groupId)
     if (idx < 0) throw new ApiRequestError('NOT_FOUND', 404)
     const updated = { ...serverGroups[idx]!, ...patch }
@@ -1121,10 +1126,10 @@ export const mockApi = {
     return delay([...serverGroups])
   },
 
-  async addUserToServerGroup(token: string, groupId: string, localpart: string): Promise<void> {
+  async assignServerGroupMember(token: string, groupId: string, localpart: string): Promise<void> {
     requireAdmin(token)
-    if (!users.some((u) => u.username === localpart)) throw new ApiRequestError('NOT_FOUND', 404)
     if (!serverGroups.some((g) => g.id === groupId)) throw new ApiRequestError('NOT_FOUND', 404)
+    if (!users.some((u) => u.username === localpart)) throw new ApiRequestError('NOT_FOUND', 404)
     let ids = userGroupIds.get(localpart)
     if (!ids) {
       ids = new Set()
@@ -1134,17 +1139,20 @@ export const mockApi = {
     return delay(undefined, 80)
   },
 
-  async removeUserFromServerGroup(token: string, groupId: string, localpart: string): Promise<void> {
+  async unassignServerGroupMember(token: string, groupId: string, localpart: string): Promise<void> {
     requireAdmin(token)
     userGroupIds.get(localpart)?.delete(groupId)
     return delay(undefined, 80)
   },
 
-  // Batch read-only actor -> groups lookup (guest-readable), keyed by localpart.
-  async getMemberGroups(_token: string | null, localparts: string[]): Promise<Record<string, MemberGroupRef[]>> {
+  // guest-readable per instance policy (task 048 batch display endpoint) -
+  // keyed by localpart, every requested entry present even if empty.
+  async getGroupsForMembers(token: string | null, localparts: string[]): Promise<Record<string, MemberGroupRef[]>> {
+    if (!config.allow_guest_browsing) requireUser(token ?? '')
+    if (!localparts.length || localparts.length > 100) throw new ApiRequestError('PAYLOAD_INVALID', 400)
     const result: Record<string, MemberGroupRef[]> = {}
     for (const localpart of new Set(localparts)) result[localpart] = memberGroupsFor(localpart)
-    return delay(result, 80)
+    return delay(result, 60)
   },
 
   // ---- server-level role appointment (task 035/039, server_owner only) --------

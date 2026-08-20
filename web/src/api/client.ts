@@ -87,6 +87,9 @@ interface WireMemberEntry {
   home_domain?: string
 }
 
+// groups is populated separately (task 048: server-level groups are no
+// longer embedded by the stronghold member-list route) - see
+// getStrongholdMembers's batch fetch against /api/server-groups/members.
 function toStrongholdMember(entry: WireMemberEntry): StrongholdMember {
   return {
     actor: entry.actor,
@@ -97,7 +100,19 @@ function toStrongholdMember(entry: WireMemberEntry): StrongholdMember {
     joined_at: new Date(entry.joined_at).toISOString(),
     is_guest: entry.is_guest,
     home_domain: entry.home_domain,
+    groups: [],
   }
+}
+
+// batch actor(localpart)->groups lookup (GET /api/server-groups/members),
+// capped at 100 entries per the contract - callers dedupe/chunk if needed,
+// though every caller in this codebase stays well under that cap.
+function fetchGroupsForLocalparts(token: string | null, localparts: string[]): Promise<Record<string, MemberGroupRef[]>> {
+  if (!localparts.length) return Promise.resolve({})
+  const qs = encodeURIComponent(localparts.join(','))
+  return request<{ groups: Record<string, MemberGroupRef[]> }>(`/api/server-groups/members?localparts=${qs}`, {
+    headers: optionalAuthHeaders(token),
+  }).then((r) => r.groups)
 }
 
 // a 401 on an authenticated request means the stored session is dead
@@ -291,11 +306,17 @@ export const realApi = {
 
   // ---- members / bans / ownership ----------------------------------------------
 
-  getStrongholdMembers: (token: string, nodeId: string, tab: MemberTab, after?: string) =>
-    request<{ entries: WireMemberEntry[]; next_cursor: string | null }>(
+  getStrongholdMembers: async (token: string, nodeId: string, tab: MemberTab, after?: string): Promise<MemberPage> => {
+    const r = await request<{ entries: WireMemberEntry[]; next_cursor: string | null }>(
       `/api/stronghold/${nodeId}/members?tab=${tab}${after ? `&after=${encodeURIComponent(after)}` : ''}`,
       { headers: authHeaders(token) },
-    ).then((r): MemberPage => ({ members: r.entries.map(toStrongholdMember), next_cursor: r.next_cursor })),
+    )
+    const members = r.entries.map(toStrongholdMember)
+    const localparts = [...new Set(members.map((m) => m.username))]
+    const groups = await fetchGroupsForLocalparts(token, localparts)
+    for (const member of members) member.groups = groups[member.username] ?? []
+    return { members, next_cursor: r.next_cursor }
+  },
 
   patchMember: (token: string, nodeId: string, actor: string, patch: MemberPatch) =>
     request<WireMemberEntry>(`/api/stronghold/${nodeId}/members/${encodeURIComponent(actor)}`, {
@@ -335,7 +356,7 @@ export const realApi = {
       body: JSON.stringify({ to: toActor }),
     }),
 
-  // ---- server-level user groups (task 048, m0-protocol §7.10a) -----------------
+  // ---- server-level user groups (task 048, admin API) --------------------------
 
   getServerGroups: (token: string) =>
     request<{ groups: ServerGroup[] }>('/api/admin/server-groups', { headers: authHeaders(token) }).then((r) => r.groups),
@@ -367,25 +388,22 @@ export const realApi = {
       body: JSON.stringify({ positions }),
     }).then((r) => r.groups),
 
-  addUserToServerGroup: (token: string, groupId: string, localpart: string) =>
+  assignServerGroupMember: (token: string, groupId: string, localpart: string) =>
     request<void>(`/api/admin/server-groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(localpart)}`, {
       method: 'PUT',
       headers: authHeaders(token),
     }),
 
-  removeUserFromServerGroup: (token: string, groupId: string, localpart: string) =>
+  unassignServerGroupMember: (token: string, groupId: string, localpart: string) =>
     request<void>(`/api/admin/server-groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(localpart)}`, {
       method: 'DELETE',
       headers: authHeaders(token),
     }),
 
-  // Batch read-only actor -> groups lookup for member lists / message badges
-  // (guest-readable, keyed by localpart - only local users can be assigned).
-  getMemberGroups: (token: string | null, localparts: string[]) =>
-    request<{ groups: Record<string, MemberGroupRef[]> }>(
-      `/api/server-groups/members?localparts=${encodeURIComponent([...new Set(localparts)].join(','))}`,
-      { headers: optionalAuthHeaders(token) },
-    ).then((r) => r.groups),
+  // read-only batch lookup, guest-readable per instance policy (task 048) -
+  // shared by the stronghold member list (badges) and the server admin
+  // panel's member group controls.
+  getGroupsForMembers: (token: string | null, localparts: string[]) => fetchGroupsForLocalparts(token, localparts),
 
   getUser: (token: string, actor: string) =>
     request<{ actor: string; display_name: string; is_guest: boolean; home_domain?: string }>(

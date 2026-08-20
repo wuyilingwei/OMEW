@@ -7,8 +7,8 @@ import { useAuth } from '../composables/useAuth'
 import { requiredMaxLengthError } from '../utils/validate'
 import { WinButton, WinInfoBar, WinSelectorBar, WinToggleSwitch } from '../vendor/winui'
 
-// task 048: server groups are server-wide (m0-protocol §7.10a) - editor talks
-// to the admin server-groups endpoints, no stronghold context needed.
+// task 048: server-level group editor (definition only - member assignment
+// lives in ServerAdminModal's member rows, not here).
 const props = defineProps<{ open: boolean; group: ServerGroup | null }>()
 const emit = defineEmits<{ close: []; saved: [] }>()
 

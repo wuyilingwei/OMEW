@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { api, ApiRequestError } from '../api'
-import type { MemberGroupRef, PublicUser, StrongholdMember } from '../api/types'
+import type { PublicUser, StrongholdMember } from '../api/types'
 import { useAuth } from '../composables/useAuth'
 import { WinButton } from '../vendor/winui'
 import AvatarBadge from './AvatarBadge.vue'
 
-// task 048: server groups are server-wide - badges are read-only here
-// (assignment moved to ServerAdminPanel's admin-only group management).
-const props = defineProps<{ member: StrongholdMember; groups: MemberGroupRef[] }>()
+// task 048: group membership is server-level and read-only here - assignment
+// moved to ServerAdminModal's member rows, so this card just displays the
+// badges already carried on `member.groups` (populated from the batch
+// GET /api/server-groups/members lookup).
+const props = defineProps<{ member: StrongholdMember }>()
 defineEmits<{ close: [] }>()
 
 const ROLE_LABEL: Record<string, string> = { owner: '领主', mod: '管理员', member: '成员' }
@@ -35,7 +37,7 @@ onMounted(async () => {
         <WinButton Style="SubtleButtonStyle" class="member-info-card__close" @Click="$emit('close')">关闭</WinButton>
         <AvatarBadge :seed="member.username" :size="64" />
         <h2 class="member-info-card__name">{{ profile?.display_name ?? member.display_name }}</h2>
-        <p class="member-info-card__actor">@{{ member.actor }}</p>
+        <p class="member-info-card__actor">{{ member.actor }}</p>
         <p v-if="member.is_guest" class="member-info-card__guest">宾客 · 来自 {{ member.home_domain }}</p>
         <dl class="member-info-card__meta">
           <dt>角色</dt>
@@ -44,12 +46,14 @@ onMounted(async () => {
           <dd>{{ new Date(member.joined_at).toLocaleDateString() }}</dd>
         </dl>
 
-        <div v-if="groups.length" class="member-info-card__groups">
+        <div v-if="member.groups.length" class="member-info-card__groups">
           <h3 class="member-info-card__groups-title">用户组</h3>
           <ul class="member-info-card__group-list">
-            <li v-for="group in groups" :key="group.id" class="member-info-card__group-row">
-              <span class="member-info-card__group-dot" :style="{ backgroundColor: group.color ?? 'var(--ctrl-fill-tertiary)' }" />
-              {{ group.name }}
+            <li v-for="group in member.groups" :key="group.id" class="member-info-card__group-row">
+              <span class="member-info-card__group-badge">
+                <span class="member-info-card__group-dot" :style="{ backgroundColor: group.color ?? 'var(--ctrl-fill-tertiary)' }" />
+                {{ group.name }}
+              </span>
             </li>
           </ul>
         </div>
@@ -156,7 +160,7 @@ onMounted(async () => {
   gap: 0.3rem;
 }
 
-.member-info-card__group-row {
+.member-info-card__group-badge {
   display: flex;
   align-items: center;
   gap: 0.45rem;

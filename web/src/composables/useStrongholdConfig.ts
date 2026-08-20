@@ -19,7 +19,7 @@ async function loadConfig(nodeId: string) {
 }
 
 // read-only cache of the current stronghold's config - separate from
-// StrongholdPanel's own settings-form load, which needs an editable draft.
+// StrongholdAdminModal's own settings-form load, which needs an editable draft.
 // used to gate the edit/retract affordances on chat messages.
 export function useStrongholdConfig() {
   const { selectedNodeId } = useStronghold()

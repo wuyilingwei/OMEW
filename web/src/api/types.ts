@@ -105,11 +105,10 @@ export interface StrongholdConfigPatch {
   edit_window_secs?: number
 }
 
-// task 048: a user's server-group badge, as returned by the batch read-only
-// GET /api/server-groups/members lookup - deliberately thin, just enough to
-// render a badge. Member list entries no longer embed this (server groups are
-// server-wide, not per-stronghold membership rows) - the web client fetches
-// it separately, keyed by localpart.
+// task 048: a member's server-level group badge, as returned by the batch
+// read-only lookup (GET /api/server-groups/members) - deliberately thin,
+// just enough to render a badge. Read-only on the stronghold side; group
+// definition and assignment both live at the server level now.
 export interface MemberGroupRef {
   id: string
   name: string
@@ -127,14 +126,15 @@ export interface StrongholdMember {
   joined_at: string
   is_guest: boolean
   home_domain?: string
+  groups: MemberGroupRef[]
 }
 
 // tri-state permission value used by server groups: -1 deny / 0 inherit / 1 allow.
 export type GroupPermValue = -1 | 0 | 1
 
-// task 048: a server-wide user group (server's ServerGroupRow / toApiGroup,
-// m0-protocol §7.10a). position is ascending synthesis order and doubles as
-// display/sort order.
+// task 048: a server-level user group (m0-protocol §7.10a, server's
+// ServerGroup / D1 server_groups) - replaces task 037's stronghold-local
+// groups. position is ascending synthesis order and doubles as display order.
 export interface ServerGroup {
   id: string
   name: string
@@ -153,6 +153,7 @@ export interface ServerGroupCreatePayload {
   allow_post?: GroupPermValue
   allow_reply?: GroupPermValue
   is_moderator?: boolean
+  position?: number
 }
 
 export interface ServerGroupPatch {
