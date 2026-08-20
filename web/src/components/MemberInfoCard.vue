@@ -1,18 +1,25 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { api, ApiRequestError } from '../api'
-import type { PublicUser, StrongholdMember } from '../api/types'
+import type { Group, PublicUser, StrongholdMember } from '../api/types'
 import { useAuth } from '../composables/useAuth'
+import { useStronghold } from '../composables/useStronghold'
 import { WinButton } from '../vendor/winui'
 import AvatarBadge from './AvatarBadge.vue'
 
-const props = defineProps<{ member: StrongholdMember }>()
-defineEmits<{ close: [] }>()
+// canManage: whether the viewer may assign this member to custom groups
+// (task 037/039) - the caller passes its own owner/mod (+ server-admin
+// overlay) check, same gate the server enforces on the PUT/DELETE endpoints.
+const props = defineProps<{ member: StrongholdMember; canManage: boolean; groups: Group[] }>()
+const emit = defineEmits<{ close: []; 'groups-changed': [] }>()
 
 const ROLE_LABEL: Record<string, string> = { owner: '领主', mod: '管理员', member: '成员' }
 
 const auth = useAuth()
+const { selectedNodeId } = useStronghold()
 const profile = ref<PublicUser | null>(null)
+const groupActionError = ref('')
+const pendingGroupId = ref('')
 
 onMounted(async () => {
   if (!auth.token.value) return
@@ -24,6 +31,32 @@ onMounted(async () => {
     if (!(err instanceof ApiRequestError)) throw err
   }
 })
+
+// server 403s a group (un)assignment targeting an owner - UI disables ahead
+// of that round trip instead of surfacing the rejection.
+const canAssignGroups = computed(() => props.canManage && props.member.role !== 'owner')
+
+function hasGroup(groupId: string): boolean {
+  return props.member.groups.some((g) => g.id === groupId)
+}
+
+async function toggleGroup(group: Group, assign: boolean) {
+  if (!auth.token.value || !canAssignGroups.value || pendingGroupId.value) return
+  groupActionError.value = ''
+  pendingGroupId.value = group.id
+  try {
+    if (assign) {
+      await api.addMemberToGroup(auth.token.value, selectedNodeId.value, props.member.actor, group.id)
+    } else {
+      await api.removeMemberFromGroup(auth.token.value, selectedNodeId.value, props.member.actor, group.id)
+    }
+    emit('groups-changed')
+  } catch (err) {
+    groupActionError.value = err instanceof ApiRequestError ? `操作失败：${err.code}` : '操作失败，请稍后重试'
+  } finally {
+    pendingGroupId.value = ''
+  }
+}
 </script>
 
 <template>
@@ -41,6 +74,27 @@ onMounted(async () => {
           <dt>加入时间</dt>
           <dd>{{ new Date(member.joined_at).toLocaleDateString() }}</dd>
         </dl>
+
+        <div v-if="canManage" class="member-info-card__groups">
+          <h3 class="member-info-card__groups-title">用户组</h3>
+          <p v-if="member.role === 'owner'" class="field__hint">领主不可分组</p>
+          <p v-else-if="!groups.length" class="field__hint">据点尚未创建用户组</p>
+          <ul v-else class="member-info-card__group-list">
+            <li v-for="group in groups" :key="group.id" class="member-info-card__group-row">
+              <label class="member-info-card__group-checkbox">
+                <input
+                  type="checkbox"
+                  :checked="hasGroup(group.id)"
+                  :disabled="!canAssignGroups || pendingGroupId === group.id"
+                  @change="toggleGroup(group, ($event.target as HTMLInputElement).checked)"
+                />
+                <span class="member-info-card__group-dot" :style="{ backgroundColor: group.color ?? 'var(--ctrl-fill-tertiary)' }" />
+                {{ group.name }}
+              </label>
+            </li>
+          </ul>
+          <p v-if="groupActionError" class="field__error">{{ groupActionError }}</p>
+        </div>
       </div>
     </div>
   </Teleport>
@@ -119,5 +173,44 @@ onMounted(async () => {
   margin: 0;
   color: var(--text-primary);
   text-align: right;
+}
+
+.member-info-card__groups {
+  width: 100%;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--stroke-divider);
+}
+
+.member-info-card__groups-title {
+  margin: 0 0 0.4rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.member-info-card__group-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.member-info-card__group-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.82rem;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.member-info-card__group-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: 0 0 auto;
 }
 </style>

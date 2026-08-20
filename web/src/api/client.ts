@@ -1,17 +1,23 @@
 import { ApiRequestError } from './errors'
 import type {
   AdminInstanceConfig,
+  AdminUsersPage,
   AuthResponse,
   BanEntry,
   CreateRoomPayload,
   CreateStrongholdPayload,
   DirectoryEntry,
   EditRetractResult,
+  Emote,
   EmotePack,
+  Group,
+  GroupCreatePayload,
+  GroupPatch,
   InstanceConfig,
   InviteCode,
   LoginPayload,
   MediaUploadResult,
+  MemberGroupRef,
   MemberPage,
   MemberPatch,
   MemberTab,
@@ -21,6 +27,7 @@ import type {
   RegisterPayload,
   RoomSummary,
   RoomTokenResponse,
+  ServerRole,
   StorageUsage,
   StrongholdApplication,
   StrongholdApplicationState,
@@ -76,6 +83,7 @@ interface WireMemberEntry {
   joined_at: number
   is_guest: boolean
   home_domain?: string
+  groups: MemberGroupRef[]
 }
 
 function toStrongholdMember(entry: WireMemberEntry): StrongholdMember {
@@ -88,6 +96,7 @@ function toStrongholdMember(entry: WireMemberEntry): StrongholdMember {
     joined_at: new Date(entry.joined_at).toISOString(),
     is_guest: entry.is_guest,
     home_domain: entry.home_domain,
+    groups: entry.groups,
   }
 }
 
@@ -152,6 +161,20 @@ export const realApi = {
       method: 'PATCH',
       headers: authHeaders(token),
       body: JSON.stringify(patch),
+    }),
+
+  // ---- server-level role appointment (task 035/039, server_owner only) --------
+
+  getAdminUsers: (token: string, after?: string) =>
+    request<AdminUsersPage>(`/api/admin/users${after ? `?after=${encodeURIComponent(after)}` : ''}`, {
+      headers: authHeaders(token),
+    }),
+
+  patchAdminUserRole: (token: string, localpart: string, serverRole: Extract<ServerRole, 'admin' | 'user'>) =>
+    request<{ localpart: string; server_role: ServerRole }>(`/api/admin/users/${encodeURIComponent(localpart)}`, {
+      method: 'PATCH',
+      headers: authHeaders(token),
+      body: JSON.stringify({ server_role: serverRole }),
     }),
 
   listInviteCodes: (token: string) =>
@@ -310,6 +333,50 @@ export const realApi = {
       body: JSON.stringify({ to: toActor }),
     }),
 
+  // ---- custom groups (task 037/039) --------------------------------------------
+
+  getGroups: (token: string, nodeId: string) =>
+    request<{ groups: Group[] }>(`/api/stronghold/${nodeId}/groups`, { headers: authHeaders(token) }).then((r) => r.groups),
+
+  createGroup: (token: string, nodeId: string, payload: GroupCreatePayload) =>
+    request<Group>(`/api/stronghold/${nodeId}/groups`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify(payload),
+    }),
+
+  updateGroup: (token: string, nodeId: string, groupId: string, patch: GroupPatch) =>
+    request<Group>(`/api/stronghold/${nodeId}/groups/${encodeURIComponent(groupId)}`, {
+      method: 'PATCH',
+      headers: authHeaders(token),
+      body: JSON.stringify(patch),
+    }),
+
+  deleteGroup: (token: string, nodeId: string, groupId: string) =>
+    request<void>(`/api/stronghold/${nodeId}/groups/${encodeURIComponent(groupId)}`, {
+      method: 'DELETE',
+      headers: authHeaders(token),
+    }),
+
+  reorderGroups: (token: string, nodeId: string, positions: { id: string; position: number }[]) =>
+    request<{ groups: Group[] }>(`/api/stronghold/${nodeId}/groups`, {
+      method: 'PATCH',
+      headers: authHeaders(token),
+      body: JSON.stringify({ positions }),
+    }).then((r) => r.groups),
+
+  addMemberToGroup: (token: string, nodeId: string, actor: string, groupId: string) =>
+    request<void>(`/api/stronghold/${nodeId}/members/${encodeURIComponent(actor)}/groups/${encodeURIComponent(groupId)}`, {
+      method: 'PUT',
+      headers: authHeaders(token),
+    }),
+
+  removeMemberFromGroup: (token: string, nodeId: string, actor: string, groupId: string) =>
+    request<void>(`/api/stronghold/${nodeId}/members/${encodeURIComponent(actor)}/groups/${encodeURIComponent(groupId)}`, {
+      method: 'DELETE',
+      headers: authHeaders(token),
+    }),
+
   getUser: (token: string, actor: string) =>
     request<{ actor: string; display_name: string; is_guest: boolean; home_domain?: string }>(
       `/api/users/${encodeURIComponent(actor)}`,
@@ -327,6 +394,24 @@ export const realApi = {
   // ---- emotes -----------------------------------------------------------------
 
   getEmotes: (token: string) => request<{ packs: EmotePack[] }>('/api/emotes', { headers: authHeaders(token) }).then((r) => r.packs),
+
+  // ---- instance emote pack administration (018 admin endpoints, task 039 UI) ---
+
+  createEmotePack: (token: string, name: string) =>
+    request<EmotePack>('/api/admin/emote-packs', { method: 'POST', headers: authHeaders(token), body: JSON.stringify({ name }) }),
+
+  deleteEmotePack: (token: string, packId: string) =>
+    request<void>(`/api/admin/emote-packs/${encodeURIComponent(packId)}`, { method: 'DELETE', headers: authHeaders(token) }),
+
+  createEmote: (token: string, packId: string, name: string, mediaId: string) =>
+    request<Emote>(`/api/admin/emote-packs/${encodeURIComponent(packId)}/emotes`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ name, media_id: mediaId }),
+    }),
+
+  deleteEmote: (token: string, emoteId: string) =>
+    request<void>(`/api/admin/emotes/${encodeURIComponent(emoteId)}`, { method: 'DELETE', headers: authHeaders(token) }),
 
   // ---- media / storage ----------------------------------------------------------
   // POST /api/media takes the file as a raw request body (Content-Type: the file's

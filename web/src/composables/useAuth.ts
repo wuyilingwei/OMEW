@@ -69,6 +69,9 @@ export function useAuth() {
     isAuthenticated: computed(() => !!token.value),
     sessionExpired,
     isAdmin: computed(() => !!user.value?.is_admin),
+    // server_role owner is unique/non-transferable (m0-protocol §7.10) - gates
+    // the server-member-appointment section, distinct from isAdmin (owner|admin).
+    isServerOwner: computed(() => user.value?.server_role === 'owner'),
     login,
     register,
     setSession,

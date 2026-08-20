@@ -11,7 +11,7 @@ import { WinButton, WinDropDownButton } from '../vendor/winui'
 import AvatarBadge from './AvatarBadge.vue'
 import ChangePasswordModal from './ChangePasswordModal.vue'
 
-const emit = defineEmits<{ 'open-admin-settings': []; 'open-panel': ['members' | 'settings'] }>()
+const emit = defineEmits<{ 'open-server-admin': []; 'open-panel': ['members' | 'groups' | 'settings'] }>()
 
 const { mode, cycleTheme } = useTheme()
 const auth = useAuth()
@@ -30,20 +30,23 @@ const modeLabel: Record<string, string> = {
   dark: '暗色',
 }
 
-const canManage = computed(() => myRole.value === 'owner' || myRole.value === 'mod')
+// m0-protocol §7.10: a server owner/admin manages every stronghold with
+// owner-equivalent permission even without a membership row - same overlay
+// StrongholdPanel applies to its own canManage.
+const canManage = computed(() => myRole.value === 'owner' || myRole.value === 'mod' || auth.isAdmin.value)
 
 const showChangePassword = ref(false)
 
 const userMenu = computed(() => ({
   Items: [
-    ...(auth.isAdmin.value ? [{ Text: '节点设置', Value: 'settings' }] : []),
+    ...(auth.isAdmin.value ? [{ Text: '服务器管理', Value: 'server-admin' }] : []),
     { Text: '修改密码', Value: 'change-password' },
     { Text: '登出', Value: 'logout' },
   ],
 }))
 
 function onUserMenuSelect(item: { Value: string }) {
-  if (item.Value === 'settings') emit('open-admin-settings')
+  if (item.Value === 'server-admin') emit('open-server-admin')
   else if (item.Value === 'change-password') showChangePassword.value = true
   else if (item.Value === 'logout') auth.logout()
 }
@@ -78,6 +81,14 @@ function onUserMenuSelect(item: { Value: string }) {
       <template v-if="!isGuestMode">
         <WinButton Style="DefaultButtonStyle" class="right-column__action" @Click="emit('open-panel', 'members')">
           成员列表
+        </WinButton>
+        <WinButton
+          v-if="canManage"
+          Style="DefaultButtonStyle"
+          class="right-column__action"
+          @Click="emit('open-panel', 'groups')"
+        >
+          用户组
         </WinButton>
         <WinButton
           v-if="canManage"
