@@ -340,7 +340,27 @@ export class StrongholdDO extends DurableObject<Env> {
 
   async getMember(actor: string): Promise<MemberRow | null> {
     const rows = this.ctx.storage.sql.exec<MemberRow>("SELECT * FROM member WHERE actor = ?", actor).toArray();
-    return rows[0] ?? null;
+    if (rows[0]) return rows[0];
+    return this.adoptLegacyActor(actor);
+  }
+
+  // The instance-domain migration (D1 0007) rewrote "@user:local" actors in D1
+  // but per-DO SQLite rows were out of its reach, so strongholds created before
+  // the domain was configured still key membership by the legacy actor. Lazily
+  // rewrite every table that keys on the actor the first time the new-domain
+  // actor shows up, then serve the row as if nothing happened.
+  private adoptLegacyActor(actor: string): MemberRow | null {
+    const m = /^@([^:]+):(.+)$/.exec(actor);
+    if (!m || m[2] === "local") return null;
+    const legacy = `@${m[1]}:local`;
+    const rows = this.ctx.storage.sql.exec<MemberRow>("SELECT * FROM member WHERE actor = ?", legacy).toArray();
+    if (!rows[0]) return null;
+    const sql = this.ctx.storage.sql;
+    sql.exec("UPDATE member SET actor = ? WHERE actor = ?", actor, legacy);
+    sql.exec("UPDATE member_groups SET actor = ? WHERE actor = ?", actor, legacy);
+    sql.exec("UPDATE ban SET actor = ? WHERE actor = ?", actor, legacy);
+    sql.exec("UPDATE config SET owner_actor = ? WHERE owner_actor = ?", actor, legacy);
+    return { ...rows[0], actor };
   }
 
   async listMembers(): Promise<MemberRow[]> {

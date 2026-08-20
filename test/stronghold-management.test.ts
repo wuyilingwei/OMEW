@@ -695,3 +695,15 @@ describe("HTTP edit/retract endpoints", () => {
     expect(await res.json()).toEqual({ error: "FORBIDDEN" });
   });
 });
+
+it("legacy :local member rows are lazily adopted under the configured domain", async () => {
+  const id = `legacy${Date.now()}`;
+  const stub = env.STRONGHOLD_DO.getByName(id);
+  await stub.initConfig(id, "Legacy", "public", "@relic:local");
+  const adopted = await stub.getMember("@relic:omew.test");
+  expect(adopted).not.toBeNull();
+  expect(adopted!.role).toBe("owner");
+  const direct = await stub.getMember("@relic:omew.test");
+  expect(direct!.actor).toBe("@relic:omew.test");
+  expect(await stub.getEffective("@relic:omew.test")).toMatchObject({ role: "owner", deny: 0 });
+});
