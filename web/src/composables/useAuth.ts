@@ -71,6 +71,15 @@ function logout() {
   persist()
 }
 
+// applies a local patch to the stored user (e.g. right after totp
+// activate/disable, before any server response carries the field back) and
+// persists it so it survives a reload.
+function updateUser(patch: Partial<AuthUser>) {
+  if (!user.value) return
+  user.value = { ...user.value, ...patch }
+  persist()
+}
+
 setUnauthorizedHandler(() => {
   sessionExpired.value = true
   logout()
@@ -91,6 +100,7 @@ export function useAuth() {
     loginPasskey,
     register,
     setSession,
+    updateUser,
     logout,
   }
 }

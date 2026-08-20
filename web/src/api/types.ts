@@ -40,8 +40,11 @@ export interface AuthUser {
   server_role: ServerRole
   email: string | null
   email_verified: boolean
-  // optional: present once the server projects TOTP status onto AuthUser;
-  // absent is treated as "not enabled" by every consumer in this codebase.
+  // optional: only populated locally right after this session's own
+  // totp activate/disable call (see useAuth.updateUser) - the server does
+  // not yet project TOTP status onto AuthUser on any response, so a fresh
+  // login/register always omits it. Absent is treated as "not enabled" by
+  // every consumer in this codebase.
   totp_enabled?: boolean
 }
 

@@ -84,7 +84,17 @@ async function submitTotpLogin() {
   try {
     await auth.loginTotp(totpPending.value, totpCode.value.trim())
   } catch (err) {
-    loginError.value = err instanceof ApiRequestError && err.code === 'TOTP_INVALID' ? '验证码不正确' : '验证失败，请稍后重试'
+    if (err instanceof ApiRequestError && err.code === 'TOTP_INVALID') {
+      loginError.value = '验证码不正确'
+    } else {
+      // AUTH_FAILED here means the pending token itself was rejected (expired
+      // or otherwise invalid, not a wrong code) - the code step can't recover
+      // from that, so fall back to the password step automatically instead of
+      // leaving the user stuck until they notice and click 返回.
+      totpPending.value = null
+      totpCode.value = ''
+      loginError.value = '登录已超时，请重新输入密码'
+    }
   } finally {
     loginBusy.value = false
   }

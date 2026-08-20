@@ -168,7 +168,7 @@ async function submitTotpActivate() {
   totpError.value = ''
   try {
     await api.totpActivate(auth.token.value, totpCode.value.trim())
-    if (auth.user.value) auth.user.value.totp_enabled = true
+    auth.updateUser({ totp_enabled: true })
     totpStep.value = 'status'
   } catch (err) {
     totpError.value = err instanceof ApiRequestError && err.code === 'TOTP_INVALID' ? '验证码不正确' : '激活失败，请重试'
@@ -192,7 +192,7 @@ async function submitTotpDisable() {
   totpError.value = ''
   try {
     await api.totpDisable(auth.token.value, disableForm.password, disableForm.code.trim())
-    if (auth.user.value) auth.user.value.totp_enabled = false
+    auth.updateUser({ totp_enabled: false })
     totpStep.value = 'status'
   } catch (err) {
     totpError.value = err instanceof ApiRequestError && err.code === 'TOTP_INVALID' ? '验证码不正确' : '密码或验证码不正确'
@@ -570,7 +570,7 @@ watch(
   height: 180px;
   align-self: center;
   border-radius: var(--radius-sm);
-  background: #fff;
+  background: rgb(var(--surface-fixed-light));
   padding: 0.5rem;
 }
 
