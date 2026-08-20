@@ -40,6 +40,12 @@ export interface AuthUser {
   server_role: ServerRole
   email: string | null
   email_verified: boolean
+  // optional: only populated locally right after this session's own
+  // totp activate/disable call (see useAuth.updateUser) - the server does
+  // not yet project TOTP status onto AuthUser on any response, so a fresh
+  // login/register always omits it. Absent is treated as "not enabled" by
+  // every consumer in this codebase.
+  totp_enabled?: boolean
 }
 
 export interface AuthResponse {
@@ -353,6 +359,34 @@ export interface StorageUsage {
   used: number
   quota: number
   max_file: number
+}
+
+// ---- second factor / passkeys (instance-local auth, spec §7.2a) -----------
+
+export interface TotpSetupResponse {
+  secret: string
+  otpauth_url: string
+}
+
+// discriminated by presence of totp_required: password login either lands
+// straight in AuthResponse or hands back a short-lived pending token that
+// only /api/login/totp will accept.
+export type TotpLoginResult = { totp_required: true; pending: string } | AuthResponse
+
+export interface Passkey {
+  id: string
+  name: string
+  created_at: number
+}
+
+export interface PasskeyRegistrationOptions {
+  options: import('@simplewebauthn/browser').PublicKeyCredentialCreationOptionsJSON
+  challenge_token: string
+}
+
+export interface PasskeyAuthOptions {
+  options: import('@simplewebauthn/browser').PublicKeyCredentialRequestOptionsJSON
+  challenge_token: string
 }
 
 export interface Emote {

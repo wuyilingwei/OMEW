@@ -35,6 +35,11 @@
   --colors-gray-500: 113 113 122;
   --colors-gray-700: 63 63 70;
   --colors-gray-900: 24 24 27;
+
+  /* fixed light surface for content that must render on a light quiet zone
+     regardless of theme (e.g. scannable QR codes) - deliberately not
+     redefined in the dark-mode blocks below. */
+  --surface-fixed-light: 255 255 255;
 }
 
 @media (prefers-color-scheme: dark) {

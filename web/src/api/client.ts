@@ -1,3 +1,4 @@
+import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/browser'
 import { ApiRequestError } from './errors'
 import type {
   AdminInstanceConfig,
@@ -20,6 +21,9 @@ import type {
   MemberPatch,
   MemberTab,
   OwnershipResponse,
+  Passkey,
+  PasskeyAuthOptions,
+  PasskeyRegistrationOptions,
   PostPage,
   PostThread,
   PublicUser,
@@ -37,6 +41,8 @@ import type {
   StrongholdConfigPatch,
   StrongholdMember,
   StrongholdSummary,
+  TotpLoginResult,
+  TotpSetupResponse,
 } from './types'
 
 // production always talks same-origin (the worker serves both /api and the
@@ -163,7 +169,62 @@ export const realApi = {
     request<AuthResponse>('/api/register', { method: 'POST', body: JSON.stringify(payload) }),
 
   login: (payload: LoginPayload) =>
-    request<AuthResponse>('/api/login', { method: 'POST', body: JSON.stringify(payload) }),
+    request<TotpLoginResult>('/api/login', { method: 'POST', body: JSON.stringify(payload) }),
+
+  // ---- TOTP second factor (spec §7.2a) -----------------------------------
+
+  totpSetup: (token: string) =>
+    request<TotpSetupResponse>('/api/me/totp/setup', { method: 'POST', headers: authHeaders(token) }),
+
+  totpActivate: (token: string, code: string) =>
+    request<{ ok: true }>('/api/me/totp/activate', {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ code }),
+    }),
+
+  totpDisable: (token: string, password: string, code: string) =>
+    request<{ ok: true }>('/api/me/totp/disable', {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ password, code }),
+    }),
+
+  loginTotp: (pending: string, code: string) =>
+    request<AuthResponse>('/api/login/totp', { method: 'POST', body: JSON.stringify({ pending, code }) }),
+
+  // ---- passkeys (WebAuthn, spec §7.2a) -----------------------------------
+
+  listPasskeys: (token: string) =>
+    request<{ passkeys: Passkey[] }>('/api/me/passkeys', { headers: authHeaders(token) }).then((r) => r.passkeys),
+
+  passkeyRegOptions: (token: string) =>
+    request<PasskeyRegistrationOptions>('/api/me/passkeys/options', { method: 'POST', headers: authHeaders(token) }),
+
+  registerPasskey: (token: string, response: RegistrationResponseJSON, challengeToken: string, name: string) =>
+    request<Passkey>('/api/me/passkeys', {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ response, challenge_token: challengeToken, name }),
+    }),
+
+  renamePasskey: (token: string, id: string, name: string) =>
+    request<Passkey>(`/api/me/passkeys/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: authHeaders(token),
+      body: JSON.stringify({ name }),
+    }),
+
+  deletePasskey: (token: string, id: string) =>
+    request<void>(`/api/me/passkeys/${encodeURIComponent(id)}`, { method: 'DELETE', headers: authHeaders(token) }),
+
+  passkeyLoginOptions: () => request<PasskeyAuthOptions>('/api/login/passkey/options', { method: 'POST' }),
+
+  loginPasskey: (response: AuthenticationResponseJSON, challengeToken: string) =>
+    request<AuthResponse>('/api/login/passkey', {
+      method: 'POST',
+      body: JSON.stringify({ response, challenge_token: challengeToken }),
+    }),
 
   changePassword: (token: string, payload: ChangePasswordPayload) =>
     request<void>('/api/me/password', { method: 'POST', headers: authHeaders(token), body: JSON.stringify(payload) }),

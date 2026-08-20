@@ -1,6 +1,7 @@
 // in-memory stand-in for /api/* — resets on page reload, no persistence.
 // dev-only opt-in (see index.ts); production builds never import this module's
 // data path in practice since USE_MOCK is false by default.
+import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/browser'
 import { MASCOT_EMOTES } from '../assets/mew'
 import { ApiRequestError } from './errors'
 import type { RoomSocketHandlers, RoomTransport } from './roomSocket'
@@ -25,6 +26,9 @@ import type {
   MemberPatch,
   MemberTab,
   OwnershipResponse,
+  Passkey,
+  PasskeyAuthOptions,
+  PasskeyRegistrationOptions,
   PostPage,
   PostThread,
   PublicUser,
@@ -44,6 +48,8 @@ import type {
   StrongholdConfigPatch,
   StrongholdMember,
   StrongholdSummary,
+  TotpLoginResult,
+  TotpSetupResponse,
 } from './types'
 
 interface MockUser extends AuthUser {
@@ -51,6 +57,8 @@ interface MockUser extends AuthUser {
   ownership_pubkey: string
   ownership_ciphertext: string
   created_at: number
+  totp_secret: string | null
+  totp_enabled: boolean
 }
 
 // task 035: real instance policy is env-config, read-only through the API -
@@ -124,6 +132,8 @@ const users: MockUser[] = [
     ownership_pubkey: 'mock-seed-pubkey',
     ownership_ciphertext: 'mock-seed-ciphertext',
     created_at: Date.now() - 30 * 86_400_000,
+    totp_secret: null,
+    totp_enabled: false,
   },
   {
     actor: actorFor('mod2'),
@@ -136,11 +146,54 @@ const users: MockUser[] = [
     ownership_pubkey: 'mock-seed-pubkey',
     ownership_ciphertext: 'mock-seed-ciphertext',
     created_at: Date.now() - 12 * 86_400_000,
+    totp_secret: null,
+    totp_enabled: false,
   },
 ]
 
 const inviteCodes: InviteCode[] = []
 const sessions = new Map<string, string>() // token -> actor
+
+// ---- TOTP / passkey mock state ---------------------------------------------
+// The mock never implements real RFC 6238 arithmetic or WebAuthn signature
+// verification (no backend to check against) - it only needs to satisfy the
+// contract shape for a dev/visual check. TOTP codes are accepted as valid as
+// long as they're 6 digits; passkey registration/login still drives the
+// browser's real navigator.credentials ceremony (ids/challenges below are
+// well-formed base64url), just without cryptographic verification server-side.
+const totpPending = new Map<string, { actor: string; exp: number }>() // pending token -> claims
+interface MockPasskey extends Passkey {
+  actor: string
+}
+const passkeys: MockPasskey[] = []
+
+function randomBase64Url(bytes = 32): string {
+  const arr = crypto.getRandomValues(new Uint8Array(bytes))
+  let bin = ''
+  for (const b of arr) bin += String.fromCharCode(b)
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+function randomBase32Secret(): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+  return Array.from({ length: 32 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join('')
+}
+
+function makeChallengeToken(payload: Record<string, unknown>): string {
+  return btoa(JSON.stringify(payload))
+}
+
+function readChallengeToken(token: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(atob(token))
+  } catch {
+    return null
+  }
+}
+
+function totpCodeError(code: string): boolean {
+  return !/^\d{6}$/.test(code)
+}
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/
 const CODE_ALPHABET = '0123456789ABCDEFGHJKLMNPQRSTUVWXYZ'
@@ -155,7 +208,14 @@ function makeToken(): string {
 }
 
 function stripPassword(user: MockUser): AuthUser {
-  const { password: _password, ownership_pubkey: _pubkey, ownership_ciphertext: _ciphertext, ...rest } = user
+  const {
+    password: _password,
+    ownership_pubkey: _pubkey,
+    ownership_ciphertext: _ciphertext,
+    totp_secret: _totpSecret,
+    totp_enabled: _totpEnabled,
+    ...rest
+  } = user
   return rest
 }
 
@@ -561,6 +621,8 @@ export const mockApi = {
       ownership_pubkey: payload.ownership_pubkey,
       ownership_ciphertext: payload.ownership_ciphertext,
       created_at: Date.now(),
+      totp_secret: null,
+      totp_enabled: false,
     }
     users.push(user)
     const token = makeToken()
@@ -568,8 +630,146 @@ export const mockApi = {
     return delay({ token, user: stripPassword(user) })
   },
 
-  async login(payload: LoginPayload): Promise<AuthResponse> {
+  async login(payload: LoginPayload): Promise<TotpLoginResult> {
     const user = users.find((u) => u.username === payload.username && u.password === payload.password)
+    if (!user) throw new ApiRequestError('AUTH_FAILED', 401)
+    if (user.totp_enabled) {
+      const pending = makeToken()
+      totpPending.set(pending, { actor: user.actor, exp: Date.now() + 300_000 })
+      return delay({ totp_required: true as const, pending })
+    }
+    const token = makeToken()
+    sessions.set(token, user.actor)
+    return delay({ token, user: stripPassword(user) })
+  },
+
+  // ---- TOTP second factor (spec §7.2a) -----------------------------------
+
+  async totpSetup(token: string): Promise<TotpSetupResponse> {
+    const user = requireUser(token)
+    if (user.totp_enabled) throw new ApiRequestError('TOTP_ALREADY_ENABLED', 409)
+    const secret = randomBase32Secret()
+    user.totp_secret = secret
+    return delay({
+      secret,
+      otpauth_url: `otpauth://totp/OMEW:${user.username}?secret=${secret}&issuer=OMEW&algorithm=SHA1&digits=6&period=30`,
+    })
+  },
+
+  async totpActivate(token: string, code: string): Promise<{ ok: true }> {
+    const user = requireUser(token)
+    if (!user.totp_secret) throw new ApiRequestError('TOTP_NOT_PENDING', 409)
+    if (totpCodeError(code)) throw new ApiRequestError('TOTP_INVALID', 401)
+    user.totp_enabled = true
+    return delay({ ok: true as const })
+  },
+
+  async totpDisable(token: string, password: string, code: string): Promise<{ ok: true }> {
+    const user = requireUser(token)
+    if (password !== user.password) throw new ApiRequestError('AUTH_FAILED', 401)
+    if (totpCodeError(code)) throw new ApiRequestError('TOTP_INVALID', 401)
+    user.totp_secret = null
+    user.totp_enabled = false
+    return delay({ ok: true as const })
+  },
+
+  async loginTotp(pending: string, code: string): Promise<AuthResponse> {
+    const claims = totpPending.get(pending)
+    if (!claims || claims.exp < Date.now()) throw new ApiRequestError('AUTH_FAILED', 401)
+    const user = users.find((u) => u.actor === claims.actor)
+    if (!user) throw new ApiRequestError('AUTH_FAILED', 401)
+    if (totpCodeError(code)) throw new ApiRequestError('TOTP_INVALID', 401)
+    const token = makeToken()
+    sessions.set(token, user.actor)
+    return delay({ token, user: stripPassword(user) })
+  },
+
+  // ---- passkeys (WebAuthn, spec §7.2a) -----------------------------------
+
+  async listPasskeys(token: string): Promise<Passkey[]> {
+    const user = requireUser(token)
+    return delay(passkeys.filter((p) => p.actor === user.actor).map(({ id, name, created_at }) => ({ id, name, created_at })))
+  },
+
+  async passkeyRegOptions(token: string): Promise<PasskeyRegistrationOptions> {
+    const user = requireUser(token)
+    const challenge = randomBase64Url()
+    const challenge_token = makeChallengeToken({ actor: user.actor, challenge, exp: Date.now() + 300_000 })
+    return delay({
+      options: {
+        rp: { name: 'OpenMew', id: location.hostname },
+        user: { id: randomBase64Url(16), name: user.username, displayName: user.username },
+        challenge,
+        pubKeyCredParams: [
+          { alg: -7, type: 'public-key' },
+          { alg: -257, type: 'public-key' },
+        ],
+        timeout: 60_000,
+        attestation: 'none',
+        excludeCredentials: passkeys
+          .filter((p) => p.actor === user.actor)
+          .map((p) => ({ id: p.id, type: 'public-key' as const })),
+      } as PasskeyRegistrationOptions['options'],
+      challenge_token,
+    })
+  },
+
+  async registerPasskey(
+    token: string,
+    response: RegistrationResponseJSON,
+    challengeToken: string,
+    name: string,
+  ): Promise<Passkey> {
+    const user = requireUser(token)
+    const claims = readChallengeToken(challengeToken)
+    if (!claims || claims.actor !== user.actor || (claims.exp as number) < Date.now()) {
+      throw new ApiRequestError('AUTH_REQUIRED', 401)
+    }
+    if (!name) throw new ApiRequestError('PAYLOAD_INVALID', 400)
+    if (passkeys.some((p) => p.id === response.id)) throw new ApiRequestError('PASSKEY_ALREADY_REGISTERED', 409)
+    const passkey: MockPasskey = { id: response.id, name, created_at: Date.now(), actor: user.actor }
+    passkeys.push(passkey)
+    return delay({ id: passkey.id, name: passkey.name, created_at: passkey.created_at })
+  },
+
+  async renamePasskey(token: string, id: string, name: string): Promise<Passkey> {
+    const user = requireUser(token)
+    const passkey = passkeys.find((p) => p.id === id && p.actor === user.actor)
+    if (!passkey) throw new ApiRequestError('NOT_FOUND', 404)
+    if (!name) throw new ApiRequestError('PAYLOAD_INVALID', 400)
+    passkey.name = name
+    return delay({ id: passkey.id, name: passkey.name, created_at: passkey.created_at })
+  },
+
+  async deletePasskey(token: string, id: string): Promise<void> {
+    const user = requireUser(token)
+    const idx = passkeys.findIndex((p) => p.id === id && p.actor === user.actor)
+    if (idx < 0) throw new ApiRequestError('NOT_FOUND', 404)
+    passkeys.splice(idx, 1)
+    return delay(undefined)
+  },
+
+  async passkeyLoginOptions(): Promise<PasskeyAuthOptions> {
+    const challenge = randomBase64Url()
+    const challenge_token = makeChallengeToken({ challenge, exp: Date.now() + 300_000 })
+    return delay({
+      options: {
+        rpId: location.hostname,
+        challenge,
+        timeout: 60_000,
+        userVerification: 'preferred',
+        allowCredentials: [],
+      } as PasskeyAuthOptions['options'],
+      challenge_token,
+    })
+  },
+
+  async loginPasskey(response: AuthenticationResponseJSON, challengeToken: string): Promise<AuthResponse> {
+    const claims = readChallengeToken(challengeToken)
+    if (!claims || (claims.exp as number) < Date.now()) throw new ApiRequestError('AUTH_FAILED', 401)
+    const passkey = passkeys.find((p) => p.id === response.id)
+    if (!passkey) throw new ApiRequestError('AUTH_FAILED', 401)
+    const user = users.find((u) => u.actor === passkey.actor)
     if (!user) throw new ApiRequestError('AUTH_FAILED', 401)
     const token = makeToken()
     sessions.set(token, user.actor)

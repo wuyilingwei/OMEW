@@ -1,3 +1,4 @@
+import type { AuthenticationResponseJSON } from '@simplewebauthn/browser'
 import { computed, ref } from 'vue'
 import { api } from '../api'
 import { setUnauthorizedHandler } from '../api/client'
@@ -39,8 +40,21 @@ function setSession(session: AuthResponse) {
   persist()
 }
 
-async function login(payload: LoginPayload) {
-  const session = await api.login(payload)
+// returns the pending token when the account has TOTP enabled (caller shows
+// the code-entry step next) instead of committing a session directly.
+async function login(payload: LoginPayload): Promise<{ totp_required: true; pending: string } | void> {
+  const result = await api.login(payload)
+  if ('totp_required' in result) return result
+  setSession(result)
+}
+
+async function loginTotp(pending: string, code: string) {
+  const session = await api.loginTotp(pending, code)
+  setSession(session)
+}
+
+async function loginPasskey(response: AuthenticationResponseJSON, challengeToken: string) {
+  const session = await api.loginPasskey(response, challengeToken)
   setSession(session)
 }
 
@@ -54,6 +68,15 @@ async function register(payload: RegisterPayload): Promise<AuthResponse> {
 function logout() {
   token.value = null
   user.value = null
+  persist()
+}
+
+// applies a local patch to the stored user (e.g. right after totp
+// activate/disable, before any server response carries the field back) and
+// persists it so it survives a reload.
+function updateUser(patch: Partial<AuthUser>) {
+  if (!user.value) return
+  user.value = { ...user.value, ...patch }
   persist()
 }
 
@@ -73,8 +96,11 @@ export function useAuth() {
     // the server-member-appointment section, distinct from isAdmin (owner|admin).
     isServerOwner: computed(() => user.value?.server_role === 'owner'),
     login,
+    loginTotp,
+    loginPasskey,
     register,
     setSession,
+    updateUser,
     logout,
   }
 }

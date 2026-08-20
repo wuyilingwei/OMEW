@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { startAuthentication } from '@simplewebauthn/browser'
 import { computed, reactive, ref, watch } from 'vue'
-import { ApiRequestError } from '../api'
+import { api, ApiRequestError } from '../api'
 import type { AuthResponse, RootRequirement } from '../api/types'
 import { useAuth } from '../composables/useAuth'
 import { useInstanceConfig } from '../composables/useInstanceConfig'
@@ -52,17 +53,80 @@ const loginForm = reactive({ username: '', password: '' })
 const loginError = ref('')
 const loginBusy = ref(false)
 
+// two-step login: a successful password check on a TOTP-enabled account
+// returns a pending token instead of a session - this only reveals the code
+// step once that happens, per the progressive-disclosure writing rule.
+const totpPending = ref<string | null>(null)
+const totpCode = ref('')
+
 async function submitLogin() {
   if (loginBusy.value) return
   loginError.value = ''
   loginBusy.value = true
   try {
-    await auth.login({ username: loginForm.username, password: loginForm.password })
+    const result = await auth.login({ username: loginForm.username, password: loginForm.password })
+    if (result) {
+      totpPending.value = result.pending
+      totpCode.value = ''
+    }
   } catch (err) {
     loginError.value =
       err instanceof ApiRequestError && err.code === 'AUTH_FAILED' ? '用户名或密码错误' : '登录失败，请稍后重试'
   } finally {
     loginBusy.value = false
+  }
+}
+
+async function submitTotpLogin() {
+  if (loginBusy.value || !totpPending.value) return
+  loginError.value = ''
+  loginBusy.value = true
+  try {
+    await auth.loginTotp(totpPending.value, totpCode.value.trim())
+  } catch (err) {
+    if (err instanceof ApiRequestError && err.code === 'TOTP_INVALID') {
+      loginError.value = '验证码不正确'
+    } else {
+      // AUTH_FAILED here means the pending token itself was rejected (expired
+      // or otherwise invalid, not a wrong code) - the code step can't recover
+      // from that, so fall back to the password step automatically instead of
+      // leaving the user stuck until they notice and click 返回.
+      totpPending.value = null
+      totpCode.value = ''
+      loginError.value = '登录已超时，请重新输入密码'
+    }
+  } finally {
+    loginBusy.value = false
+  }
+}
+
+function cancelTotpLogin() {
+  totpPending.value = null
+  totpCode.value = ''
+  loginError.value = ''
+}
+
+// ---- passkey login (independent, password-free) -------------------------
+
+const supportsPasskeys = typeof window !== 'undefined' && !!window.PublicKeyCredential
+const passkeyBusy = ref(false)
+const passkeyError = ref('')
+
+async function loginWithPasskey() {
+  if (passkeyBusy.value) return
+  passkeyError.value = ''
+  passkeyBusy.value = true
+  try {
+    const { options, challenge_token } = await api.passkeyLoginOptions()
+    const response = await startAuthentication({ optionsJSON: options })
+    await auth.loginPasskey(response, challenge_token)
+  } catch (err) {
+    if (err instanceof ApiRequestError) passkeyError.value = '通行密钥登录失败'
+    // a cancelled/failed browser ceremony throws a DOMException - silently
+    // drop it, matching how the password form doesn't complain about a
+    // simply-abandoned attempt.
+  } finally {
+    passkeyBusy.value = false
   }
 }
 
@@ -172,20 +236,59 @@ function finishRegistration() {
       @update:SelectedItem="onTabSelect"
     />
 
-    <form v-if="tab === 'login'" class="auth-form" @submit.prevent="submitLogin">
-      <div class="field">
-        <label class="field__label" for="login-username">用户名</label>
-        <input id="login-username" v-model.trim="loginForm.username" type="text" autocomplete="username" required />
-      </div>
-      <div class="field">
-        <label class="field__label" for="login-password">密码</label>
-        <input id="login-password" v-model="loginForm.password" type="password" autocomplete="current-password" required />
-      </div>
-      <p v-if="loginError" class="field__error">{{ loginError }}</p>
-      <WinButton Style="AccentButtonStyle" class="auth-form__submit" type="submit" :IsEnabled="!loginBusy">
-        {{ loginBusy ? '登录中…' : '登录' }}
-      </WinButton>
-    </form>
+    <template v-if="tab === 'login'">
+      <form v-if="!totpPending" class="auth-form" @submit.prevent="submitLogin">
+        <div class="field">
+          <label class="field__label" for="login-username">用户名</label>
+          <input id="login-username" v-model.trim="loginForm.username" type="text" autocomplete="username" required />
+        </div>
+        <div class="field">
+          <label class="field__label" for="login-password">密码</label>
+          <input id="login-password" v-model="loginForm.password" type="password" autocomplete="current-password" required />
+        </div>
+        <p v-if="loginError" class="field__error">{{ loginError }}</p>
+        <WinButton Style="AccentButtonStyle" class="auth-form__submit" type="submit" :IsEnabled="!loginBusy">
+          {{ loginBusy ? '登录中…' : '登录' }}
+        </WinButton>
+
+        <template v-if="supportsPasskeys">
+          <div class="auth-form__divider">或</div>
+          <WinButton
+            Style="DefaultButtonStyle"
+            class="auth-form__submit"
+            type="button"
+            :IsEnabled="!passkeyBusy"
+            @Click="loginWithPasskey"
+          >
+            {{ passkeyBusy ? '等待设备确认…' : '使用通行密钥登录' }}
+          </WinButton>
+          <p v-if="passkeyError" class="field__error">{{ passkeyError }}</p>
+        </template>
+      </form>
+
+      <form v-else class="auth-form" @submit.prevent="submitTotpLogin">
+        <p class="field__hint">该账号已启用两步验证，请输入验证器 App 当前显示的 6 位验证码。</p>
+        <div class="field">
+          <label class="field__label" for="login-totp-code">验证码</label>
+          <input
+            id="login-totp-code"
+            v-model="totpCode"
+            type="text"
+            inputmode="numeric"
+            pattern="[0-9]{6}"
+            maxlength="6"
+            autocomplete="one-time-code"
+            autofocus
+            required
+          />
+        </div>
+        <p v-if="loginError" class="field__error">{{ loginError }}</p>
+        <WinButton Style="AccentButtonStyle" class="auth-form__submit" type="submit" :IsEnabled="!loginBusy">
+          {{ loginBusy ? '验证中…' : '验证并登录' }}
+        </WinButton>
+        <WinButton Style="SubtleButtonStyle" class="auth-form__submit" type="button" @Click="cancelTotpLogin">返回</WinButton>
+      </form>
+    </template>
 
     <template v-else>
       <div v-if="pendingBackup" class="auth-form">
@@ -328,6 +431,22 @@ function finishRegistration() {
   width: 100%;
   justify-content: center;
   margin-top: 0.15rem;
+}
+
+.auth-form__divider {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+
+.auth-form__divider::before,
+.auth-form__divider::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--stroke-divider);
 }
 
 .auth-form__ownership {
