@@ -3,11 +3,13 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { DENY_CHANNEL_SPEAK } from "../server/src/types";
 import {
   connectRoom,
+  connectTips,
   ensureMigrated,
   itemCreateFrame,
   itemDeleteFrame,
   nextClose,
   nextMessage,
+  nextMessageOfType,
 } from "./helpers";
 
 // m0-protocol §7.3 revocation propagation: StrongholdDO pushes a local
@@ -151,5 +153,96 @@ describe("member.revoke propagation (m0-protocol §7.3)", () => {
     expect(ack).toMatchObject({ type: "ack", status: "ok" });
 
     bystanderWs.close();
+  });
+
+  it("re-derives a held-group member's deny bits when groups are reordered", async () => {
+    const owner = "@revokeowner6:local";
+    const target = "@revokereorder6:local";
+    const id = await freshStronghold(owner);
+    const stub = env.STRONGHOLD_DO.getByName(id);
+    // A (position 0) denies speak, B (position 1) allows it - synthesis applies
+    // ascending positions with later ones winning, so the member starts allowed.
+    const groupA = await stub.createGroup("A", null, -1, 0, 0, false);
+    const groupB = await stub.createGroup("B", null, 1, 0, 0, false);
+    await stub.addMember(target, "member");
+    await stub.addMemberToGroup(target, groupA.id);
+    await stub.addMemberToGroup(target, groupB.id);
+
+    const roomRef = `${id}/ch/general`;
+    const { ws } = await connectRoom(roomRef, target, "member", 0);
+
+    ws.send(itemCreateFrame("m1", "before reorder"));
+    expect(await nextMessage(ws)).toMatchObject({ type: "ack", status: "ok" });
+
+    // Swapping the two makes A's deny the last word - same socket must lose
+    // speak without a reconnect.
+    await stub.reorderGroups([
+      { id: groupA.id, position: 1 },
+      { id: groupB.id, position: 0 },
+    ]);
+
+    ws.send(itemCreateFrame("m2", "after reorder"));
+    expect(await nextMessage(ws)).toMatchObject({ type: "error", code: "OMEW_FORBIDDEN" });
+  });
+
+  it("closes a banned member's tips WS on the stronghold itself", async () => {
+    const owner = "@revokeowner7:local";
+    const target = "@revoketips7:local";
+    const id = await freshStronghold(owner);
+    const stub = env.STRONGHOLD_DO.getByName(id);
+    await stub.addMember(target, "member");
+
+    // The first-frame tip.update snapshot each connection gets dispatches before
+    // a test-side listener can attach (same race family as nextClose's ordering
+    // note) - it's dropped unobserved here, this test only cares about close.
+    const { ws: targetTips } = await connectTips(id, target);
+    const { ws: ownerTips } = await connectTips(id, owner);
+
+    let ownerClosed = false;
+    ownerTips.addEventListener("close", () => { ownerClosed = true; }, { once: true });
+
+    const closePromise = nextClose(targetTips);
+    await stub.banMember(target, owner);
+
+    const closeEvent = await closePromise;
+    expect(closeEvent.code).toBe(1008);
+    expect(closeEvent.reason).toBe("OMEW_SESSION_INVALID");
+    // The ban's revoke chain has fully unwound by here (synchronous await path),
+    // so a wrongly-targeted close would already have fired.
+    expect(ownerClosed).toBe(false);
+
+    ownerTips.close();
+  });
+
+  it("propagates both role changes of an ownership transfer to live connections", async () => {
+    const owner = "@revokeowner8:local";
+    const heir = "@revokeheir8:local";
+    const id = await freshStronghold(owner);
+    const stub = env.STRONGHOLD_DO.getByName(id);
+    await stub.addMember(heir, "member");
+    const roomRef = `${id}/ch/general`;
+    const { ws: oldOwnerWs } = await connectRoom(roomRef, owner, "owner");
+    const { ws: newOwnerWs } = await connectRoom(roomRef, heir, "member");
+
+    newOwnerWs.send(itemCreateFrame("m1", "from the heir"));
+    const ack1 = await nextMessageOfType(newOwnerWs, "ack");
+    const seq1 = ack1.seq as number;
+
+    const config = await stub.transferOwnership(owner, heir);
+    expect(config?.owner_actor).toBe(heir);
+
+    // The demoted owner's attachment lost its moderation power in place...
+    oldOwnerWs.send(itemDeleteFrame(seq1));
+    expect(await nextMessageOfType(oldOwnerWs, "error")).toMatchObject({ code: "OMEW_FORBIDDEN" });
+
+    // ...but still writes as a plain member (deny 0).
+    oldOwnerWs.send(itemCreateFrame("m2", "as a member now"));
+    const ack2 = await nextMessageOfType(oldOwnerWs, "ack");
+    expect(ack2).toMatchObject({ status: "ok" });
+    const seq2 = ack2.seq as number;
+
+    // The promoted owner's attachment picked the upgrade up without a reconnect.
+    newOwnerWs.send(itemDeleteFrame(seq2));
+    expect(await nextMessageOfType(newOwnerWs, "ack")).toMatchObject({ status: "ok", target_seq: seq2 });
   });
 });
