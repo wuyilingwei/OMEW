@@ -2,8 +2,31 @@
 import { onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { api, ApiRequestError } from '../api'
 import { useAuth } from '../composables/useAuth'
+import { envelopeToCiphertextField, parseOwnershipEnvelope, resealOwnershipKey, unsealOwnershipKey } from '../crypto/ownershipKey'
 import { passwordError, requiredError } from '../utils/validate'
 import { WinButton, WinInfoBar } from '../vendor/winui'
+
+// m0-protocol §7.9a: when the custody passphrase defaults to the login
+// password, a password change must re-wrap the custody ciphertext too, or the
+// old password silently keeps unlocking it forever. Best-effort: fetch the
+// envelope, try to unseal it with the old password, and if that works reseal
+// under the new one and submit alongside the password change. Any failure
+// along this path (fetch, parse, wrong-passphrase unseal) just means "this
+// account uses an independent custody passphrase" - the ciphertext is left
+// untouched and only the login password changes.
+async function rewrapOwnershipCiphertext(token: string, oldPassword: string, newPassword: string): Promise<string | undefined> {
+  try {
+    const { ownership_ciphertext } = await api.getOwnership(token)
+    if (!ownership_ciphertext) return undefined
+    const envelope = parseOwnershipEnvelope(ownership_ciphertext)
+    const secretKey = await unsealOwnershipKey(oldPassword, envelope)
+    if (!secretKey) return undefined
+    const resealed = await resealOwnershipKey(secretKey, newPassword)
+    return envelopeToCiphertextField(resealed)
+  } catch {
+    return undefined
+  }
+}
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -35,7 +58,12 @@ async function submit() {
   if (error.value || !auth.token.value) return
   busy.value = true
   try {
-    await api.changePassword(auth.token.value, { old_password: form.oldPassword, new_password: form.newPassword })
+    const newOwnershipCiphertext = await rewrapOwnershipCiphertext(auth.token.value, form.oldPassword, form.newPassword)
+    await api.changePassword(auth.token.value, {
+      old_password: form.oldPassword,
+      new_password: form.newPassword,
+      ...(newOwnershipCiphertext ? { new_ownership_ciphertext: newOwnershipCiphertext } : {}),
+    })
     success.value = true
     form.oldPassword = ''
     form.newPassword = ''

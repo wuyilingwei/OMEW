@@ -43,8 +43,14 @@ function toBase64(bytes: Uint8Array): string {
   return btoa(binary)
 }
 
-export async function generateOwnershipKey(passphrase: string): Promise<OwnershipKeyResult> {
-  const { secretKey, publicKey } = ed25519.keygen()
+function fromBase64(value: string): Uint8Array<ArrayBuffer> {
+  const binary = atob(value)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return bytes
+}
+
+async function encryptSecretKey(secretKey: Uint8Array<ArrayBuffer>, passphrase: string): Promise<OwnershipEnvelope> {
   const salt = randomBytes(16)
   const derived = await argon2idAsync(passphrase, salt, KDF_PARAMS)
   const aesKey = await crypto.subtle.importKey('raw', derived, 'AES-GCM', false, ['encrypt'])
@@ -52,21 +58,59 @@ export async function generateOwnershipKey(passphrase: string): Promise<Ownershi
   const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, aesKey, secretKey)
 
   return {
-    pubkeyBase64: toBase64(publicKey),
-    envelope: {
-      v: 1,
-      kdf: 'argon2id',
-      kdfParams: KDF_PARAMS,
-      salt: toBase64(salt),
-      cipher: 'AES-256-GCM',
-      nonce: toBase64(nonce),
-      ciphertext: toBase64(new Uint8Array(encrypted)),
-    },
+    v: 1,
+    kdf: 'argon2id',
+    kdfParams: KDF_PARAMS,
+    salt: toBase64(salt),
+    cipher: 'AES-256-GCM',
+    nonce: toBase64(nonce),
+    ciphertext: toBase64(new Uint8Array(encrypted)),
   }
+}
+
+export async function generateOwnershipKey(passphrase: string): Promise<OwnershipKeyResult> {
+  const { secretKey, publicKey } = ed25519.keygen()
+  const envelope = await encryptSecretKey(secretKey, passphrase)
+  return { pubkeyBase64: toBase64(publicKey), envelope }
 }
 
 export function envelopeToCiphertextField(envelope: OwnershipEnvelope): string {
   return JSON.stringify(envelope)
+}
+
+export function parseOwnershipEnvelope(field: string): OwnershipEnvelope {
+  const parsed = JSON.parse(field)
+  if (parsed?.v !== 1 || parsed?.kdf !== 'argon2id' || typeof parsed?.salt !== 'string' || typeof parsed?.nonce !== 'string' || typeof parsed?.ciphertext !== 'string') {
+    throw new Error('malformed ownership envelope')
+  }
+  return parsed as OwnershipEnvelope
+}
+
+// Decrypts the stored envelope with `passphrase`, returning the raw secret key
+// bytes on success or null if the passphrase doesn't unlock it (AES-GCM auth
+// tag mismatch) — the caller can't distinguish "wrong passphrase" from
+// "independent ownership passphrase, not the login password" and shouldn't
+// need to: both mean "don't reseal."
+export async function unsealOwnershipKey(passphrase: string, envelope: OwnershipEnvelope): Promise<Uint8Array<ArrayBuffer> | null> {
+  try {
+    const salt = fromBase64(envelope.salt)
+    const derived = await argon2idAsync(passphrase, salt, envelope.kdfParams)
+    const aesKey = await crypto.subtle.importKey('raw', derived, 'AES-GCM', false, ['decrypt'])
+    const nonce = fromBase64(envelope.nonce)
+    const ciphertext = fromBase64(envelope.ciphertext)
+    const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: nonce }, aesKey, ciphertext)
+    return new Uint8Array(decrypted)
+  } catch {
+    return null
+  }
+}
+
+// Re-encrypts an already-unsealed secret key under a new passphrase — used by
+// the change-password flow (m0-protocol §7.9a) to re-wrap the custody
+// ciphertext when the login password itself is the custody passphrase. The
+// keypair (and its public key) is unchanged; only the envelope is replaced.
+export async function resealOwnershipKey(secretKey: Uint8Array<ArrayBuffer>, passphrase: string): Promise<OwnershipEnvelope> {
+  return encryptSecretKey(secretKey, passphrase)
 }
 
 export function downloadOwnershipBackup(pubkeyBase64: string, envelope: OwnershipEnvelope, username: string) {
