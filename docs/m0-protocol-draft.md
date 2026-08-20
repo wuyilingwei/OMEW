@@ -828,7 +828,15 @@ claim_input = UTF8("openmew/migration-claim/v1") || 0x00 ||
 - **`federation_peers`**(要加入的已知服务器):本实例主动发起联邦对等(订阅帖子流、目录聚合、历史回填等**出站**行为)的域名列表,由管理员配置。与 `trusted_identity_servers` 相互独立:后者管**身份准入**(谁的用户可来),本项管**内容对等**(我方主动连谁)。出站订阅与主动拉取 MUST 仅面向本列表中的域(与 §11.2 未知 origin 零出站一致);实例描述符的 `known_peers` 字段 SHOULD 以本列表为源。
 - **`stronghold_creation`** ∈ {`open`, `restricted`, `application`}:据点创建策略——`open` 任何本地用户可建;`restricted` 仅管理员与指定名单(`stronghold_creators`)可建;`application` 须提交申请由管理员审批(三态 pending/approved/rejected,批准即以申请人为 owner 创建)。自运营模式下的实例治理项,属本地策略,不进联邦事件。
 
-策略属实例本地配置,不进入信封与联邦事件;实例描述符(§6.1)MAY 以 `registration: open|invite|closed` 概要宣告注册开放度供客户端与目录展示。
+**策略载体**:上述全部实例策略(含 `allow_guest_browsing`、媒体限额)为**部署环境配置**(Worker env vars),由运营者在部署层设定,MUST NOT 提供运行时改写端点;应用侧管理界面 MAY 只读展示生效值。策略不进入信封与联邦事件;实例描述符(§6.1)MAY 以 `registration: open|invite|closed` 概要宣告注册开放度供客户端与目录展示。
+
+### 7.10 服务器级角色层
+
+实例本地存在与据点角色正交的**服务器级角色**:`server_owner`(唯一,默认为首个本地注册用户)> `server_admin`(可多名,由 server_owner 任免)> 普通用户。层级语义:服务器拥有者 > 据点所有者 ≈ 服务器管理员 > 用户。
+
+- server_owner 与 server_admin 在本实例**所有据点**默认持有据点管理身份:权限门 MUST 将其视同该据点 `owner`,**唯据点所有权转让除外**(仅真实据点 owner 或 server_owner 可发起);
+- 服务器级角色为实例本地治理,MUST NOT 随联邦事件传播;宾客身份不获得任何服务器级角色;
+- 会话 token MAY 携带 server_role claim 以免逐请求查库;其撤销遵循 §7.3 撤销传播。
 
 ### 8.1 配置
 
