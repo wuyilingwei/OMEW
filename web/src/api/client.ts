@@ -215,14 +215,17 @@ export const realApi = {
       headers: authHeaders(token),
     }),
 
-  getRoomHistory: (token: string, nodeId: string, resId: string, before?: number | null, limit?: number) => {
+  // guest-readable on a public stronghold when the instance allows it, same
+  // gate as history's sibling reads above (server's inline check next to
+  // this route, since /stronghold/* predates resolveGuestOrMember).
+  getRoomHistory: (token: string | null, nodeId: string, resId: string, before?: number | null, limit?: number) => {
     const params = new URLSearchParams()
     if (before != null) params.set('before', String(before))
     if (limit != null) params.set('limit', String(limit))
     const qs = params.toString()
     return request<{ items: import('./types').RoomItem[] }>(
       `/stronghold/${nodeId}/rooms/${resId}/history${qs ? `?${qs}` : ''}`,
-      { headers: authHeaders(token) },
+      { headers: optionalAuthHeaders(token) },
     ).then((r) => r.items)
   },
 
