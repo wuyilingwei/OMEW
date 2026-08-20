@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useStronghold } from '../composables/useStronghold'
 import CreateStrongholdCard from './CreateStrongholdCard.vue'
+import AppIcon from './icons/AppIcon.vue'
 
 const { nodes, selectedNodeId, selectNode, isGuestMode } = useStronghold()
 const showCreate = ref(false)
@@ -28,7 +29,7 @@ function onCreated() {
       </li>
       <li v-if="!isGuestMode">
         <button class="node-rail__item node-rail__item--add" type="button" title="创建据点" @click="showCreate = true">
-          +
+          <AppIcon name="add" :size="18" />
         </button>
       </li>
     </ul>

@@ -76,7 +76,7 @@ async function submit() {
       restrictedDenied.value = true
       return
     }
-    error.value = err instanceof ApiRequestError ? `创建失败：${err.code}` : '创建失败，请稍后重试'
+    error.value = '创建失败，请稍后重试'
   } finally {
     busy.value = false
   }

@@ -2,6 +2,7 @@
 import { useShellView } from '../composables/useShellView'
 import ChannelSwitcher from './ChannelSwitcher.vue'
 import ChatPane from './ChatPane.vue'
+import AppIcon from './icons/AppIcon.vue'
 
 const { setView } = useShellView()
 </script>
@@ -10,9 +11,7 @@ const { setView } = useShellView()
   <main class="middle-column">
     <div class="middle-column__header">
       <button type="button" class="middle-column__back" aria-label="返回据点" @click="setView('stronghold')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M15 18l-6-6 6-6" />
-        </svg>
+        <AppIcon name="chevron-left" :size="20" />
       </button>
       <div class="middle-column__header-spacer" />
       <ChannelSwitcher />

@@ -12,6 +12,7 @@ import {
 } from '../crypto/ownershipKey'
 import { emailError, ownershipPassphraseError, passwordError, requiredError, usernameError } from '../utils/validate'
 import { WinButton, WinInfoBar, WinSelectorBar } from '../vendor/winui'
+import AppIcon from './icons/AppIcon.vue'
 
 // the login/register form body, shared by AuthGate's full-screen gate and
 // AuthModal's popup shell (task 034) - hosts own the surrounding chrome
@@ -239,7 +240,12 @@ function finishRegistration() {
             :aria-expanded="useIndependentOwnershipPassphrase"
             @click="useIndependentOwnershipPassphrase = !useIndependentOwnershipPassphrase"
           >
-            <span class="auth-form__advanced-toggle-icon" :class="{ 'auth-form__advanced-toggle-icon--open': useIndependentOwnershipPassphrase }">▸</span>
+            <AppIcon
+              name="chevron-right"
+              :size="14"
+              class="auth-form__advanced-toggle-icon"
+              :class="{ 'auth-form__advanced-toggle-icon--open': useIndependentOwnershipPassphrase }"
+            />
             高级：使用独立所有权口令
           </button>
         </div>

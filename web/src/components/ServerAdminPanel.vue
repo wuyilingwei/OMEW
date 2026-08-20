@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { api, ApiRequestError } from '../api'
+import { api } from '../api'
 import type {
   AdminInstanceConfig,
   AdminUserEntry,
@@ -77,8 +77,8 @@ async function setUserRole(user: AdminUserEntry, role: Extract<ServerRole, 'admi
   try {
     await api.patchAdminUserRole(auth.token.value, user.localpart, role)
     user.server_role = role
-  } catch (err) {
-    usersError.value = err instanceof ApiRequestError ? `操作失败：${err.code}` : '操作失败，请稍后重试'
+  } catch {
+    usersError.value = '操作失败，请稍后重试'
   } finally {
     roleChangingLocalpart.value = ''
   }
@@ -106,8 +106,8 @@ async function generateInviteCodes() {
   inviteBusy.value = true
   try {
     inviteCodes.value = await api.createInviteCodes(auth.token.value, inviteCount.value)
-  } catch (err) {
-    inviteError.value = err instanceof ApiRequestError ? `生成失败：${err.code}` : '生成失败，请稍后重试'
+  } catch {
+    inviteError.value = '生成失败，请稍后重试'
   } finally {
     inviteBusy.value = false
   }
@@ -138,8 +138,8 @@ async function decideApplication(id: string, state: 'approved' | 'rejected') {
     await api.decideStrongholdApplication(auth.token.value, id, state)
     if (state === 'approved') approvedNotice.value = '已批准，据点已创建'
     await loadPendingApplications()
-  } catch (err) {
-    applicationsError.value = err instanceof ApiRequestError ? `操作失败：${err.code}` : '操作失败，请稍后重试'
+  } catch {
+    applicationsError.value = '操作失败，请稍后重试'
   } finally {
     decidingId.value = ''
   }
@@ -177,8 +177,8 @@ async function createPack() {
     await api.createEmotePack(auth.token.value, name)
     newPackName.value = ''
     await loadPacks()
-  } catch (err) {
-    packsError.value = err instanceof ApiRequestError ? `创建失败：${err.code}` : '创建失败，请稍后重试'
+  } catch {
+    packsError.value = '创建失败，请稍后重试'
   } finally {
     packBusy.value = false
   }
@@ -191,8 +191,8 @@ async function deletePack(pack: EmotePack) {
   try {
     await api.deleteEmotePack(auth.token.value, pack.id)
     await loadPacks()
-  } catch (err) {
-    packsError.value = err instanceof ApiRequestError ? `删除失败：${err.code}` : '删除失败，请稍后重试'
+  } catch {
+    packsError.value = '删除失败，请稍后重试'
   }
 }
 
@@ -215,8 +215,8 @@ async function addEmote(pack: EmotePack, file: File) {
     await api.createEmote(auth.token.value, pack.id, name, uploaded.id)
     newEmoteName[pack.id] = ''
     await loadPacks()
-  } catch (err) {
-    packsError.value = err instanceof ApiRequestError ? `添加失败：${err.code}` : '添加失败，请稍后重试'
+  } catch {
+    packsError.value = '添加失败，请稍后重试'
   } finally {
     emoteUploading[pack.id] = false
   }
@@ -235,8 +235,8 @@ async function deleteEmote(emote: Emote) {
   try {
     await api.deleteEmote(auth.token.value, emote.id)
     await loadPacks()
-  } catch (err) {
-    packsError.value = err instanceof ApiRequestError ? `删除失败：${err.code}` : '删除失败，请稍后重试'
+  } catch {
+    packsError.value = '删除失败，请稍后重试'
   }
 }
 
@@ -266,7 +266,7 @@ onMounted(() => {
       <section class="admin-card">
         <h2 class="admin-card__title">实例政策</h2>
         <WinInfoBar :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Informational">
-          政策由服务器部署配置（wrangler vars）控制，如需修改请联系服务器运维人员。
+          政策由服务器部署配置控制，如需修改请联系服务器运维人员。
         </WinInfoBar>
         <dl v-if="config" class="policy-summary">
           <dt>根节点（开放注册）</dt>

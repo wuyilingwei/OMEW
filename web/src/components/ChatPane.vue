@@ -11,6 +11,7 @@ import { actorLocalpart } from '../utils/actor'
 import { WinButton, WinInfoBar } from '../vendor/winui'
 import EmotePicker from './EmotePicker.vue'
 import EmptyState from './EmptyState.vue'
+import AppIcon from './icons/AppIcon.vue'
 import MessageBubble, { type MessageVM } from './MessageBubble.vue'
 
 const auth = useAuth()
@@ -209,13 +210,15 @@ watch(
       <div v-if="attachments.items.value.length" class="chat-pane__attachments">
         <div v-for="item in attachments.items.value" :key="item.id" class="chat-pane__attachment">
           <img :src="item.url" alt="" />
-          <button type="button" class="chat-pane__attachment-remove" title="移除" @click="attachments.remove(item.id)">×</button>
+          <button type="button" class="chat-pane__attachment-remove" title="移除" @click="attachments.remove(item.id)">
+            <AppIcon name="close" :size="12" />
+          </button>
         </div>
       </div>
       <div class="chat-pane__compose">
         <EmotePicker v-if="showEmotePicker" @pick="pickEmote" @close="showEmotePicker = false" />
         <WinButton Style="SubtleButtonStyle" class="chat-pane__emote-btn" title="表情" @Click="showEmotePicker = !showEmotePicker">
-          😀
+          <AppIcon name="emote" :size="18" />
         </WinButton>
         <input ref="imageInput" class="chat-pane__image-input" type="file" accept="image/*" multiple @change="onImageInputChange" />
         <WinButton
@@ -225,7 +228,7 @@ watch(
           :IsEnabled="!attachments.uploading.value"
           @Click="pickImages"
         >
-          🖼
+          <AppIcon name="image" :size="18" />
         </WinButton>
         <textarea
           v-model="draft"
@@ -325,11 +328,12 @@ watch(
   right: 0;
   width: 18px;
   height: 18px;
-  line-height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: rgba(0, 0, 0, 0.6);
   color: #fff;
-  font-size: 0.85rem;
 }
 
 .chat-pane__compose {

@@ -51,8 +51,8 @@ async function toggleGroup(group: Group, assign: boolean) {
       await api.removeMemberFromGroup(auth.token.value, selectedNodeId.value, props.member.actor, group.id)
     }
     emit('groups-changed')
-  } catch (err) {
-    groupActionError.value = err instanceof ApiRequestError ? `操作失败：${err.code}` : '操作失败，请稍后重试'
+  } catch {
+    groupActionError.value = '操作失败，请稍后重试'
   } finally {
     pendingGroupId.value = ''
   }

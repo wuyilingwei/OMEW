@@ -6,6 +6,7 @@ import { useSectionRoom } from '../composables/useSectionRoom'
 import { requiredError, requiredMaxLengthError } from '../utils/validate'
 import { WinButton, WinInfoBar } from '../vendor/winui'
 import CoverUploader from './CoverUploader.vue'
+import AppIcon from './icons/AppIcon.vue'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -122,7 +123,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               <div class="compose-modal__images">
                 <div v-for="item in attachments.items.value" :key="item.id" class="compose-modal__image">
                   <img :src="item.url" alt="" />
-                  <button type="button" class="compose-modal__image-remove" title="移除" @click="attachments.remove(item.id)">×</button>
+                  <button type="button" class="compose-modal__image-remove" title="移除" @click="attachments.remove(item.id)">
+                    <AppIcon name="close" :size="10" />
+                  </button>
                 </div>
                 <WinButton Style="DefaultButtonStyle" :IsEnabled="!attachments.uploading.value" @Click="pickImages">
                   {{ attachments.uploading.value ? '上传中…' : '添加图片' }}
@@ -279,11 +282,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   right: 0;
   width: 16px;
   height: 16px;
-  line-height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: rgba(0, 0, 0, 0.6);
   color: #fff;
-  font-size: 0.75rem;
 }
 
 @media (max-width: 768px) {
