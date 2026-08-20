@@ -54,18 +54,27 @@ export interface StrongholdTokenClaims {
   jti: string;
 }
 
+// m0-protocol §7.10: server-level role tier, orthogonal to stronghold roles.
+// server_owner is unique (the instance operator); server_admin is appointable
+// by server_owner. Neither propagates over federation.
+export type ServerRole = "owner" | "admin" | "user";
+
 // Session claims (see auth.ts for the HMAC signing mechanism) - not a WS token,
 // used for HTTP bearer auth. Issued by /api/register and /api/login (users.ts).
+// Carries server_role so permission gates don't need a DB read per request
+// (§7.10) - a role change only takes effect for a session's holder once that
+// session's own 24h TTL expires, same as every other claim here.
 export interface SessionTokenClaims {
   v: 1;
   typ: "session";
   actor: string;
+  server_role: ServerRole;
   exp: number;
   jti: string;
 }
 
-// Instance-level identity policy (users.ts), backed by the single-row
-// instance_config table (migration 0002).
+// Instance-level identity/governance policy (m0-protocol §7.9) - deployment env
+// config (server/src/config.ts), not runtime-writable.
 export type RootRequirement = "email" | "phone" | "code";
 
 // m0-protocol §7.9: self-operated instance governance policies.
@@ -90,10 +99,13 @@ export interface InstanceConfig {
 }
 
 // Shape returned to clients on register/login - never includes pw_hash/pw_salt or
-// the ownership ciphertext.
+// the ownership ciphertext. is_admin is kept for client compatibility: true
+// whenever server_role is "owner" or "admin" (§7.10) - the DB column it used to
+// read no longer exists as a source of truth, see users.ts's toPublicUser.
 export interface PublicUser {
   username: string;
   actor: string;
+  server_role: ServerRole;
   is_admin: boolean;
   email: string | null;
   email_verified: boolean;

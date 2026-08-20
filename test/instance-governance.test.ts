@@ -1,54 +1,45 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
-import { apiRequest, ensureMigrated, registerUser } from "./helpers";
+import { apiRequest, ensureMigrated, loginAs, registerUser } from "./helpers";
 
 // Instance governance (m0-protocol §7.9): stronghold_creation_policy's
-// open/restricted/application matrix and its application/approval flow, plus
-// the three governance fields on GET|PATCH /api/admin/instance/config and their
-// public subset on GET /api/instance/config.
+// open/restricted/application matrix, now driven by the STRONGHOLD_CREATION /
+// STRONGHOLD_CREATORS / FEDERATION_PEERS env vars (task 035) instead of the
+// instance_config D1 table. GET/PATCH /api/admin/instance/config's read-only-ness
+// is covered separately below.
 
 const OWNERSHIP = { ownership_pubkey: "test-pubkey", ownership_ciphertext: "test-ciphertext-blob" };
 
 let userCounter = 0;
 
-async function freshUser(): Promise<{ actor: string; token: string }> {
+async function freshUser(): Promise<{ actor: string; token: string; username: string }> {
   userCounter += 1;
   const username = `govuser${userCounter}`;
   const { status, json } = await registerUser({ username, password: "password123", ...OWNERSHIP });
   expect(status).toBe(200);
-  return { actor: `@${username}:local`, token: json.token as string };
+  return { actor: `@${username}:local`, token: json.token as string, username };
 }
 
+// Promotes via direct D1 write (server_role is otherwise only settable through
+// the owner-only PATCH /api/admin/users/:localpart endpoint - see
+// server-role.test.ts) then re-logs-in, since server_role now rides in the
+// session token claim (m0-protocol §7.10) and a token minted before the
+// promotion wouldn't reflect it.
 async function makeAdmin(): Promise<{ actor: string; token: string }> {
   const user = await freshUser();
-  await env.DB.prepare("UPDATE users SET is_admin = 1 WHERE localpart = ?")
-    .bind(user.actor.slice(1, user.actor.indexOf(":")))
-    .run();
-  return user;
+  await env.DB.prepare("UPDATE users SET server_role = 'admin' WHERE localpart = ?").bind(user.username).run();
+  const token = await loginAs(user.username);
+  return { actor: user.actor, token };
 }
 
-interface GovernanceRow {
-  federation_peers: string;
-  stronghold_creation_policy: string;
-  stronghold_creators: string;
-}
-
-async function setGovernance(overrides: {
+function setGovernanceEnv(overrides: {
   federation_peers?: string[];
   stronghold_creation_policy?: string;
   stronghold_creators?: string[];
-}): Promise<void> {
-  const current = await env.DB.prepare(
-    "SELECT federation_peers, stronghold_creation_policy, stronghold_creators FROM instance_config WHERE id = 1"
-  ).first<GovernanceRow>();
-  const peers = overrides.federation_peers ?? (JSON.parse(current!.federation_peers) as string[]);
-  const policy = overrides.stronghold_creation_policy ?? current!.stronghold_creation_policy;
-  const creators = overrides.stronghold_creators ?? (JSON.parse(current!.stronghold_creators) as string[]);
-  await env.DB.prepare(
-    "UPDATE instance_config SET federation_peers = ?, stronghold_creation_policy = ?, stronghold_creators = ? WHERE id = 1"
-  )
-    .bind(JSON.stringify(peers), policy, JSON.stringify(creators))
-    .run();
+}): void {
+  if (overrides.federation_peers) env.FEDERATION_PEERS = overrides.federation_peers.join(",");
+  if (overrides.stronghold_creation_policy) env.STRONGHOLD_CREATION = overrides.stronghold_creation_policy;
+  if (overrides.stronghold_creators) env.STRONGHOLD_CREATORS = overrides.stronghold_creators.join(",");
 }
 
 beforeAll(async () => {
@@ -57,7 +48,7 @@ beforeAll(async () => {
 
 describe("POST /api/strongholds: creation policy matrix", () => {
   it("open: any logged-in user can create directly", async () => {
-    await setGovernance({ stronghold_creation_policy: "open", stronghold_creators: [] });
+    setGovernanceEnv({ stronghold_creation_policy: "open", stronghold_creators: [] });
     const user = await freshUser();
     const res = await apiRequest("/api/strongholds", {
       method: "POST",
@@ -71,7 +62,7 @@ describe("POST /api/strongholds: creation policy matrix", () => {
     const listed = await freshUser();
     const admin = await makeAdmin();
     const outsider = await freshUser();
-    await setGovernance({ stronghold_creation_policy: "restricted", stronghold_creators: [listed.actor] });
+    setGovernanceEnv({ stronghold_creation_policy: "restricted", stronghold_creators: [listed.actor] });
 
     const listedRes = await apiRequest("/api/strongholds", {
       method: "POST",
@@ -97,7 +88,7 @@ describe("POST /api/strongholds: creation policy matrix", () => {
   });
 
   it("application: files a pending application; approval creates the stronghold owned by the applicant with default rooms", async () => {
-    await setGovernance({ stronghold_creation_policy: "application", stronghold_creators: [] });
+    setGovernanceEnv({ stronghold_creation_policy: "application", stronghold_creators: [] });
     const applicant = await freshUser();
     const admin = await makeAdmin();
 
@@ -151,7 +142,7 @@ describe("POST /api/strongholds: creation policy matrix", () => {
   });
 
   it("application: rejection leaves no stronghold behind, and a repeat decision is rejected with 409", async () => {
-    await setGovernance({ stronghold_creation_policy: "application", stronghold_creators: [] });
+    setGovernanceEnv({ stronghold_creation_policy: "application", stronghold_creators: [] });
     const applicant = await freshUser();
     const admin = await makeAdmin();
 
@@ -186,7 +177,7 @@ describe("POST /api/strongholds: creation policy matrix", () => {
   });
 
   it("application: an admin bypasses the application flow and creates directly", async () => {
-    await setGovernance({ stronghold_creation_policy: "application", stronghold_creators: [] });
+    setGovernanceEnv({ stronghold_creation_policy: "application", stronghold_creators: [] });
     const admin = await makeAdmin();
     const res = await apiRequest("/api/strongholds", {
       method: "POST",
@@ -197,68 +188,49 @@ describe("POST /api/strongholds: creation policy matrix", () => {
   });
 });
 
-describe("admin instance config: governance fields", () => {
-  it("round-trips federation_peers, stronghold_creation_policy, stronghold_creators through GET/PATCH", async () => {
-    const admin = await makeAdmin();
-    const patchRes = await apiRequest("/api/admin/instance/config", {
-      method: "PATCH",
-      headers: { Authorization: `Bearer ${admin.token}` },
-      body: JSON.stringify({
-        federation_peers: ["peer.example", "other.peer.example"],
-        stronghold_creation_policy: "restricted",
-        stronghold_creators: ["@alice:local"],
-      }),
+describe("admin instance config: policy is env, not runtime-writable", () => {
+  it("GET reflects the env-derived governance fields with source: env", async () => {
+    setGovernanceEnv({
+      federation_peers: ["peer.example", "other.peer.example"],
+      stronghold_creation_policy: "restricted",
+      stronghold_creators: ["@alice:local"],
     });
-    expect(patchRes.status).toBe(200);
-    const patched = (await patchRes.json()) as Record<string, unknown>;
-    expect(patched.federation_peers).toEqual(["peer.example", "other.peer.example"]);
-    expect(patched.stronghold_creation_policy).toBe("restricted");
-    expect(patched.stronghold_creators).toEqual(["@alice:local"]);
-
-    const getRes = await apiRequest("/api/admin/instance/config", { headers: { Authorization: `Bearer ${admin.token}` } });
-    const fetched = (await getRes.json()) as Record<string, unknown>;
-    expect(fetched.federation_peers).toEqual(["peer.example", "other.peer.example"]);
-    expect(fetched.stronghold_creation_policy).toBe("restricted");
-    expect(fetched.stronghold_creators).toEqual(["@alice:local"]);
+    const admin = await makeAdmin();
+    const res = await apiRequest("/api/admin/instance/config", { headers: { Authorization: `Bearer ${admin.token}` } });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.source).toBe("env");
+    expect(body.federation_peers).toEqual(["peer.example", "other.peer.example"]);
+    expect(body.stronghold_creation_policy).toBe("restricted");
+    expect(body.stronghold_creators).toEqual(["@alice:local"]);
   });
 
-  it("rejects an invalid policy enum with 400 CONFIG_INVALID", async () => {
+  it("PATCH always 409s with POLICY_IS_ENV, regardless of body content", async () => {
     const admin = await makeAdmin();
     const res = await apiRequest("/api/admin/instance/config", {
       method: "PATCH",
       headers: { Authorization: `Bearer ${admin.token}` },
-      body: JSON.stringify({ stronghold_creation_policy: "invited-only" }),
+      body: JSON.stringify({ stronghold_creation_policy: "open" }),
     });
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: "CONFIG_INVALID" });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "POLICY_IS_ENV" });
   });
 
-  it("rejects a malformed actor in stronghold_creators with 400 CONFIG_INVALID", async () => {
-    const admin = await makeAdmin();
+  it("PATCH still requires server-admin auth before the 409 (a plain user gets 403 first)", async () => {
+    const user = await freshUser();
     const res = await apiRequest("/api/admin/instance/config", {
       method: "PATCH",
-      headers: { Authorization: `Bearer ${admin.token}` },
-      body: JSON.stringify({ stronghold_creators: ["not-an-actor"] }),
+      headers: { Authorization: `Bearer ${user.token}` },
+      body: JSON.stringify({ stronghold_creation_policy: "open" }),
     });
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: "CONFIG_INVALID" });
-  });
-
-  it("rejects a malformed domain in federation_peers with 400 CONFIG_INVALID", async () => {
-    const admin = await makeAdmin();
-    const res = await apiRequest("/api/admin/instance/config", {
-      method: "PATCH",
-      headers: { Authorization: `Bearer ${admin.token}` },
-      body: JSON.stringify({ federation_peers: ["*"] }),
-    });
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: "CONFIG_INVALID" });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "ADMIN_REQUIRED" });
   });
 });
 
 describe("GET /api/instance/config: public subset", () => {
   it("exposes stronghold_creation without leaking creators or peers", async () => {
-    await setGovernance({ stronghold_creation_policy: "application" });
+    setGovernanceEnv({ stronghold_creation_policy: "application" });
     const res = await apiRequest("/api/instance/config");
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;

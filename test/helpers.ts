@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import worker from "../server/src/api";
 import { signToken } from "../server/src/auth";
-import type { Role, RoomTokenClaims, SessionTokenClaims } from "../server/src/types";
+import type { Role, RoomTokenClaims, ServerRole, SessionTokenClaims } from "../server/src/types";
 import migration0001 from "../server/migrations/0001_init.sql?raw";
 import migration0002 from "../server/migrations/0002_user_system.sql?raw";
 import migration0003 from "../server/migrations/0003_stronghold_index.sql?raw";
@@ -9,6 +9,7 @@ import migration0004 from "../server/migrations/0004_media.sql?raw";
 import migration0005 from "../server/migrations/0005_emotes.sql?raw";
 import migration0006 from "../server/migrations/0006_governance.sql?raw";
 import migration0007 from "../server/migrations/0007_guest_domain.sql?raw";
+import migration0008 from "../server/migrations/0008_server_role.sql?raw";
 
 // Must match vitest.config.ts's miniflare.bindings.DEV_TOKEN_SECRET.
 export const TEST_SECRET = "test-secret-do-not-use-in-prod";
@@ -31,7 +32,7 @@ export async function ensureMigrated(): Promise<void> {
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'instance_config'"
   ).first();
   if (marker) return;
-  for (const sql of [migration0001, migration0002, migration0003, migration0004, migration0005, migration0006, migration0007]) {
+  for (const sql of [migration0001, migration0002, migration0003, migration0004, migration0005, migration0006, migration0007, migration0008]) {
     for (const statement of splitStatements(sql)) {
       await env.DB.prepare(statement).run();
     }
@@ -82,6 +83,16 @@ export async function registerUser(
 ): Promise<{ status: number; json: Record<string, unknown> }> {
   const res = await apiRequest("/api/register", { method: "POST", body: JSON.stringify(body) });
   return { status: res.status, json: (await res.json()) as Record<string, unknown> };
+}
+
+// server_role rides in the session token claim (m0-protocol §7.10) - a token
+// minted before a D1 server_role promotion won't reflect it, so tests that
+// promote a user directly via D1 (there's no other way to mint an owner in a
+// test) need a fresh token afterwards to actually exercise the new role.
+export async function loginAs(username: string, password = "password123"): Promise<string> {
+  const res = await apiRequest("/api/login", { method: "POST", body: JSON.stringify({ username, password }) });
+  const body = (await res.json()) as { token: string };
+  return body.token;
 }
 
 export async function connectRoom(
@@ -177,11 +188,15 @@ export function itemDeleteFrame(targetSeq: number, reason?: string): string {
 // Mints a bearer session token directly (bypasses /api/register + D1) - mirrors
 // connectRoom's direct RoomTokenClaims signing, for tests that only care about
 // StrongholdDO/RoomDO authorization mechanics rather than the full user system.
-export async function sessionToken(actor: string): Promise<string> {
+// Defaults to server_role "user" (no §7.10 overlay) so existing per-stronghold
+// role tests keep exercising real membership; pass "admin"/"owner" to test the
+// overlay explicitly.
+export async function sessionToken(actor: string, serverRole: ServerRole = "user"): Promise<string> {
   const claims: SessionTokenClaims = {
     v: 1,
     typ: "session",
     actor,
+    server_role: serverRole,
     exp: Math.floor(Date.now() / 1000) + 300,
     jti: crypto.randomUUID(),
   };

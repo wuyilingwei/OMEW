@@ -18,7 +18,18 @@
     { "tag": "v1", "new_sqlite_classes": ["RoomDO", "StrongholdDO"] }
   ],
   "vars": {
-    "INSTANCE_DOMAIN": "omew.wuyilingwei.com"
+    "INSTANCE_DOMAIN": "omew.wuyilingwei.com",
+    // m0-protocol §7.9: instance policy as deployment env config - see
+    // server/src/config.ts for parsing and .dev.vars.example for local overrides.
+    "ALLOW_ROOT": "1",
+    "ROOT_REQUIREMENTS": "",
+    "TRUSTED_IDENTITY_SERVERS": "*",
+    "FEDERATION_PEERS": "",
+    "STRONGHOLD_CREATION": "open",
+    "STRONGHOLD_CREATORS": "",
+    "ALLOW_GUEST_BROWSING": "1",
+    "MAX_FILE_BYTES": "10485760",
+    "USER_STORAGE_QUOTA_BYTES": "209715200"
   },
   "d1_databases": [
     {
