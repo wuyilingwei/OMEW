@@ -76,6 +76,20 @@ export interface EditConfigSnapshot {
   edit_window_secs: number;
 }
 
+// m0-protocol §7.3 revocation propagation: local-only DO-to-DO frame (never
+// crosses federation, never occupies seq, never enters a dedupe table).
+// `effect: "close"` is a hard kick (ban/remove); `effect: "update_deny"` is a
+// live role/deny change - role/deny are pre-computed by StrongholdDO (via
+// getEffective, so groups are already folded in) so RoomDO never has to call
+// back into StrongholdDO per revoke.
+export interface MemberRevokePayload {
+  actor: string;
+  scope: string;
+  effect: "close" | "update_deny";
+  role?: Role;
+  deny?: number;
+}
+
 export class StrongholdDO extends DurableObject<Env> {
   // DOs created via getByName always carry their name back on ctx.id - used to
   // key the D1 membership index without an extra config read on every call.
@@ -227,6 +241,39 @@ export class StrongholdDO extends DurableObject<Env> {
     );
   }
 
+  // ---- revocation propagation (m0-protocol §7.3) --------------------------------
+  // Same DO-to-DO fire-and-forget convention as pushEditConfigToRooms above: every
+  // room DO this stronghold owns gets the frame, a failed push to one room never
+  // blocks the others or the caller's own mutation.
+
+  private async pushRevokeToRooms(payload: MemberRevokePayload): Promise<void> {
+    const rooms = await this.listRooms();
+    await Promise.all(
+      rooms.map((room) => {
+        const roomRef = `${this.selfId}/${typeToKind(room.type)}/${room.res_id}`;
+        const stub = this.env.ROOM_DO.getByName(roomRef);
+        return stub.revokeMember(payload).catch(() => {});
+      })
+    );
+  }
+
+  // Shared by the group-mutation paths below: recompute one actor's effective
+  // role/deny (groups included) and push it down. null means the actor no longer
+  // resolves to any access (not a member, or banned) - banMember/removeMember
+  // already send their own "close" for that transition, nothing to do here.
+  private async pushEffectiveRevoke(actor: string): Promise<void> {
+    const eff = await this.getEffective(actor);
+    if (!eff) return;
+    await this.pushRevokeToRooms({ actor, scope: this.selfId, effect: "update_deny", role: eff.role, deny: eff.deny });
+  }
+
+  private listGroupMemberActors(groupId: string): string[] {
+    return this.ctx.storage.sql
+      .exec<{ actor: string }>("SELECT actor FROM member_groups WHERE group_id = ?", groupId)
+      .toArray()
+      .map((r) => r.actor);
+  }
+
   // ---- rooms --------------------------------------------------------------------
 
   async createRoom(resId: string, type: RoomType, name: string, capabilities: string[], restricted: boolean, position?: number): Promise<RoomRow> {
@@ -310,6 +357,7 @@ export class StrongholdDO extends DurableObject<Env> {
     const role = patch.role ?? current.role;
     const deny = role === "mod" ? 0 : patch.deny ?? current.deny;
     this.ctx.storage.sql.exec("UPDATE member SET role = ?, deny = ? WHERE actor = ?", role, deny, actor);
+    await this.pushEffectiveRevoke(actor);
     return { ...current, role, deny };
   }
 
@@ -320,6 +368,7 @@ export class StrongholdDO extends DurableObject<Env> {
     if (!current || current.role === "owner") return false;
     this.ctx.storage.sql.exec("DELETE FROM member WHERE actor = ?", actor);
     await this.unindexMember(actor);
+    await this.pushRevokeToRooms({ actor, scope: this.selfId, effect: "close" });
     return true;
   }
 
@@ -345,6 +394,7 @@ export class StrongholdDO extends DurableObject<Env> {
         "ON CONFLICT(actor) DO UPDATE SET operator = excluded.operator, banned_at = excluded.banned_at",
       actor, operator, bannedAt
     );
+    await this.pushRevokeToRooms({ actor, scope: this.selfId, effect: "close" });
     return { ...target, banned_at: bannedAt };
   }
 
@@ -403,6 +453,11 @@ export class StrongholdDO extends DurableObject<Env> {
       "UPDATE groups SET name = ?, color = ?, position = ?, perm_speak = ?, perm_post = ?, perm_reply = ?, is_moderator = ? WHERE id = ?",
       next.name, next.color, next.position, next.perm_speak, next.perm_post, next.perm_reply, next.is_moderator, id
     );
+    // A group's perms/moderator flag changing re-derives every member who holds
+    // it (m0-protocol §7.3) - membership in the group itself is
+    // untouched by this patch, so the actor set is stable across the update.
+    const actors = this.listGroupMemberActors(id);
+    await Promise.all(actors.map((actor) => this.pushEffectiveRevoke(actor)));
     return next;
   }
 
@@ -411,8 +466,13 @@ export class StrongholdDO extends DurableObject<Env> {
   async deleteGroup(id: string): Promise<boolean> {
     const current = await this.getGroup(id);
     if (!current) return false;
+    // Capture membership before the cascade delete below removes it - each of
+    // these actors' effective permissions changes now that the group is gone
+    // (m0-protocol §7.3).
+    const actors = this.listGroupMemberActors(id);
     this.ctx.storage.sql.exec("DELETE FROM member_groups WHERE group_id = ?", id);
     this.ctx.storage.sql.exec("DELETE FROM groups WHERE id = ?", id);
+    await Promise.all(actors.map((actor) => this.pushEffectiveRevoke(actor)));
     return true;
   }
 
@@ -433,11 +493,13 @@ export class StrongholdDO extends DurableObject<Env> {
       "INSERT INTO member_groups (actor, group_id) VALUES (?, ?) ON CONFLICT(actor, group_id) DO NOTHING",
       actor, groupId
     );
+    await this.pushEffectiveRevoke(actor);
     return true;
   }
 
   async removeMemberFromGroup(actor: string, groupId: string): Promise<void> {
     this.ctx.storage.sql.exec("DELETE FROM member_groups WHERE actor = ? AND group_id = ?", actor, groupId);
+    await this.pushEffectiveRevoke(actor);
   }
 
   async listMemberGroups(actor: string): Promise<GroupRow[]> {
