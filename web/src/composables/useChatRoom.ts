@@ -116,6 +116,23 @@ async function connectRoom(nodeId: string, room: RoomSummary) {
       onAck: (ack) => {
         if (!ack.client_id) return
         clearAckTimer(ack.client_id)
+        // the room broadcast excludes the sender, so the acked message must be
+        // upserted locally from the pending entry or it silently vanishes for
+        // its own author the moment the optimistic bubble is cleared.
+        const sent = pending.value.find((p) => p.clientId === ack.client_id)
+        if (sent && typeof ack.seq === 'number') {
+          const body: Record<string, unknown> = { text: sent.text }
+          if (sent.media?.length) body.media = sent.media
+          upsertItem({
+            seq: ack.seq,
+            parent_seq: null,
+            root_seq: null,
+            actor: auth.user.value?.actor ?? '',
+            kind: 'post',
+            ts: sent.ts,
+            body,
+          } as RoomItem)
+        }
         pending.value = pending.value.filter((p) => p.clientId !== ack.client_id)
       },
       onItem: (item) => upsertItem(item),
