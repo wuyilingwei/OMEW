@@ -247,6 +247,13 @@ export class StrongholdDO extends DurableObject<Env> {
   // blocks the others or the caller's own mutation.
 
   private async pushRevokeToRooms(payload: MemberRevokePayload): Promise<void> {
+    // §7.3 covers stronghold-level WS tokens too ("MUST NOT rely on token
+    // natural expiry"), so a hard revoke also tears down the actor's tips
+    // sockets (§10.6) on this very DO. update_deny doesn't apply: the tips
+    // channel grants no write access, role/deny changes can't affect it.
+    if (payload.effect === "close") {
+      this.closeTipSockets(payload.actor);
+    }
     const rooms = await this.listRooms();
     await Promise.all(
       rooms.map((room) => {
@@ -255,6 +262,18 @@ export class StrongholdDO extends DurableObject<Env> {
         return stub.revokeMember(payload).catch(() => {});
       })
     );
+  }
+
+  private closeTipSockets(actor: string): void {
+    for (const ws of this.ctx.getWebSockets("tips")) {
+      const attachment = ws.deserializeAttachment() as TipAttachment | null;
+      if (!attachment || attachment.actor !== actor) continue;
+      try {
+        ws.close(1008, "OMEW_SESSION_INVALID");
+      } catch {
+        // socket already gone.
+      }
+    }
   }
 
   // Shared by the group-mutation paths below: recompute one actor's effective
@@ -399,6 +418,10 @@ export class StrongholdDO extends DurableObject<Env> {
     this.ctx.storage.sql.exec("UPDATE member SET role = 'owner', deny = 0 WHERE actor = ?", toActor);
     this.ctx.storage.sql.exec("UPDATE member SET role = 'member', deny = 0 WHERE actor = ?", fromActor);
     this.ctx.storage.sql.exec("UPDATE config SET owner_actor = ? WHERE id = ?", toActor, config.id);
+    // Both actors' live attachments still carry the pre-transfer roles
+    // (m0-protocol §7.3) - the demotion matters for enforcement, the promotion
+    // is pushed for symmetry so a reconnect is never needed to pick it up.
+    await Promise.all([this.pushEffectiveRevoke(fromActor), this.pushEffectiveRevoke(toActor)]);
     return { ...config, owner_actor: toActor };
   }
 
@@ -500,6 +523,14 @@ export class StrongholdDO extends DurableObject<Env> {
     for (const p of positions) {
       this.ctx.storage.sql.exec("UPDATE groups SET position = ? WHERE id = ?", p.position, p.id);
     }
+    // position is the synthesis order (permissions.ts), so a reorder can flip
+    // the effective outcome for anyone holding several of the reordered groups -
+    // re-derive the union of their members (m0-protocol §7.3).
+    const actors = new Set<string>();
+    for (const p of positions) {
+      for (const actor of this.listGroupMemberActors(p.id)) actors.add(actor);
+    }
+    await Promise.all([...actors].map((actor) => this.pushEffectiveRevoke(actor)));
     return this.listGroups();
   }
 

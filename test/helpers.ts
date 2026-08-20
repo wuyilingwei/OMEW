@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import worker from "../server/src/api";
 import { signToken } from "../server/src/auth";
-import type { Role, RoomTokenClaims, ServerRole, SessionTokenClaims } from "../server/src/types";
+import type { Role, RoomTokenClaims, ServerRole, SessionTokenClaims, StrongholdTokenClaims } from "../server/src/types";
 import migration0001 from "../server/migrations/0001_init.sql?raw";
 import migration0002 from "../server/migrations/0002_user_system.sql?raw";
 import migration0003 from "../server/migrations/0003_stronghold_index.sql?raw";
@@ -113,6 +113,32 @@ export async function connectRoom(
   };
   const token = await signToken(claims, TEST_SECRET);
   const stub = env.ROOM_DO.getByName(roomRef);
+  const res = await stub.fetch("http://do/ws", {
+    headers: { Upgrade: "websocket", "Sec-WebSocket-Protocol": token },
+  });
+  const ws = res.webSocket;
+  if (!ws) throw new Error("handshake did not return a websocket");
+  ws.accept();
+  return { ws, stub };
+}
+
+// Stronghold-level tips WS (m0-protocol §10.6) - mirrors connectRoom, but with a
+// stronghold-scoped token against StrongholdDO.fetch. The server sends a
+// tip.update snapshot as its first frame on every fresh connection.
+export async function connectTips(
+  strongholdId: string,
+  actor: string
+): Promise<{ ws: WebSocket; stub: DurableObjectStub<import("../server/src/stronghold-do").StrongholdDO> }> {
+  const claims: StrongholdTokenClaims = {
+    v: 1,
+    typ: "stronghold",
+    actor,
+    stronghold: strongholdId,
+    exp: Math.floor(Date.now() / 1000) + 300,
+    jti: crypto.randomUUID(),
+  };
+  const token = await signToken(claims, TEST_SECRET);
+  const stub = env.STRONGHOLD_DO.getByName(strongholdId);
   const res = await stub.fetch("http://do/ws", {
     headers: { Upgrade: "websocket", "Sec-WebSocket-Protocol": token },
   });
