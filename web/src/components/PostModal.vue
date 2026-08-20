@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useAuth } from '../composables/useAuth'
+import { useAuthModal } from '../composables/useAuthModal'
 import { usePostModal } from '../composables/usePostModal'
 import { useSectionRoom } from '../composables/useSectionRoom'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
@@ -8,6 +10,8 @@ import { WinButton } from '../vendor/winui'
 import AvatarBadge from './AvatarBadge.vue'
 import MediaGrid from './MediaGrid.vue'
 
+const auth = useAuth()
+const { openAuthModal } = useAuthModal()
 const { openPostSeq, close } = usePostModal()
 const { thread, threadLoading, threadRepliesLoading, threadHasMore, openThread, closeThread, loadMoreReplies, createReply } =
   useSectionRoom()
@@ -95,10 +99,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                   </WinButton>
                 </div>
 
-                <div class="post-modal__reply-form">
+                <div v-if="auth.isAuthenticated.value" class="post-modal__reply-form">
                   <textarea v-model="replyDraft" rows="2" placeholder="写评论…"></textarea>
                   <p v-if="replyError" class="field__error">{{ replyError }}</p>
                   <WinButton Style="AccentButtonStyle" class="post-modal__reply-submit" @Click="submitReply">回复</WinButton>
+                </div>
+                <div v-else class="post-modal__reply-form post-modal__reply-form--guest">
+                  <p class="field__hint">登录后参与评论</p>
+                  <WinButton Style="AccentButtonStyle" @Click="openAuthModal">登录 / 注册</WinButton>
                 </div>
               </div>
             </div>
@@ -331,6 +339,21 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
 .post-modal__reply-submit {
   align-self: flex-end;
+}
+
+.post-modal__reply-form--guest {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.7rem 0.9rem;
+  border-radius: var(--radius-sm);
+  background: var(--ctrl-fill-secondary);
+}
+
+.post-modal__reply-form--guest .field__hint {
+  margin: 0;
 }
 
 @media (max-width: 768px) {

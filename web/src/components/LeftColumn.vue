@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { EMPTY_STATE } from '../assets/mew'
+import { useAuth } from '../composables/useAuth'
+import { useAuthModal } from '../composables/useAuthModal'
 import { useSectionRoom } from '../composables/useSectionRoom'
 import { WinButton } from '../vendor/winui'
 import ComposePostModal from './ComposePostModal.vue'
 import EmptyState from './EmptyState.vue'
 import PostCard from './PostCard.vue'
 
+const auth = useAuth()
+const { openAuthModal } = useAuthModal()
 const { posts, postsLoading, hasMorePosts, loadMorePosts, postRoom } = useSectionRoom()
 
 const showCompose = ref(false)
@@ -24,8 +28,16 @@ function closeCompose() {
   <aside class="left-column">
     <div class="left-column__header">
       <span>帖子</span>
-      <WinButton v-if="postRoom" Style="AccentButtonStyle" class="left-column__compose-btn" @Click="openCompose">
+      <WinButton
+        v-if="postRoom && auth.isAuthenticated.value"
+        Style="AccentButtonStyle"
+        class="left-column__compose-btn"
+        @Click="openCompose"
+      >
         发帖
+      </WinButton>
+      <WinButton v-else-if="postRoom" Style="DefaultButtonStyle" class="left-column__compose-btn" @Click="openAuthModal">
+        登录后发帖
       </WinButton>
     </div>
 

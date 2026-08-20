@@ -66,11 +66,13 @@ async function connectRoom(nodeId: string, room: RoomSummary) {
   openPostSeq = null
   pendingCreates.clear()
 
-  const auth = useAuth()
-  if (!auth.token.value) return
-
   await loadMorePosts(true)
   if (roomKey !== key) return
+
+  // guest (no session): the read-only list/thread above already came through
+  // over REST - posting needs the room WS, which stays member-only.
+  const auth = useAuth()
+  if (!auth.token.value) return
 
   transport = createRoomTransport({
     nodeId,
@@ -141,7 +143,7 @@ async function loadMorePosts(reset = false) {
   const { selectedNodeId, currentNode } = useStronghold()
   const auth = useAuth()
   const room = currentNode.value?.rooms.find((r) => r.type === 'section')
-  if (!auth.token.value || !selectedNodeId.value || !room) return
+  if (!selectedNodeId.value || !room) return
   if (!reset && (postsLoading.value || !hasMorePosts.value)) return
   postsLoading.value = true
   try {
@@ -204,7 +206,7 @@ export function useSectionRoom() {
     const nodeId = selectedNodeId.value
     const room = postRoom.value
     openPostSeq = postSeq
-    if (!auth.token.value || !nodeId || !room) return
+    if (!nodeId || !room) return
     threadLoading.value = true
     thread.value = null
     try {
@@ -226,7 +228,7 @@ export function useSectionRoom() {
     const auth = useAuth()
     const nodeId = selectedNodeId.value
     const room = postRoom.value
-    if (!auth.token.value || !nodeId || !room || !thread.value || threadRepliesLoading.value || !threadHasMore.value) return
+    if (!nodeId || !room || !thread.value || threadRepliesLoading.value || !threadHasMore.value) return
     const before = thread.value.next_before
     if (before == null) return
     threadRepliesLoading.value = true

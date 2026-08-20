@@ -9,7 +9,7 @@ let loadedForNode = ''
 
 async function loadConfig(nodeId: string) {
   const auth = useAuth()
-  if (!auth.token.value || !nodeId) return
+  if (!nodeId) return
   try {
     config.value = await api.getStrongholdConfig(auth.token.value, nodeId)
     loadedForNode = nodeId
