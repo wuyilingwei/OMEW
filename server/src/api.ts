@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { dummyPasswordFields, hashPassword, newJti, signToken, verifyPassword, verifyToken } from "./auth";
 import { getInstanceConfig } from "./config";
 import { handleInbox } from "./inbox";
-import type { ConfigRow, MemberRow } from "./stronghold-do";
+import type { EffectivePermissions } from "./permissions";
+import type { ConfigRow, GroupRow, MemberRow } from "./stronghold-do";
 import {
   instanceDomain,
   typeToKind,
@@ -118,6 +119,22 @@ function overlayRole(serverRole: ServerRole, member: MemberRow | null): Role | n
   if (serverRole === "owner" || serverRole === "admin") return "owner";
   if (!member || member.banned_at) return null;
   return member.role;
+}
+
+// task 037: overlayRole's group-aware counterpart - the one function every
+// tier-gated route and the WS room-token mint call to get a member's actual
+// effective role/deny once their custom groups are folded in (StrongholdDO's
+// getEffective, backed by permissions.ts). Short-circuits the DO call entirely
+// for the server_role owner/admin overlay, same as overlayRole did.
+async function effectiveRole(
+  env: Env,
+  strongholdId: string,
+  serverRole: ServerRole,
+  actor: string
+): Promise<EffectivePermissions | null> {
+  if (serverRole === "owner" || serverRole === "admin") return { role: "owner", deny: 0 };
+  const stub = env.STRONGHOLD_DO.getByName(strongholdId);
+  return stub.getEffective(actor);
 }
 
 function match(pattern: string, path: string): Record<string, string> | null {
@@ -877,9 +894,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const session = await requireSession(request, env);
     if (session instanceof Response) return session;
     const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    const requester = await stub.getMember(session.actor);
-    const requesterRole = overlayRole(session.server_role, requester);
-    if (!requesterRole || (requesterRole !== "owner" && requesterRole !== "mod")) return apiError(403, "FORBIDDEN");
+    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
+    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
 
     const body = await readJsonBody(request);
     if (!body) return apiError(413, "PAYLOAD_INVALID");
@@ -914,8 +930,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const existing = await stub.getMember(actor);
     if (existing) {
       if (existing.banned_at) return apiError(403, "FORBIDDEN");
-      const profiles = await actorProfiles(env, [actor]);
-      return json(toMemberEntry(existing, profiles.get(actor)));
+      const [profiles, groups] = await Promise.all([actorProfiles(env, [actor]), stub.listMemberGroups(actor)]);
+      return json(toMemberEntry(existing, profiles.get(actor), groups));
     }
     // §7.2/§9 placeholder: private strongholds need a join_request flow (M6-era
     // federation feature); until then this is the explicit "not implemented yet"
@@ -976,13 +992,12 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const session = await requireSession(request, env);
     if (session instanceof Response) return session;
     const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    const member = await stub.getMember(session.actor);
-    const role = overlayRole(session.server_role, member);
-    if (!role || (role !== "owner" && role !== "mod")) return apiError(403, "FORBIDDEN");
+    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
+    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
     const body = await readJsonBody(request);
     if (!body) return apiError(413, "PAYLOAD_INVALID");
     // §9 / proposal: visibility is owner-only, every other config field is owner/mod.
-    if ("visibility" in body && role !== "owner") return apiError(403, "FORBIDDEN");
+    if ("visibility" in body && eff.role !== "owner") return apiError(403, "FORBIDDEN");
 
     const patch: Partial<
       Pick<ConfigRow, "description" | "visibility" | "cover" | "allow_message_edit" | "allow_message_retract" | "edit_window_secs">
@@ -1040,8 +1055,9 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
           : all.filter((entry) => entry.banned_at == null);
 
     const { page, next_cursor } = paginateMembers(filtered, after);
-    const profiles = await actorProfiles(env, page.map((entry) => entry.actor));
-    const entries = page.map((entry) => toMemberEntry(entry, profiles.get(entry.actor)));
+    const actors = page.map((entry) => entry.actor);
+    const [profiles, groupsByActor] = await Promise.all([actorProfiles(env, actors), stub.listGroupsForMembers(actors)]);
+    const entries = page.map((entry) => toMemberEntry(entry, profiles.get(entry.actor), groupsByActor[entry.actor]));
     return json({ entries, next_cursor });
   }
 
@@ -1050,9 +1066,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const session = await requireSession(request, env);
     if (session instanceof Response) return session;
     const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    const requester = await stub.getMember(session.actor);
-    const requesterRole = overlayRole(session.server_role, requester);
-    if (!requesterRole || (requesterRole !== "owner" && requesterRole !== "mod")) return apiError(403, "FORBIDDEN");
+    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
+    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
 
     const body = await readJsonBody(request);
     if (!body) return apiError(413, "PAYLOAD_INVALID");
@@ -1064,7 +1079,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     let role: "mod" | "member" | undefined;
     if ("role" in body) {
       // §9: appointing/dismissing a mod is owner-only.
-      if (requesterRole !== "owner") return apiError(403, "FORBIDDEN");
+      if (eff.role !== "owner") return apiError(403, "FORBIDDEN");
       if (body.role !== "mod" && body.role !== "member") return apiError(400, "ROLE_INVALID");
       role = body.role;
     }
@@ -1081,23 +1096,169 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
     const updated = await stub.updateMember(m.actor!, { role, deny });
     if (!updated) return apiError(404, "NOT_FOUND");
-    const profiles = await actorProfiles(env, [updated.actor]);
-    return json(toMemberEntry(updated, profiles.get(updated.actor)));
+    const [profiles, groups] = await Promise.all([actorProfiles(env, [updated.actor]), stub.listMemberGroups(updated.actor)]);
+    return json(toMemberEntry(updated, profiles.get(updated.actor), groups));
   }
   if (m && method === "DELETE") {
     const session = await requireSession(request, env);
     if (session instanceof Response) return session;
     const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    const requester = await stub.getMember(session.actor);
-    const requesterRole = overlayRole(session.server_role, requester);
-    if (!requesterRole || (requesterRole !== "owner" && requesterRole !== "mod")) return apiError(403, "FORBIDDEN");
+    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
+    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
 
     const target = await stub.getMember(m.actor!);
     if (!target) return apiError(404, "NOT_FOUND");
     if (target.role === "owner") return apiError(403, "FORBIDDEN");
-    if (target.role === "mod" && requesterRole !== "owner") return apiError(403, "FORBIDDEN");
+    if (target.role === "mod" && eff.role !== "owner") return apiError(403, "FORBIDDEN");
 
     await stub.removeMember(m.actor!);
+    return new Response(null, { status: 204, headers: cors() });
+  }
+
+  // ---- custom groups (task 037) ----------------------------------------------------
+  // Stronghold-local groups: multi-membership, position-ordered tri-state perms
+  // (speak/post/reply) + a moderator flag, synthesized by permissions.ts and
+  // shared with the WS room-token mint. Same owner/mod (or server owner/admin
+  // overlay, via effectiveRole) gate as the rest of this management surface.
+
+  m = match("/api/stronghold/:id/groups", path);
+  if (m && method === "GET") {
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
+    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
+    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    return json({ groups: (await stub.listGroups()).map(toApiGroup) });
+  }
+  if (m && method === "POST") {
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
+    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
+    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!isValidGroupName(name)) return apiError(400, "GROUP_NAME_INVALID");
+    const color = parseOptionalColor(body.color);
+    if (color === INVALID_COLOR) return apiError(400, "GROUP_COLOR_INVALID");
+    const permSpeak = parseTriState(body.perm_speak);
+    const permPost = parseTriState(body.perm_post);
+    const permReply = parseTriState(body.perm_reply);
+    if (permSpeak === null || permPost === null || permReply === null) return apiError(400, "GROUP_PERM_INVALID");
+
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const group = await stub.createGroup(name, color, permSpeak, permPost, permReply, Boolean(body.is_moderator));
+    if (typeof body.position === "number" && Number.isInteger(body.position)) {
+      const repositioned = await stub.updateGroup(group.id, { position: body.position });
+      return json(toApiGroup(repositioned!), 201);
+    }
+    return json(toApiGroup(group), 201);
+  }
+  if (m && method === "PATCH") {
+    // Bulk reorder - the individual-group PATCH below (:gid) also accepts a
+    // `position` field for a one-at-a-time move.
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
+    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
+    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    if (!Array.isArray(body.positions)) return apiError(400, "PAYLOAD_INVALID");
+
+    const positions: { id: string; position: number }[] = [];
+    for (const raw of body.positions) {
+      const entry = (raw ?? {}) as Record<string, unknown>;
+      if (typeof entry.id !== "string" || typeof entry.position !== "number" || !Number.isInteger(entry.position)) {
+        return apiError(400, "PAYLOAD_INVALID");
+      }
+      positions.push({ id: entry.id, position: entry.position });
+    }
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const groups = await stub.reorderGroups(positions);
+    return json({ groups: groups.map(toApiGroup) });
+  }
+
+  m = match("/api/stronghold/:id/groups/:gid", path);
+  if (m && method === "PATCH") {
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
+    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
+    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+
+    const patch: Partial<Pick<GroupRow, "name" | "color" | "position" | "perm_speak" | "perm_post" | "perm_reply" | "is_moderator">> = {};
+    if ("name" in body) {
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      if (!isValidGroupName(name)) return apiError(400, "GROUP_NAME_INVALID");
+      patch.name = name;
+    }
+    if ("color" in body) {
+      const color = parseOptionalColor(body.color);
+      if (color === INVALID_COLOR) return apiError(400, "GROUP_COLOR_INVALID");
+      patch.color = color;
+    }
+    if ("position" in body) {
+      if (typeof body.position !== "number" || !Number.isInteger(body.position)) return apiError(400, "PAYLOAD_INVALID");
+      patch.position = body.position;
+    }
+    if ("perm_speak" in body) {
+      const v = parseTriState(body.perm_speak);
+      if (v === null) return apiError(400, "GROUP_PERM_INVALID");
+      patch.perm_speak = v;
+    }
+    if ("perm_post" in body) {
+      const v = parseTriState(body.perm_post);
+      if (v === null) return apiError(400, "GROUP_PERM_INVALID");
+      patch.perm_post = v;
+    }
+    if ("perm_reply" in body) {
+      const v = parseTriState(body.perm_reply);
+      if (v === null) return apiError(400, "GROUP_PERM_INVALID");
+      patch.perm_reply = v;
+    }
+    if ("is_moderator" in body) {
+      patch.is_moderator = body.is_moderator ? 1 : 0;
+    }
+
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const updated = await stub.updateGroup(m.gid!, patch);
+    if (!updated) return apiError(404, "NOT_FOUND");
+    return json(toApiGroup(updated));
+  }
+  if (m && method === "DELETE") {
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
+    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
+    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const removed = await stub.deleteGroup(m.gid!);
+    if (!removed) return apiError(404, "NOT_FOUND");
+    return new Response(null, { status: 204, headers: cors() });
+  }
+
+  m = match("/api/stronghold/:id/members/:actor/groups/:gid", path);
+  if (m && method === "PUT") {
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
+    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
+    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const target = await stub.getMember(m.actor!);
+    if (!target) return apiError(404, "NOT_FOUND");
+    if (target.role === "owner") return apiError(403, "FORBIDDEN");
+    const added = await stub.addMemberToGroup(m.actor!, m.gid!);
+    if (!added) return apiError(404, "NOT_FOUND");
+    return new Response(null, { status: 204, headers: cors() });
+  }
+  if (m && method === "DELETE") {
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
+    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
+    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    await stub.removeMemberFromGroup(m.actor!, m.gid!);
     return new Response(null, { status: 204, headers: cors() });
   }
 
@@ -1105,10 +1266,9 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   if (m && method === "GET") {
     const session = await requireSession(request, env);
     if (session instanceof Response) return session;
+    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
+    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
     const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    const requester = await stub.getMember(session.actor);
-    const role = overlayRole(session.server_role, requester);
-    if (!role || (role !== "owner" && role !== "mod")) return apiError(403, "FORBIDDEN");
     const entries = await stub.listBans();
     return json({ entries });
   }
@@ -1118,14 +1278,13 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const session = await requireSession(request, env);
     if (session instanceof Response) return session;
     const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    const requester = await stub.getMember(session.actor);
-    const requesterRole = overlayRole(session.server_role, requester);
-    if (!requesterRole || (requesterRole !== "owner" && requesterRole !== "mod")) return apiError(403, "FORBIDDEN");
+    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
+    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
 
     const target = await stub.getMember(m.actor!);
     if (!target) return apiError(404, "NOT_FOUND");
     if (target.role === "owner") return apiError(403, "FORBIDDEN");
-    if (target.role === "mod" && requesterRole !== "owner") return apiError(403, "FORBIDDEN");
+    if (target.role === "mod" && eff.role !== "owner") return apiError(403, "FORBIDDEN");
 
     const banned = await stub.banMember(m.actor!, session.actor);
     if (!banned) return apiError(404, "NOT_FOUND");
@@ -1134,10 +1293,9 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   if (m && method === "DELETE") {
     const session = await requireSession(request, env);
     if (session instanceof Response) return session;
+    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
+    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
     const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    const requester = await stub.getMember(session.actor);
-    const role = overlayRole(session.server_role, requester);
-    if (!role || (role !== "owner" && role !== "mod")) return apiError(403, "FORBIDDEN");
 
     await stub.unbanMember(m.actor!);
     return new Response(null, { status: 204, headers: cors() });
@@ -1197,9 +1355,10 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const session = await requireSession(request, env);
     if (session instanceof Response) return session;
     const strongholdStub = env.STRONGHOLD_DO.getByName(m.id!);
-    const member = await strongholdStub.getMember(session.actor);
-    const role = overlayRole(session.server_role, member);
-    if (!role) return apiError(403, "FORBIDDEN");
+    // task 037: retract's moderator-override check (room-do.ts) needs the
+    // group-synthesized effective role, not just the raw member row.
+    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
+    if (!eff) return apiError(403, "FORBIDDEN");
     const room = await strongholdStub.getRoom(m.resId!);
     if (!room) return apiError(404, "NOT_FOUND");
     const seq = Number(m.seq);
@@ -1207,7 +1366,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
     const roomRef = `${m.id!}/${typeToKind(room.type)}/${m.resId!}`;
     const roomStub = env.ROOM_DO.getByName(roomRef);
-    const result = await roomStub.retractItem(session.actor, role, roomRef, seq);
+    const result = await roomStub.retractItem(session.actor, eff.role, roomRef, seq);
     if (!result.ok) return apiError(roomErrorStatus(result.code), result.code);
     return json({ seq: result.seq, target_seq: seq });
   }
@@ -1252,15 +1411,16 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const session = await requireSession(request, env);
     if (session instanceof Response) return errorResponse(401, "OMEW_SESSION_INVALID", "auth required");
     const strongholdStub = env.STRONGHOLD_DO.getByName(m.id!);
-    const member = await strongholdStub.getMember(session.actor);
-    const role = overlayRole(session.server_role, member);
-    if (!role) return errorResponse(403, "OMEW_BANNED", "not a member or banned");
+    // task 037: role/deny baked into the token are the group-synthesized
+    // effective values (permissions.ts) - RoomDO itself is unchanged, it just
+    // reads whatever role/deny the token carries.
+    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
+    if (!eff) return errorResponse(403, "OMEW_BANNED", "not a member or banned");
     const room = await strongholdStub.getRoom(m.resId!);
     if (!room) return errorResponse(404, "OMEW_ROOM_NOT_FOUND", "room not found");
     const roomRef = `${m.id!}/${typeToKind(room.type)}/${m.resId!}`;
-    const deny = role === "owner" || role === "mod" ? 0 : (member?.deny ?? 0);
     const claims: RoomTokenClaims = {
-      v: 1, typ: "room", actor: session.actor, room: roomRef, role, deny,
+      v: 1, typ: "room", actor: session.actor, room: roomRef, role: eff.role, deny: eff.deny,
       exp: nowS() + ROOM_TOKEN_TTL_S, jti: newJti(),
     };
     const token = await signToken(claims, env.DEV_TOKEN_SECRET);
@@ -1643,6 +1803,43 @@ function toApiConfig(row: ConfigRow) {
   };
 }
 
+// ---- custom groups helpers (task 037) ---------------------------------------------
+
+function toApiGroup(row: GroupRow) {
+  return {
+    id: row.id,
+    name: row.name,
+    color: row.color,
+    position: row.position,
+    perm_speak: row.perm_speak,
+    perm_post: row.perm_post,
+    perm_reply: row.perm_reply,
+    is_moderator: Boolean(row.is_moderator),
+  };
+}
+
+function isValidGroupName(name: string): boolean {
+  return name.length > 0 && name.length <= 32;
+}
+
+const INVALID_COLOR = Symbol("invalid_color");
+const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
+// Optional hex color - absent/null clears it, anything else must match #RRGGBB.
+function parseOptionalColor(v: unknown): string | null | typeof INVALID_COLOR {
+  if (v === null || v === undefined) return null;
+  if (typeof v !== "string" || !COLOR_RE.test(v)) return INVALID_COLOR;
+  return v;
+}
+
+// perm_speak/perm_post/perm_reply: -1 deny / 0 inherit / 1 allow. Missing means
+// "leave at inherit" on create, invalid on anything else.
+function parseTriState(v: unknown): -1 | 0 | 1 | null {
+  if (v === undefined) return 0;
+  if (v === -1 || v === 0 || v === 1) return v;
+  return null;
+}
+
 const ROOM_ERROR_STATUS: Record<string, number> = {
   OMEW_MALFORMED: 400,
   OMEW_TARGET_NOT_FOUND: 404,
@@ -1705,7 +1902,7 @@ async function actorProfiles(env: Env, actors: string[]): Promise<Map<string, Ac
   return result;
 }
 
-function toMemberEntry(member: MemberRow, profile: ActorProfile | undefined) {
+function toMemberEntry(member: MemberRow, profile: ActorProfile | undefined, groups: GroupRow[] = []) {
   return {
     actor: member.actor,
     display_name: profile?.display_name ?? member.actor,
@@ -1713,6 +1910,7 @@ function toMemberEntry(member: MemberRow, profile: ActorProfile | undefined) {
     deny: member.deny,
     joined_at: member.joined_at,
     is_guest: profile?.is_guest ?? false,
+    groups: groups.map((g) => ({ id: g.id, name: g.name, color: g.color })),
     ...(profile?.home_domain ? { home_domain: profile.home_domain } : {}),
   };
 }
@@ -1749,16 +1947,15 @@ async function requireMembership(request: Request, env: Env, strongholdId: strin
 }
 
 // S9: read paths carry the same role check as write paths - GET endpoints MUST
-// also be clipped by role, not just POST/PATCH/DELETE.
+// also be clipped by role, not just POST/PATCH/DELETE. task 037: role here is
+// the group-synthesized effective role (effectiveRole), not the raw member row.
 async function requireRole(request: Request, env: Env, strongholdId: string, roles: Role[]): Promise<Response | { actor: string; role: Role }> {
   const session = await requireSession(request, env);
   if (session instanceof Response) return errorResponse(401, "OMEW_SESSION_INVALID", "auth required");
-  const stub = env.STRONGHOLD_DO.getByName(strongholdId);
-  const member = await stub.getMember(session.actor);
-  const role = overlayRole(session.server_role, member);
-  if (!role) return errorResponse(403, "OMEW_BANNED", "not a member or banned");
-  if (!roles.includes(role)) return errorResponse(403, "OMEW_FORBIDDEN", "insufficient role");
-  return { actor: session.actor, role };
+  const eff = await effectiveRole(env, strongholdId, session.server_role, session.actor);
+  if (!eff) return errorResponse(403, "OMEW_BANNED", "not a member or banned");
+  if (!roles.includes(eff.role)) return errorResponse(403, "OMEW_FORBIDDEN", "insufficient role");
+  return { actor: session.actor, role: eff.role };
 }
 
 // ---- guest read gate (task 034 / m0-protocol §8.2) -------------------------------
