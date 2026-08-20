@@ -10,7 +10,10 @@ import {
   nextClose,
   nextMessage,
   nextMessageOfType,
+  registerUser,
 } from "./helpers";
+
+const OWNERSHIP = { ownership_pubkey: "test-pubkey", ownership_ciphertext: "test-ciphertext-blob" };
 
 // m0-protocol §7.3 revocation propagation: StrongholdDO pushes a local
 // member.revoke frame to every room DO it owns whenever ban/kick/role-deny/group
@@ -93,19 +96,29 @@ describe("member.revoke propagation (m0-protocol §7.3)", () => {
     expect(err).toMatchObject({ type: "error", code: "OMEW_FORBIDDEN" });
   });
 
+  // task 048: groups are server-level D1 rows (server_groups/user_server_groups)
+  // rather than a per-DO table - inserted directly here to isolate this suite's
+  // focus (StrongholdDO's revocation push) from the admin HTTP surface, which
+  // has its own coverage in test/server-groups.test.ts. revokeActor is the
+  // public entry point the admin routes call after a D1 group mutation.
   it("revokes a moderator group's live privilege without disconnecting the socket", async () => {
     const owner = "@revokeowner4:local";
     const target = "@revokemod4:local";
     const victim = "@revokevictim4:local";
     const id = await freshStronghold(owner);
     const stub = env.STRONGHOLD_DO.getByName(id);
-    const group = await stub.createGroup("Mods", null, 0, 0, 0, true);
+    const groupId = crypto.randomUUID();
+    await env.DB.prepare(
+      "INSERT INTO server_groups (id, name, color, position, allow_speak, allow_post, allow_reply, is_moderator, created_at) VALUES (?, 'Mods', NULL, 0, 0, 0, 0, 1, ?)"
+    ).bind(groupId, Date.now()).run();
     await stub.addMember(target, "member");
-    await stub.addMemberToGroup(target, group.id);
+    const localpart = target.slice(1, target.indexOf(":"));
+    await registerUser({ username: localpart, password: "password123", ...OWNERSHIP });
+    await env.DB.prepare("INSERT INTO user_server_groups (localpart, group_id) VALUES (?, ?)").bind(localpart, groupId).run();
 
     const roomRef = `${id}/ch/general`;
     // Token mint (api.ts) would have resolved this member to "mod" via
-    // getEffective at handshake time - simulated directly here, same as every
+    // effectiveRole at handshake time - simulated directly here, same as every
     // other connectRoom call in this suite.
     const { ws: modWs } = await connectRoom(roomRef, target, "mod");
     const { ws: victimWs } = await connectRoom(roomRef, victim, "member");
@@ -118,7 +131,8 @@ describe("member.revoke propagation (m0-protocol §7.3)", () => {
     const deleteAck = await nextMessage(modWs);
     expect(deleteAck).toMatchObject({ type: "ack", status: "ok", target_seq: seq1 });
 
-    await stub.removeMemberFromGroup(target, group.id);
+    await env.DB.prepare("DELETE FROM user_server_groups WHERE localpart = ? AND group_id = ?").bind(localpart, groupId).run();
+    await stub.revokeActor(target);
 
     victimWs.send(itemCreateFrame("m2", "second"));
     const ack2 = await nextMessage(victimWs);
@@ -162,11 +176,20 @@ describe("member.revoke propagation (m0-protocol §7.3)", () => {
     const stub = env.STRONGHOLD_DO.getByName(id);
     // A (position 0) denies speak, B (position 1) allows it - synthesis applies
     // ascending positions with later ones winning, so the member starts allowed.
-    const groupA = await stub.createGroup("A", null, -1, 0, 0, false);
-    const groupB = await stub.createGroup("B", null, 1, 0, 0, false);
+    const groupAId = crypto.randomUUID();
+    const groupBId = crypto.randomUUID();
+    await env.DB.prepare(
+      "INSERT INTO server_groups (id, name, color, position, allow_speak, allow_post, allow_reply, is_moderator, created_at) VALUES (?, 'A', NULL, 0, -1, 0, 0, 0, ?)"
+    ).bind(groupAId, Date.now()).run();
+    await env.DB.prepare(
+      "INSERT INTO server_groups (id, name, color, position, allow_speak, allow_post, allow_reply, is_moderator, created_at) VALUES (?, 'B', NULL, 1, 1, 0, 0, 0, ?)"
+    ).bind(groupBId, Date.now()).run();
     await stub.addMember(target, "member");
-    await stub.addMemberToGroup(target, groupA.id);
-    await stub.addMemberToGroup(target, groupB.id);
+    const localpart = target.slice(1, target.indexOf(":"));
+    await registerUser({ username: localpart, password: "password123", ...OWNERSHIP });
+    await env.DB.prepare("INSERT INTO user_server_groups (localpart, group_id) VALUES (?, ?), (?, ?)")
+      .bind(localpart, groupAId, localpart, groupBId)
+      .run();
 
     const roomRef = `${id}/ch/general`;
     const { ws } = await connectRoom(roomRef, target, "member", 0);
@@ -176,10 +199,11 @@ describe("member.revoke propagation (m0-protocol §7.3)", () => {
 
     // Swapping the two makes A's deny the last word - same socket must lose
     // speak without a reconnect.
-    await stub.reorderGroups([
-      { id: groupA.id, position: 1 },
-      { id: groupB.id, position: 0 },
+    await env.DB.batch([
+      env.DB.prepare("UPDATE server_groups SET position = 1 WHERE id = ?").bind(groupAId),
+      env.DB.prepare("UPDATE server_groups SET position = 0 WHERE id = ?").bind(groupBId),
     ]);
+    await stub.revokeActor(target);
 
     ws.send(itemCreateFrame("m2", "after reorder"));
     expect(await nextMessage(ws)).toMatchObject({ type: "error", code: "OMEW_FORBIDDEN" });

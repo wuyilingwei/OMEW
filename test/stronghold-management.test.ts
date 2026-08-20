@@ -705,5 +705,5 @@ it("legacy :local member rows are lazily adopted under the configured domain", a
   expect(adopted!.role).toBe("owner");
   const direct = await stub.getMember("@relic:omew.test");
   expect(direct!.actor).toBe("@relic:omew.test");
-  expect(await stub.getEffective("@relic:omew.test")).toMatchObject({ role: "owner", deny: 0 });
+  expect(direct).toMatchObject({ role: "owner", deny: 0 });
 });
