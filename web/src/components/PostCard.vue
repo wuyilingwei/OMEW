@@ -37,11 +37,7 @@ function formatTime(ts: number): string {
           <span class="post-card__author">{{ authorName() }}</span>
         </span>
         <span class="post-card__time">
-          <template v-if="post.reply_count > 0">
-            {{ post.reply_count }} 回复
-            <AppIcon name="dot" :size="4" class="post-card__dot" />
-          </template>
-          {{ formatTime(post.bumped_at) }}
+          <template v-if="post.reply_count > 0">{{ post.reply_count }} 回复<AppIcon name="dot" :size="4" class="post-card__dot" /></template>{{ formatTime(post.bumped_at) }}
         </span>
       </div>
     </div>

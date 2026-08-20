@@ -58,11 +58,6 @@ const { setView } = useShellView()
   color: var(--text-secondary);
 }
 
-.middle-column__back svg {
-  width: 20px;
-  height: 20px;
-}
-
 .middle-column__back:active {
   background: var(--ctrl-fill-secondary);
 }
