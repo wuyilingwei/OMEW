@@ -17,6 +17,9 @@
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["RoomDO", "StrongholdDO"] }
   ],
+  "vars": {
+    "INSTANCE_DOMAIN": "omew.wuyilingwei.com"
+  },
   "d1_databases": [
     {
       "binding": "DB",

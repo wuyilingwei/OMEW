@@ -78,7 +78,7 @@ export function domainOfActor(actor: string): string {
 export async function getInstanceConfig(env: Env): Promise<InstanceConfig> {
   const row = await env.DB.prepare(
     "SELECT allow_root, root_requirements, trusted_identity_servers, max_file_bytes, user_storage_quota_bytes, " +
-      "federation_peers, stronghold_creation_policy, stronghold_creators FROM instance_config WHERE id = 1"
+      "federation_peers, stronghold_creation_policy, stronghold_creators, allow_guest_browsing FROM instance_config WHERE id = 1"
   ).first<{
     allow_root: number;
     root_requirements: string;
@@ -88,6 +88,7 @@ export async function getInstanceConfig(env: Env): Promise<InstanceConfig> {
     federation_peers: string;
     stronghold_creation_policy: StrongholdCreationPolicy;
     stronghold_creators: string;
+    allow_guest_browsing: number;
   }>();
   if (!row) {
     // Unreachable once migration 0002 has run (it seeds the single row) - fail
@@ -101,6 +102,7 @@ export async function getInstanceConfig(env: Env): Promise<InstanceConfig> {
       federation_peers: [],
       stronghold_creation_policy: "restricted",
       stronghold_creators: [],
+      allow_guest_browsing: false,
     };
   }
   return {
@@ -112,6 +114,7 @@ export async function getInstanceConfig(env: Env): Promise<InstanceConfig> {
     federation_peers: JSON.parse(row.federation_peers) as string[],
     stronghold_creation_policy: row.stronghold_creation_policy,
     stronghold_creators: JSON.parse(row.stronghold_creators) as string[],
+    allow_guest_browsing: Boolean(row.allow_guest_browsing),
   };
 }
 
