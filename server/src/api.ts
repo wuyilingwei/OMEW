@@ -1,11 +1,24 @@
 import { createHash } from "node:crypto";
-import { dummyPasswordFields, hashPassword, newJti, signToken, verifyPassword, verifyToken } from "./auth";
+import {
+  generateAuthenticationOptions,
+  generateRegistrationOptions,
+  verifyAuthenticationResponse,
+  verifyRegistrationResponse,
+} from "@simplewebauthn/server";
+import type {
+  AuthenticationResponseJSON,
+  AuthenticatorTransportFuture,
+  RegistrationResponseJSON,
+} from "@simplewebauthn/server";
+import { base64UrlDecode, base64UrlEncode, dummyPasswordFields, hashPassword, newJti, signToken, verifyPassword, verifyToken } from "./auth";
 import { getInstanceConfig } from "./config";
 import { handleInbox } from "./inbox";
 import type { EffectivePermissions } from "./permissions";
 import { synthesizeEffectivePermissions } from "./permissions";
 import { fetchServerGroupsForLocalpart, type ConfigRow, type MemberRow } from "./stronghold-do";
+import { generateTotpSecret, totpOtpauthUrl, verifyTotpCode } from "./totp";
 import {
+  HOME_DOMAIN,
   instanceDomain,
   typeToKind,
   type Role,
@@ -14,6 +27,9 @@ import {
   type ServerRole,
   type SessionTokenClaims,
   type StrongholdTokenClaims,
+  type TotpPendingTokenClaims,
+  type WebauthnAuthChallengeClaims,
+  type WebauthnRegChallengeClaims,
 } from "./types";
 import {
   domainOfActor,
@@ -34,6 +50,21 @@ const ROOM_TOKEN_TTL_S = 300; // m0-protocol S7.3: room/stronghold WS token exp 
 const MAX_BODY_BYTES = 64 * 1024;
 const USERS_PAGE_SIZE = 50;
 const MAX_OWNERSHIP_CIPHERTEXT_BYTES = 8 * 1024; // m0-protocol §7.9a: custody ciphertext size cap
+const TOTP_PENDING_TTL_S = 300; // m0-protocol §7.2a
+const WEBAUTHN_CHALLENGE_TTL_S = 300;
+
+// m0-protocol §7.2a: WebAuthn RP ID / origin pair. Production targets the
+// instance's own https domain; local/dev (INSTANCE_DOMAIN unset, falls back
+// to HOME_DOMAIN "local") targets the workerd dev server directly, matching
+// how the browser actually reaches it in both cases.
+function webauthnRpId(env: Env): string {
+  const domain = instanceDomain(env);
+  return domain === HOME_DOMAIN ? "localhost" : domain;
+}
+function webauthnOrigin(env: Env): string {
+  const domain = instanceDomain(env);
+  return domain === HOME_DOMAIN ? "http://localhost:8787" : `https://${domain}`;
+}
 
 const RES_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
@@ -357,7 +388,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const password = String(body.password ?? "");
 
     const user = await env.DB.prepare(
-      "SELECT localpart, pw_hash, pw_salt, status, server_role, email, email_verified FROM users WHERE localpart = ?"
+      "SELECT localpart, pw_hash, pw_salt, status, server_role, email, email_verified, totp_enabled FROM users WHERE localpart = ?"
     )
       .bind(username)
       .first<{
@@ -368,6 +399,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
         server_role: ServerRole;
         email: string | null;
         email_verified: number;
+        totp_enabled: number;
       }>();
 
     // Always pay the same PBKDF2 cost whether or not the account exists, and never
@@ -380,8 +412,56 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     }
 
     const actor = `@${username}:${instanceDomain(env)}`;
+
+    // m0-protocol §7.2a: TOTP second factor gates password login specifically.
+    // No session is issued yet - the client must complete POST /api/login/totp
+    // with a valid code before getting one.
+    if (user.totp_enabled === 1) {
+      const pending: TotpPendingTokenClaims = {
+        v: 1, typ: "totp_pending", actor, exp: nowS() + TOTP_PENDING_TTL_S, jti: newJti(),
+      };
+      return json({ totp_required: true, pending: await signToken(pending, env.DEV_TOKEN_SECRET) });
+    }
+
     const token = await issueSessionToken(actor, user.server_role, env);
     return json({ token, user: toPublicUser(user, actor) });
+  }
+
+  if (method === "POST" && path === "/api/login/totp") {
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    const pendingToken = typeof body.pending === "string" ? body.pending : "";
+    const code = typeof body.code === "string" ? body.code : "";
+    if (!pendingToken || !code) return apiError(400, "PAYLOAD_INVALID");
+
+    const claims = await verifyToken<TotpPendingTokenClaims>(pendingToken, env.DEV_TOKEN_SECRET);
+    if (!claims || claims.typ !== "totp_pending") return apiError(401, "AUTH_FAILED");
+
+    const localpart = localpartOfActor(claims.actor);
+    const user = await env.DB.prepare(
+      "SELECT localpart, status, server_role, email, email_verified, totp_secret, totp_enabled, last_totp_step FROM users WHERE localpart = ?"
+    )
+      .bind(localpart)
+      .first<{
+        localpart: string;
+        status: string;
+        server_role: ServerRole;
+        email: string | null;
+        email_verified: number;
+        totp_secret: string | null;
+        totp_enabled: number;
+        last_totp_step: number;
+      }>();
+    if (!user || user.status !== "active" || user.totp_enabled !== 1 || !user.totp_secret) {
+      return apiError(401, "AUTH_FAILED");
+    }
+
+    const step = verifyTotpCode(user.totp_secret, code);
+    if (step === null || step === user.last_totp_step) return apiError(401, "TOTP_INVALID");
+
+    await env.DB.prepare("UPDATE users SET last_totp_step = ? WHERE localpart = ?").bind(step, localpart).run();
+    const token = await issueSessionToken(claims.actor, user.server_role, env);
+    return json({ token, user: toPublicUser(user, claims.actor) });
   }
 
   // ---- account: change password ----------------------------------------------------
@@ -448,6 +528,253 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
       .first<{ ownership_pubkey: string | null; ownership_ciphertext: string | null }>();
     if (!user) return apiError(404, "NOT_FOUND");
     return json({ ownership_pubkey: user.ownership_pubkey ?? "", ownership_ciphertext: user.ownership_ciphertext ?? "" });
+  }
+
+  // ---- account: TOTP second factor (m0-protocol §7.2a) ------------------------------
+
+  if (method === "POST" && path === "/api/me/totp/setup") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const localpart = localpartOfActor(actor);
+    const user = await env.DB.prepare("SELECT totp_enabled FROM users WHERE localpart = ?")
+      .bind(localpart)
+      .first<{ totp_enabled: number }>();
+    if (!user) return apiError(404, "NOT_FOUND");
+    if (user.totp_enabled === 1) return apiError(409, "TOTP_ALREADY_ENABLED");
+
+    const secret = generateTotpSecret();
+    await env.DB.prepare("UPDATE users SET totp_secret = ? WHERE localpart = ?").bind(secret, localpart).run();
+    return json({ secret, otpauth_url: totpOtpauthUrl(localpart, secret) });
+  }
+
+  if (method === "POST" && path === "/api/me/totp/activate") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    const code = typeof body.code === "string" ? body.code : "";
+    if (!code) return apiError(400, "PAYLOAD_INVALID");
+
+    const localpart = localpartOfActor(actor);
+    const user = await env.DB.prepare("SELECT totp_secret, last_totp_step FROM users WHERE localpart = ?")
+      .bind(localpart)
+      .first<{ totp_secret: string | null; last_totp_step: number }>();
+    if (!user?.totp_secret) return apiError(409, "TOTP_NOT_PENDING");
+
+    const step = verifyTotpCode(user.totp_secret, code);
+    if (step === null) return apiError(401, "TOTP_INVALID");
+    if (step === user.last_totp_step) return apiError(409, "TOTP_CODE_REUSED");
+
+    await env.DB.prepare("UPDATE users SET totp_enabled = 1, last_totp_step = ? WHERE localpart = ?")
+      .bind(step, localpart)
+      .run();
+    return json({ ok: true });
+  }
+
+  if (method === "POST" && path === "/api/me/totp/disable") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    const password = typeof body.password === "string" ? body.password : "";
+    const code = typeof body.code === "string" ? body.code : "";
+    if (!password || !code) return apiError(400, "PAYLOAD_INVALID");
+
+    const localpart = localpartOfActor(actor);
+    const user = await env.DB.prepare("SELECT pw_hash, pw_salt, totp_secret, last_totp_step FROM users WHERE localpart = ?")
+      .bind(localpart)
+      .first<{ pw_hash: string | null; pw_salt: string | null; totp_secret: string | null; last_totp_step: number }>();
+    const dummy = dummyPasswordFields();
+    const validPassword = await verifyPassword(password, user?.pw_hash ?? dummy.hash, user?.pw_salt ?? dummy.salt);
+    if (!user || !validPassword) return apiError(401, "AUTH_FAILED");
+    if (!user.totp_secret) return apiError(409, "TOTP_NOT_PENDING");
+
+    const step = verifyTotpCode(user.totp_secret, code);
+    if (step === null || step === user.last_totp_step) return apiError(401, "TOTP_INVALID");
+
+    await env.DB.prepare("UPDATE users SET totp_secret = NULL, totp_enabled = 0, last_totp_step = 0 WHERE localpart = ?")
+      .bind(localpart)
+      .run();
+    return json({ ok: true });
+  }
+
+  // ---- account: WebAuthn passkeys (m0-protocol §7.2a) --------------------------------
+
+  if (method === "GET" && path === "/api/me/passkeys") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const localpart = localpartOfActor(actor);
+    const { results } = await env.DB.prepare(
+      "SELECT credential_id, name, created_at FROM webauthn_credentials WHERE localpart = ? ORDER BY created_at ASC"
+    )
+      .bind(localpart)
+      .all<{ credential_id: string; name: string; created_at: number }>();
+    return json({ passkeys: results.map((r) => ({ id: r.credential_id, name: r.name, created_at: r.created_at })) });
+  }
+
+  if (method === "POST" && path === "/api/me/passkeys/options") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const localpart = localpartOfActor(actor);
+    const { results: existing } = await env.DB.prepare("SELECT credential_id, transports FROM webauthn_credentials WHERE localpart = ?")
+      .bind(localpart)
+      .all<{ credential_id: string; transports: string | null }>();
+
+    const options = await generateRegistrationOptions({
+      rpName: "OMEW",
+      rpID: webauthnRpId(env),
+      userName: localpart,
+      userID: new TextEncoder().encode(localpart) as Uint8Array<ArrayBuffer>,
+      attestationType: "none",
+      excludeCredentials: existing.map((r) => ({
+        id: r.credential_id,
+        transports: r.transports ? (JSON.parse(r.transports) as AuthenticatorTransportFuture[]) : undefined,
+      })),
+    });
+
+    const challengeClaims: WebauthnRegChallengeClaims = {
+      v: 1, typ: "webauthn_reg", actor, challenge: options.challenge, exp: nowS() + WEBAUTHN_CHALLENGE_TTL_S, jti: newJti(),
+    };
+    return json({ options, challenge_token: await signToken(challengeClaims, env.DEV_TOKEN_SECRET) });
+  }
+
+  if (method === "POST" && path === "/api/me/passkeys") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!name) return apiError(400, "PAYLOAD_INVALID");
+    const challengeToken = typeof body.challenge_token === "string" ? body.challenge_token : "";
+    const response = body.response as RegistrationResponseJSON | undefined;
+    if (!challengeToken || !response) return apiError(400, "PAYLOAD_INVALID");
+
+    const claims = await verifyToken<WebauthnRegChallengeClaims>(challengeToken, env.DEV_TOKEN_SECRET);
+    if (!claims || claims.typ !== "webauthn_reg" || claims.actor !== actor) return apiError(401, "AUTH_REQUIRED");
+
+    let verification: Awaited<ReturnType<typeof verifyRegistrationResponse>>;
+    try {
+      verification = await verifyRegistrationResponse({
+        response,
+        expectedChallenge: claims.challenge,
+        expectedOrigin: webauthnOrigin(env),
+        expectedRPID: webauthnRpId(env),
+      });
+    } catch {
+      return apiError(400, "PASSKEY_VERIFY_FAILED");
+    }
+    if (!verification.verified) return apiError(400, "PASSKEY_VERIFY_FAILED");
+
+    const { id, publicKey, counter, transports } = verification.registrationInfo.credential;
+    const localpart = localpartOfActor(actor);
+    const now = Date.now();
+    try {
+      await env.DB.prepare(
+        "INSERT INTO webauthn_credentials (credential_id, localpart, public_key, counter, transports, name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      )
+        .bind(id, localpart, base64UrlEncode(publicKey), counter, transports ? JSON.stringify(transports) : null, name, now)
+        .run();
+    } catch {
+      return apiError(409, "PASSKEY_ALREADY_REGISTERED");
+    }
+    return json({ id, name, created_at: now });
+  }
+
+  const passkeyMatch = match("/api/me/passkeys/:id", path);
+  if (passkeyMatch && (method === "PATCH" || method === "DELETE")) {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const localpart = localpartOfActor(actor);
+    const owned = await env.DB.prepare("SELECT credential_id FROM webauthn_credentials WHERE credential_id = ? AND localpart = ?")
+      .bind(passkeyMatch.id!, localpart)
+      .first<{ credential_id: string }>();
+    if (!owned) return apiError(404, "NOT_FOUND");
+
+    if (method === "DELETE") {
+      await env.DB.prepare("DELETE FROM webauthn_credentials WHERE credential_id = ?").bind(passkeyMatch.id!).run();
+      return json({ ok: true });
+    }
+
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!name) return apiError(400, "PAYLOAD_INVALID");
+    await env.DB.prepare("UPDATE webauthn_credentials SET name = ? WHERE credential_id = ?").bind(name, passkeyMatch.id!).run();
+    const row = await env.DB.prepare("SELECT credential_id, name, created_at FROM webauthn_credentials WHERE credential_id = ?")
+      .bind(passkeyMatch.id!)
+      .first<{ credential_id: string; name: string; created_at: number }>();
+    return json({ id: row!.credential_id, name: row!.name, created_at: row!.created_at });
+  }
+
+  // ---- passkey login (no session - this IS the login path) --------------------------
+
+  if (method === "POST" && path === "/api/login/passkey/options") {
+    const options = await generateAuthenticationOptions({ rpID: webauthnRpId(env), allowCredentials: [] });
+    const challengeClaims: WebauthnAuthChallengeClaims = {
+      v: 1, typ: "webauthn_auth", challenge: options.challenge, exp: nowS() + WEBAUTHN_CHALLENGE_TTL_S, jti: newJti(),
+    };
+    return json({ options, challenge_token: await signToken(challengeClaims, env.DEV_TOKEN_SECRET) });
+  }
+
+  if (method === "POST" && path === "/api/login/passkey") {
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    const challengeToken = typeof body.challenge_token === "string" ? body.challenge_token : "";
+    const response = body.response as AuthenticationResponseJSON | undefined;
+    if (!challengeToken || !response) return apiError(400, "PAYLOAD_INVALID");
+
+    const claims = await verifyToken<WebauthnAuthChallengeClaims>(challengeToken, env.DEV_TOKEN_SECRET);
+    if (!claims || claims.typ !== "webauthn_auth") return apiError(401, "AUTH_FAILED");
+
+    const credentialId = response.id;
+    const row = await env.DB.prepare(
+      "SELECT w.credential_id, w.public_key, w.counter, w.transports, w.localpart, u.status, u.server_role, u.email, u.email_verified FROM webauthn_credentials w JOIN users u ON u.localpart = w.localpart WHERE w.credential_id = ?"
+    )
+      .bind(credentialId)
+      .first<{
+        credential_id: string;
+        public_key: string;
+        counter: number;
+        transports: string | null;
+        localpart: string;
+        status: string;
+        server_role: ServerRole;
+        email: string | null;
+        email_verified: number;
+      }>();
+    if (!row || row.status !== "active") return apiError(401, "AUTH_FAILED");
+
+    let verification: Awaited<ReturnType<typeof verifyAuthenticationResponse>>;
+    try {
+      verification = await verifyAuthenticationResponse({
+        response,
+        expectedChallenge: claims.challenge,
+        expectedOrigin: webauthnOrigin(env),
+        expectedRPID: webauthnRpId(env),
+        credential: {
+          id: row.credential_id,
+          publicKey: base64UrlDecode(row.public_key) as Uint8Array<ArrayBuffer>,
+          counter: row.counter,
+          transports: row.transports ? (JSON.parse(row.transports) as AuthenticatorTransportFuture[]) : undefined,
+        },
+      });
+    } catch {
+      return apiError(401, "AUTH_FAILED");
+    }
+    // Counter regression (newCounter <= stored, when stored > 0) indicates a
+    // cloned authenticator per the WebAuthn spec - reject and deliberately
+    // leave the stored counter untouched so the credential stays flagged.
+    if (!verification.verified || (row.counter > 0 && verification.authenticationInfo.newCounter <= row.counter)) {
+      return apiError(401, "AUTH_FAILED");
+    }
+
+    await env.DB.prepare("UPDATE webauthn_credentials SET counter = ? WHERE credential_id = ?")
+      .bind(verification.authenticationInfo.newCounter, row.credential_id)
+      .run();
+
+    const actor = `@${row.localpart}:${instanceDomain(env)}`;
+    const token = await issueSessionToken(actor, row.server_role, env);
+    return json({ token, user: toPublicUser(row, actor) });
   }
 
   // ---- instance admin --------------------------------------------------------------

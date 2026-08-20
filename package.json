@@ -16,5 +16,9 @@
     "typescript": "^5.9.2",
     "vitest": "^4.1.11",
     "wrangler": "^4.124.0"
+  },
+  "dependencies": {
+    "@simplewebauthn/server": "^13.3.2",
+    "otpauth": "^9.5.1"
   }
 }
