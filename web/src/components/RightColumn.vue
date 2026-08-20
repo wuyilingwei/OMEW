@@ -11,7 +11,7 @@ import { WinButton, WinDropDownButton } from '../vendor/winui'
 import AvatarBadge from './AvatarBadge.vue'
 import ChangePasswordModal from './ChangePasswordModal.vue'
 
-const emit = defineEmits<{ 'open-server-admin': []; 'open-panel': ['members' | 'groups' | 'settings'] }>()
+const emit = defineEmits<{ 'open-server-admin': []; 'open-panel': ['members' | 'settings'] }>()
 
 const { mode, cycleTheme } = useTheme()
 const auth = useAuth()
@@ -81,14 +81,6 @@ function onUserMenuSelect(item: { Value: string }) {
       <template v-if="!isGuestMode">
         <WinButton Style="DefaultButtonStyle" class="right-column__action" @Click="emit('open-panel', 'members')">
           成员列表
-        </WinButton>
-        <WinButton
-          v-if="canManage"
-          Style="DefaultButtonStyle"
-          class="right-column__action"
-          @Click="emit('open-panel', 'groups')"
-        >
-          用户组
         </WinButton>
         <WinButton
           v-if="canManage"

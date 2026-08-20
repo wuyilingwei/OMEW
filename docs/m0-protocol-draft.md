@@ -842,6 +842,35 @@ claim_input = UTF8("openmew/migration-claim/v1") || 0x00 ||
 - 服务器级角色为实例本地治理,MUST NOT 随联邦事件传播;宾客身份不获得任何服务器级角色;
 - 会话 token MAY 携带 server_role claim 以免逐请求查库;其撤销遵循 §7.3 撤销传播。
 
+### 7.10a 服务器级用户组
+
+服务器级角色(§7.10)之下,实例可定义任意数量的**服务器级用户组**,取代此前据点本地的自定义组机制。用户组横跨全部据点生效,仅可分配给**本实例本地注册用户**——宾客身份(§7.6)不可被分组。
+
+**模型**
+
+- 每个组持有:`name`、`color`(可选 `#RRGGBB`)、`position`(合成序,升序)、三个权限位 `allow_speak`/`allow_post`/`allow_reply`(三态:`-1` 拒绝 / `0` 不表态 / `1` 允许,语义对应 §3.4 `deny` 位掩码的 `1`/`2`/`4`)、`is_moderator` 标志。
+- 一个本地用户 MAY 同时持有多个组。
+
+**合成序**
+
+对某据点内某 actor 的有效角色/deny,MUST 按以下顺序合成:
+
+1. **据点成员基线**:该 StrongholdDO 权威成员表中的 `role`/`deny`(§7.10 之前既有语义不变)。`role` 非 `member`(即 `owner`/`mod`)时,组不参与合成,`deny` MUST 取 `0`。
+2. **服务器组叠加**(仅当基线 `role = member` 时生效):按 `position` 升序遍历该用户持有的全部服务器组,每个非 `0` 的 `allow_speak`/`allow_post`/`allow_reply` 覆盖前序结果;任一持有组 `is_moderator = 1` 时,整体结果升格为 `mod`,`deny` MUST 取 `0`,后续 deny 位不再计算。
+3. **成员级 deny 位**(§3.4 既有的单据点惩戒位)最后叠加,仅新增拒绝,不撤销组或基线已给出的允许。
+4. **server_role owner/admin 短路**(§7.10):具备该服务器级角色的 actor,在本步骤之前即直接判定为该据点 `owner` 等效、`deny = 0`——据点所有权转让除外,组与基线合成对其不生效。
+
+宾客 actor(§7.6)不持有服务器组,合成时其组集合恒为空集,只经历步骤 1、3、4。
+
+**撤销传播**
+
+服务器组的定义变更(权限位、`is_moderator`、`position`、删除)或分配变更(用户加入/移出某组)MUST 触发 §7.3 的撤销传播:对受影响的每个本地用户,逐一查询其在 D1 `stronghold_member_index` 中登记的全部据点 id,向每个据点的 StrongholdDO 触发既有撤销管线(重算该 actor 的有效角色/deny 并下发 `member.revoke` 本地帧,含房间 WS 改写/断连与 §10.6 tips WS 断连)。组定义级变更(权限位/`is_moderator`/`position`/删除)按该组当前全部成员展开为逐用户撤销。该批量撤销为 fire-and-forget,不阻塞管理操作本身的响应;失败的单据点推送不影响其余据点。
+
+**管理面与展示**
+
+- 服务器组的增删改查、排序、成员分配/撤销为服务器级管理面(server_role owner/admin)操作,MUST NOT 出现在据点级管理面。
+- 供成员列表、消息徽章等展示场景使用的批量只读查询(actor 的组归属)MAY 对游客开放,受 `allow_guest_browsing` 策略(§7.9)约束,与 §7.9 讨论的其余只读展示面一致。
+
 ### 8.1 配置
 
 - Room 配置 MUST 含 `type`(`channel` / `section`)与 `capabilities` 数组。新房间形态 MUST 通过取值扩展表达。

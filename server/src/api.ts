@@ -3,7 +3,8 @@ import { dummyPasswordFields, hashPassword, newJti, signToken, verifyPassword, v
 import { getInstanceConfig } from "./config";
 import { handleInbox } from "./inbox";
 import type { EffectivePermissions } from "./permissions";
-import type { ConfigRow, GroupRow, MemberRow } from "./stronghold-do";
+import { synthesizeEffectivePermissions } from "./permissions";
+import { fetchServerGroupsForLocalpart, type ConfigRow, type MemberRow } from "./stronghold-do";
 import {
   instanceDomain,
   typeToKind,
@@ -122,11 +123,13 @@ function overlayRole(serverRole: ServerRole, member: MemberRow | null): Role | n
   return member.role;
 }
 
-// task 037: overlayRole's group-aware counterpart - the one function every
-// tier-gated route and the WS room-token mint call to get a member's actual
-// effective role/deny once their custom groups are folded in (StrongholdDO's
-// getEffective, backed by permissions.ts). Short-circuits the DO call entirely
-// for the server_role owner/admin overlay, same as overlayRole did.
+// task 048 (m0-protocol §7.10a): overlayRole's group-aware counterpart - the
+// one function every tier-gated route and the WS room-token mint call to get
+// a member's actual effective role/deny once their server groups are folded
+// in. Short-circuits the DO call entirely for the server_role owner/admin
+// overlay, same as overlayRole did. Server groups are server-wide (not
+// per-stronghold), so this composes the DO's baseline member row with a D1
+// group read here, rather than delegating the whole thing to the DO.
 async function effectiveRole(
   env: Env,
   strongholdId: string,
@@ -135,7 +138,45 @@ async function effectiveRole(
 ): Promise<EffectivePermissions | null> {
   if (serverRole === "owner" || serverRole === "admin") return { role: "owner", deny: 0 };
   const stub = env.STRONGHOLD_DO.getByName(strongholdId);
-  return stub.getEffective(actor);
+  const member = await stub.getMember(actor);
+  if (!member || member.banned_at) return null;
+  if (member.role !== "member") return { role: member.role, deny: 0 };
+  // Guests (federated actors) have no users row and thus no server groups.
+  if (domainOfActor(actor) !== instanceDomain(env)) {
+    return synthesizeEffectivePermissions("member", member.deny, []);
+  }
+  const groups = await fetchServerGroupsForLocalpart(env, localpartOfActor(actor));
+  return synthesizeEffectivePermissions("member", member.deny, groups);
+}
+
+// task 048 (m0-protocol §7.10a revocation propagation): a server group
+// definition or assignment change re-derives every affected local user's
+// effective role/deny in every stronghold they belong to. Fan-out is
+// fire-and-forget - a failed push to one stronghold never blocks the others
+// or the caller's own mutation.
+async function broadcastGroupRevoke(env: Env, localparts: string[]): Promise<void> {
+  const unique = [...new Set(localparts)];
+  if (unique.length === 0) return;
+  const home = instanceDomain(env);
+  await Promise.all(
+    unique.map(async (localpart) => {
+      const actor = `@${localpart}:${home}`;
+      try {
+        const { results } = await env.DB.prepare("SELECT stronghold_id FROM stronghold_member_index WHERE actor = ?")
+          .bind(actor)
+          .all<{ stronghold_id: string }>();
+        await Promise.all(
+          results.map((row) => {
+            const stub = env.STRONGHOLD_DO.getByName(row.stronghold_id);
+            return stub.revokeActor(actor).catch(() => {});
+          })
+        );
+      } catch {
+        // D1 lookup failure never blocks the caller's own mutation, which has
+        // already committed - see the fire-and-forget note above.
+      }
+    })
+  );
 }
 
 function match(pattern: string, path: string): Record<string, string> | null {
@@ -478,6 +519,222 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
       .run();
     if (result.meta.changes === 0) return apiError(404, "NOT_FOUND");
     return json({ localpart: userRoleMatch.localpart, server_role: body.server_role });
+  }
+
+  // ---- server-level user groups (task 048, m0-protocol §7.10a) --------------------
+  // Server-wide (not per-stronghold) - only local users can be assigned. Any
+  // definition or assignment change fans out a revocation to every stronghold
+  // the affected user(s) belong to (see broadcastGroupRevoke below).
+
+  if (method === "POST" && path === "/api/admin/server-groups") {
+    const gate = await requireServerRole(request, env, "admin");
+    if (gate instanceof Response) return gate;
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!isValidGroupName(name)) return apiError(400, "GROUP_NAME_INVALID");
+    const color = parseOptionalColor(body.color);
+    if (color === INVALID_COLOR) return apiError(400, "GROUP_COLOR_INVALID");
+    const allowSpeak = parseTriState(body.allow_speak);
+    const allowPost = parseTriState(body.allow_post);
+    const allowReply = parseTriState(body.allow_reply);
+    if (allowSpeak === null || allowPost === null || allowReply === null) return apiError(400, "GROUP_PERM_INVALID");
+    const isModerator = Boolean(body.is_moderator);
+
+    const id = crypto.randomUUID();
+    const createdAt = Date.now();
+    let position: number;
+    if (typeof body.position === "number" && Number.isInteger(body.position)) {
+      position = body.position;
+    } else {
+      const maxPos = await env.DB.prepare("SELECT MAX(position) AS maxPos FROM server_groups").first<{ maxPos: number | null }>();
+      position = (maxPos?.maxPos ?? -1) + 1;
+    }
+    await env.DB.prepare(
+      "INSERT INTO server_groups (id, name, color, position, allow_speak, allow_post, allow_reply, is_moderator, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+      .bind(id, name, color, position, allowSpeak, allowPost, allowReply, isModerator ? 1 : 0, createdAt)
+      .run();
+    return json(
+      toApiGroup({ id, name, color, position, allow_speak: allowSpeak, allow_post: allowPost, allow_reply: allowReply, is_moderator: isModerator ? 1 : 0, created_at: createdAt }),
+      201
+    );
+  }
+
+  if (method === "GET" && path === "/api/admin/server-groups") {
+    const gate = await requireServerRole(request, env, "admin");
+    if (gate instanceof Response) return gate;
+    const { results } = await env.DB.prepare("SELECT * FROM server_groups ORDER BY position ASC").all<ServerGroupRow>();
+    return json({ groups: results.map(toApiGroup) });
+  }
+
+  if (method === "PATCH" && path === "/api/admin/server-groups") {
+    const gate = await requireServerRole(request, env, "admin");
+    if (gate instanceof Response) return gate;
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    if (!Array.isArray(body.positions)) return apiError(400, "PAYLOAD_INVALID");
+    const positions: { id: string; position: number }[] = [];
+    for (const raw of body.positions) {
+      const entry = (raw ?? {}) as Record<string, unknown>;
+      if (typeof entry.id !== "string" || typeof entry.position !== "number" || !Number.isInteger(entry.position)) {
+        return apiError(400, "PAYLOAD_INVALID");
+      }
+      positions.push({ id: entry.id, position: entry.position });
+    }
+    await env.DB.batch(positions.map((p) => env.DB.prepare("UPDATE server_groups SET position = ? WHERE id = ?").bind(p.position, p.id)));
+
+    const affected = new Set<string>();
+    if (positions.length > 0) {
+      const placeholders = positions.map(() => "?").join(",");
+      const { results } = await env.DB.prepare(
+        `SELECT DISTINCT localpart FROM user_server_groups WHERE group_id IN (${placeholders})`
+      )
+        .bind(...positions.map((p) => p.id))
+        .all<{ localpart: string }>();
+      for (const row of results) affected.add(row.localpart);
+    }
+    await broadcastGroupRevoke(env, [...affected]);
+
+    const { results } = await env.DB.prepare("SELECT * FROM server_groups ORDER BY position ASC").all<ServerGroupRow>();
+    return json({ groups: results.map(toApiGroup) });
+  }
+
+  const serverGroupMatch = match("/api/admin/server-groups/:gid", path);
+  if (serverGroupMatch && method === "PATCH") {
+    const gate = await requireServerRole(request, env, "admin");
+    if (gate instanceof Response) return gate;
+    const current = await env.DB.prepare("SELECT * FROM server_groups WHERE id = ?").bind(serverGroupMatch.gid!).first<ServerGroupRow>();
+    if (!current) return apiError(404, "NOT_FOUND");
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+
+    const next = { ...current };
+    if ("name" in body) {
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      if (!isValidGroupName(name)) return apiError(400, "GROUP_NAME_INVALID");
+      next.name = name;
+    }
+    if ("color" in body) {
+      const color = parseOptionalColor(body.color);
+      if (color === INVALID_COLOR) return apiError(400, "GROUP_COLOR_INVALID");
+      next.color = color;
+    }
+    if ("position" in body) {
+      if (typeof body.position !== "number" || !Number.isInteger(body.position)) return apiError(400, "PAYLOAD_INVALID");
+      next.position = body.position;
+    }
+    if ("allow_speak" in body) {
+      const v = parseTriState(body.allow_speak);
+      if (v === null) return apiError(400, "GROUP_PERM_INVALID");
+      next.allow_speak = v;
+    }
+    if ("allow_post" in body) {
+      const v = parseTriState(body.allow_post);
+      if (v === null) return apiError(400, "GROUP_PERM_INVALID");
+      next.allow_post = v;
+    }
+    if ("allow_reply" in body) {
+      const v = parseTriState(body.allow_reply);
+      if (v === null) return apiError(400, "GROUP_PERM_INVALID");
+      next.allow_reply = v;
+    }
+    if ("is_moderator" in body) {
+      next.is_moderator = body.is_moderator ? 1 : 0;
+    }
+
+    await env.DB.prepare(
+      "UPDATE server_groups SET name = ?, color = ?, position = ?, allow_speak = ?, allow_post = ?, allow_reply = ?, is_moderator = ? WHERE id = ?"
+    )
+      .bind(next.name, next.color, next.position, next.allow_speak, next.allow_post, next.allow_reply, next.is_moderator, next.id)
+      .run();
+
+    const { results } = await env.DB.prepare("SELECT localpart FROM user_server_groups WHERE group_id = ?")
+      .bind(next.id)
+      .all<{ localpart: string }>();
+    await broadcastGroupRevoke(env, results.map((r) => r.localpart));
+
+    return json(toApiGroup(next));
+  }
+  if (serverGroupMatch && method === "DELETE") {
+    const gate = await requireServerRole(request, env, "admin");
+    if (gate instanceof Response) return gate;
+    const current = await env.DB.prepare("SELECT id FROM server_groups WHERE id = ?").bind(serverGroupMatch.gid!).first<{ id: string }>();
+    if (!current) return apiError(404, "NOT_FOUND");
+    const { results } = await env.DB.prepare("SELECT localpart FROM user_server_groups WHERE group_id = ?")
+      .bind(serverGroupMatch.gid!)
+      .all<{ localpart: string }>();
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM user_server_groups WHERE group_id = ?").bind(serverGroupMatch.gid!),
+      env.DB.prepare("DELETE FROM server_groups WHERE id = ?").bind(serverGroupMatch.gid!),
+    ]);
+    await broadcastGroupRevoke(env, results.map((r) => r.localpart));
+    return new Response(null, { status: 204, headers: cors() });
+  }
+
+  const serverGroupMemberMatch = match("/api/admin/server-groups/:gid/members/:localpart", path);
+  if (serverGroupMemberMatch && method === "PUT") {
+    const gate = await requireServerRole(request, env, "admin");
+    if (gate instanceof Response) return gate;
+    const [group, user] = await Promise.all([
+      env.DB.prepare("SELECT id FROM server_groups WHERE id = ?").bind(serverGroupMemberMatch.gid!).first<{ id: string }>(),
+      env.DB.prepare("SELECT localpart FROM users WHERE localpart = ?").bind(serverGroupMemberMatch.localpart!).first<{ localpart: string }>(),
+    ]);
+    if (!group || !user) return apiError(404, "NOT_FOUND");
+    await env.DB.prepare("INSERT INTO user_server_groups (localpart, group_id) VALUES (?, ?) ON CONFLICT(localpart, group_id) DO NOTHING")
+      .bind(serverGroupMemberMatch.localpart!, serverGroupMemberMatch.gid!)
+      .run();
+    await broadcastGroupRevoke(env, [serverGroupMemberMatch.localpart!]);
+    return new Response(null, { status: 204, headers: cors() });
+  }
+  if (serverGroupMemberMatch && method === "DELETE") {
+    const gate = await requireServerRole(request, env, "admin");
+    if (gate instanceof Response) return gate;
+    await env.DB.prepare("DELETE FROM user_server_groups WHERE localpart = ? AND group_id = ?")
+      .bind(serverGroupMemberMatch.localpart!, serverGroupMemberMatch.gid!)
+      .run();
+    await broadcastGroupRevoke(env, [serverGroupMemberMatch.localpart!]);
+    return new Response(null, { status: 204, headers: cors() });
+  }
+
+  const serverGroupMembersListMatch = match("/api/admin/server-groups/:gid/members", path);
+  if (serverGroupMembersListMatch && method === "GET") {
+    const gate = await requireServerRole(request, env, "admin");
+    if (gate instanceof Response) return gate;
+    const { results } = await env.DB.prepare("SELECT localpart FROM user_server_groups WHERE group_id = ?")
+      .bind(serverGroupMembersListMatch.gid!)
+      .all<{ localpart: string }>();
+    return json({ localparts: results.map((r) => r.localpart) });
+  }
+
+  // Batch read-only actor -> groups lookup for member lists / message badges.
+  // Guest-readable, same policy as GET /api/directory.
+  if (method === "GET" && path === "/api/server-groups/members") {
+    const config = await getInstanceConfig(env);
+    if (!config.allow_guest_browsing) {
+      const actor = await requireActor(request, env);
+      if (!actor) return apiError(401, "AUTH_REQUIRED");
+    }
+    const raw = url.searchParams.get("localparts") ?? "";
+    const localparts = [...new Set(raw.split(",").map((s) => s.trim()).filter(Boolean))];
+    if (localparts.length === 0 || localparts.length > 100) return apiError(400, "PAYLOAD_INVALID");
+
+    const placeholders = localparts.map(() => "?").join(",");
+    const { results } = await env.DB.prepare(
+      `SELECT usg.localpart AS localpart, g.id, g.name, g.color, g.position ` +
+        `FROM user_server_groups usg JOIN server_groups g ON g.id = usg.group_id ` +
+        `WHERE usg.localpart IN (${placeholders}) ORDER BY g.position ASC`
+    )
+      .bind(...localparts)
+      .all<{ localpart: string; id: string; name: string; color: string | null; position: number }>();
+
+    const groups: Record<string, { id: string; name: string; color: string | null }[]> = {};
+    for (const localpart of localparts) groups[localpart] = [];
+    for (const row of results) {
+      groups[row.localpart]!.push({ id: row.id, name: row.name, color: row.color });
+    }
+    return json({ groups });
   }
 
   // ---- media upload, retrieval, deletion and storage quota ------------------------
@@ -965,8 +1222,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const existing = await stub.getMember(actor);
     if (existing) {
       if (existing.banned_at) return apiError(403, "FORBIDDEN");
-      const [profiles, groups] = await Promise.all([actorProfiles(env, [actor]), stub.listMemberGroups(actor)]);
-      return json(toMemberEntry(existing, profiles.get(actor), groups));
+      const profiles = await actorProfiles(env, [actor]);
+      return json(toMemberEntry(existing, profiles.get(actor)));
     }
     // §7.2/§9 placeholder: private strongholds need a join_request flow (M6-era
     // federation feature); until then this is the explicit "not implemented yet"
@@ -1091,8 +1348,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
     const { page, next_cursor } = paginateMembers(filtered, after);
     const actors = page.map((entry) => entry.actor);
-    const [profiles, groupsByActor] = await Promise.all([actorProfiles(env, actors), stub.listGroupsForMembers(actors)]);
-    const entries = page.map((entry) => toMemberEntry(entry, profiles.get(entry.actor), groupsByActor[entry.actor]));
+    const profiles = await actorProfiles(env, actors);
+    const entries = page.map((entry) => toMemberEntry(entry, profiles.get(entry.actor)));
     return json({ entries, next_cursor });
   }
 
@@ -1131,8 +1388,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
     const updated = await stub.updateMember(m.actor!, { role, deny });
     if (!updated) return apiError(404, "NOT_FOUND");
-    const [profiles, groups] = await Promise.all([actorProfiles(env, [updated.actor]), stub.listMemberGroups(updated.actor)]);
-    return json(toMemberEntry(updated, profiles.get(updated.actor), groups));
+    const profiles = await actorProfiles(env, [updated.actor]);
+    return json(toMemberEntry(updated, profiles.get(updated.actor)));
   }
   if (m && method === "DELETE") {
     const session = await requireSession(request, env);
@@ -1147,153 +1404,6 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (target.role === "mod" && eff.role !== "owner") return apiError(403, "FORBIDDEN");
 
     await stub.removeMember(m.actor!);
-    return new Response(null, { status: 204, headers: cors() });
-  }
-
-  // ---- custom groups (task 037) ----------------------------------------------------
-  // Stronghold-local groups: multi-membership, position-ordered tri-state perms
-  // (speak/post/reply) + a moderator flag, synthesized by permissions.ts and
-  // shared with the WS room-token mint. Same owner/mod (or server owner/admin
-  // overlay, via effectiveRole) gate as the rest of this management surface.
-
-  m = match("/api/stronghold/:id/groups", path);
-  if (m && method === "GET") {
-    const session = await requireSession(request, env);
-    if (session instanceof Response) return session;
-    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
-    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
-    const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    return json({ groups: (await stub.listGroups()).map(toApiGroup) });
-  }
-  if (m && method === "POST") {
-    const session = await requireSession(request, env);
-    if (session instanceof Response) return session;
-    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
-    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
-    const body = await readJsonBody(request);
-    if (!body) return apiError(413, "PAYLOAD_INVALID");
-
-    const name = typeof body.name === "string" ? body.name.trim() : "";
-    if (!isValidGroupName(name)) return apiError(400, "GROUP_NAME_INVALID");
-    const color = parseOptionalColor(body.color);
-    if (color === INVALID_COLOR) return apiError(400, "GROUP_COLOR_INVALID");
-    const permSpeak = parseTriState(body.perm_speak);
-    const permPost = parseTriState(body.perm_post);
-    const permReply = parseTriState(body.perm_reply);
-    if (permSpeak === null || permPost === null || permReply === null) return apiError(400, "GROUP_PERM_INVALID");
-
-    const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    const group = await stub.createGroup(name, color, permSpeak, permPost, permReply, Boolean(body.is_moderator));
-    if (typeof body.position === "number" && Number.isInteger(body.position)) {
-      const repositioned = await stub.updateGroup(group.id, { position: body.position });
-      return json(toApiGroup(repositioned!), 201);
-    }
-    return json(toApiGroup(group), 201);
-  }
-  if (m && method === "PATCH") {
-    // Bulk reorder - the individual-group PATCH below (:gid) also accepts a
-    // `position` field for a one-at-a-time move.
-    const session = await requireSession(request, env);
-    if (session instanceof Response) return session;
-    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
-    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
-    const body = await readJsonBody(request);
-    if (!body) return apiError(413, "PAYLOAD_INVALID");
-    if (!Array.isArray(body.positions)) return apiError(400, "PAYLOAD_INVALID");
-
-    const positions: { id: string; position: number }[] = [];
-    for (const raw of body.positions) {
-      const entry = (raw ?? {}) as Record<string, unknown>;
-      if (typeof entry.id !== "string" || typeof entry.position !== "number" || !Number.isInteger(entry.position)) {
-        return apiError(400, "PAYLOAD_INVALID");
-      }
-      positions.push({ id: entry.id, position: entry.position });
-    }
-    const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    const groups = await stub.reorderGroups(positions);
-    return json({ groups: groups.map(toApiGroup) });
-  }
-
-  m = match("/api/stronghold/:id/groups/:gid", path);
-  if (m && method === "PATCH") {
-    const session = await requireSession(request, env);
-    if (session instanceof Response) return session;
-    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
-    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
-    const body = await readJsonBody(request);
-    if (!body) return apiError(413, "PAYLOAD_INVALID");
-
-    const patch: Partial<Pick<GroupRow, "name" | "color" | "position" | "perm_speak" | "perm_post" | "perm_reply" | "is_moderator">> = {};
-    if ("name" in body) {
-      const name = typeof body.name === "string" ? body.name.trim() : "";
-      if (!isValidGroupName(name)) return apiError(400, "GROUP_NAME_INVALID");
-      patch.name = name;
-    }
-    if ("color" in body) {
-      const color = parseOptionalColor(body.color);
-      if (color === INVALID_COLOR) return apiError(400, "GROUP_COLOR_INVALID");
-      patch.color = color;
-    }
-    if ("position" in body) {
-      if (typeof body.position !== "number" || !Number.isInteger(body.position)) return apiError(400, "PAYLOAD_INVALID");
-      patch.position = body.position;
-    }
-    if ("perm_speak" in body) {
-      const v = parseTriState(body.perm_speak);
-      if (v === null) return apiError(400, "GROUP_PERM_INVALID");
-      patch.perm_speak = v;
-    }
-    if ("perm_post" in body) {
-      const v = parseTriState(body.perm_post);
-      if (v === null) return apiError(400, "GROUP_PERM_INVALID");
-      patch.perm_post = v;
-    }
-    if ("perm_reply" in body) {
-      const v = parseTriState(body.perm_reply);
-      if (v === null) return apiError(400, "GROUP_PERM_INVALID");
-      patch.perm_reply = v;
-    }
-    if ("is_moderator" in body) {
-      patch.is_moderator = body.is_moderator ? 1 : 0;
-    }
-
-    const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    const updated = await stub.updateGroup(m.gid!, patch);
-    if (!updated) return apiError(404, "NOT_FOUND");
-    return json(toApiGroup(updated));
-  }
-  if (m && method === "DELETE") {
-    const session = await requireSession(request, env);
-    if (session instanceof Response) return session;
-    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
-    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
-    const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    const removed = await stub.deleteGroup(m.gid!);
-    if (!removed) return apiError(404, "NOT_FOUND");
-    return new Response(null, { status: 204, headers: cors() });
-  }
-
-  m = match("/api/stronghold/:id/members/:actor/groups/:gid", path);
-  if (m && method === "PUT") {
-    const session = await requireSession(request, env);
-    if (session instanceof Response) return session;
-    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
-    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
-    const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    const target = await stub.getMember(m.actor!);
-    if (!target) return apiError(404, "NOT_FOUND");
-    if (target.role === "owner") return apiError(403, "FORBIDDEN");
-    const added = await stub.addMemberToGroup(m.actor!, m.gid!);
-    if (!added) return apiError(404, "NOT_FOUND");
-    return new Response(null, { status: 204, headers: cors() });
-  }
-  if (m && method === "DELETE") {
-    const session = await requireSession(request, env);
-    if (session instanceof Response) return session;
-    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
-    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
-    const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    await stub.removeMemberFromGroup(m.actor!, m.gid!);
     return new Response(null, { status: 204, headers: cors() });
   }
 
@@ -1838,17 +1948,29 @@ function toApiConfig(row: ConfigRow) {
   };
 }
 
-// ---- custom groups helpers (task 037) ---------------------------------------------
+// ---- server groups helpers (task 048, m0-protocol §7.10a) ------------------------
 
-function toApiGroup(row: GroupRow) {
+interface ServerGroupRow {
+  id: string;
+  name: string;
+  color: string | null;
+  position: number;
+  allow_speak: number;
+  allow_post: number;
+  allow_reply: number;
+  is_moderator: number;
+  created_at: number;
+}
+
+function toApiGroup(row: ServerGroupRow) {
   return {
     id: row.id,
     name: row.name,
     color: row.color,
     position: row.position,
-    perm_speak: row.perm_speak,
-    perm_post: row.perm_post,
-    perm_reply: row.perm_reply,
+    allow_speak: row.allow_speak,
+    allow_post: row.allow_post,
+    allow_reply: row.allow_reply,
     is_moderator: Boolean(row.is_moderator),
   };
 }
@@ -1937,7 +2059,10 @@ async function actorProfiles(env: Env, actors: string[]): Promise<Map<string, Ac
   return result;
 }
 
-function toMemberEntry(member: MemberRow, profile: ActorProfile | undefined, groups: GroupRow[] = []) {
+// task 048: group membership is no longer sourced here (server groups are
+// server-wide, not per-stronghold) - the web client fetches it separately
+// from GET /api/server-groups/members.
+function toMemberEntry(member: MemberRow, profile: ActorProfile | undefined) {
   return {
     actor: member.actor,
     display_name: profile?.display_name ?? member.actor,
@@ -1945,7 +2070,6 @@ function toMemberEntry(member: MemberRow, profile: ActorProfile | undefined, gro
     deny: member.deny,
     joined_at: member.joined_at,
     is_guest: profile?.is_guest ?? false,
-    groups: groups.map((g) => ({ id: g.id, name: g.name, color: g.color })),
     ...(profile?.home_domain ? { home_domain: profile.home_domain } : {}),
   };
 }

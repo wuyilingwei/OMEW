@@ -105,8 +105,11 @@ export interface StrongholdConfigPatch {
   edit_window_secs?: number
 }
 
-// task 037: a member's custom-group badge, as embedded in a member list entry
-// (server's toMemberEntry) - deliberately thin, just enough to render a badge.
+// task 048: a user's server-group badge, as returned by the batch read-only
+// GET /api/server-groups/members lookup - deliberately thin, just enough to
+// render a badge. Member list entries no longer embed this (server groups are
+// server-wide, not per-stronghold membership rows) - the web client fetches
+// it separately, keyed by localpart.
 export interface MemberGroupRef {
   id: string
   name: string
@@ -124,41 +127,41 @@ export interface StrongholdMember {
   joined_at: string
   is_guest: boolean
   home_domain?: string
-  groups: MemberGroupRef[]
 }
 
-// tri-state permission value used by custom groups: -1 deny / 0 inherit / 1 allow.
+// tri-state permission value used by server groups: -1 deny / 0 inherit / 1 allow.
 export type GroupPermValue = -1 | 0 | 1
 
-// task 037: a stronghold-local custom group (server's GroupRow / toApiGroup).
-// position is ascending synthesis order and doubles as display/sort order.
-export interface Group {
+// task 048: a server-wide user group (server's ServerGroupRow / toApiGroup,
+// m0-protocol §7.10a). position is ascending synthesis order and doubles as
+// display/sort order.
+export interface ServerGroup {
   id: string
   name: string
   color: string | null
   position: number
-  perm_speak: GroupPermValue
-  perm_post: GroupPermValue
-  perm_reply: GroupPermValue
+  allow_speak: GroupPermValue
+  allow_post: GroupPermValue
+  allow_reply: GroupPermValue
   is_moderator: boolean
 }
 
-export interface GroupCreatePayload {
+export interface ServerGroupCreatePayload {
   name: string
   color?: string | null
-  perm_speak?: GroupPermValue
-  perm_post?: GroupPermValue
-  perm_reply?: GroupPermValue
+  allow_speak?: GroupPermValue
+  allow_post?: GroupPermValue
+  allow_reply?: GroupPermValue
   is_moderator?: boolean
 }
 
-export interface GroupPatch {
+export interface ServerGroupPatch {
   name?: string
   color?: string | null
   position?: number
-  perm_speak?: GroupPermValue
-  perm_post?: GroupPermValue
-  perm_reply?: GroupPermValue
+  allow_speak?: GroupPermValue
+  allow_post?: GroupPermValue
+  allow_reply?: GroupPermValue
   is_moderator?: boolean
 }
 

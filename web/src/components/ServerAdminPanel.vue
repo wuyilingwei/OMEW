@@ -7,7 +7,9 @@ import type {
   Emote,
   EmotePack,
   InviteCode,
+  MemberGroupRef,
   RootRequirement,
+  ServerGroup,
   ServerRole,
   StrongholdApplication,
   StrongholdCreationPolicy,
@@ -16,6 +18,7 @@ import { useAuth } from '../composables/useAuth'
 import { useStorageUsage } from '../composables/useStorageUsage'
 import { fileUploadError } from '../utils/validate'
 import { WinButton, WinInfoBar } from '../vendor/winui'
+import GroupEditorModal from './GroupEditorModal.vue'
 
 // Server-level administration only (m0-protocol §7.9/§7.10) - instance
 // policy, server member appointment, invite codes, stronghold creation
@@ -81,6 +84,111 @@ async function setUserRole(user: AdminUserEntry, role: Extract<ServerRole, 'admi
     usersError.value = '操作失败，请稍后重试'
   } finally {
     roleChangingLocalpart.value = ''
+  }
+}
+
+// ---- server-level user groups (task 048, m0-protocol §7.10a) -----------------
+
+const groups = ref<ServerGroup[]>([])
+const groupsLoading = ref(false)
+const groupsError = ref('')
+const groupEditorOpen = ref(false)
+const editingGroup = ref<ServerGroup | null>(null)
+const memberGroups = ref<Record<string, MemberGroupRef[]>>({})
+
+async function loadGroups() {
+  if (!auth.token.value) return
+  groupsLoading.value = true
+  groupsError.value = ''
+  try {
+    groups.value = await api.getServerGroups(auth.token.value)
+    void loadMemberGroupBadges()
+  } catch {
+    groupsError.value = '加载用户组失败'
+  } finally {
+    groupsLoading.value = false
+  }
+}
+
+async function loadMemberGroupBadges() {
+  if (!auth.token.value || users.value.length === 0) return
+  try {
+    memberGroups.value = await api.getMemberGroups(
+      auth.token.value,
+      users.value.map((u) => u.localpart),
+    )
+  } catch {
+    // badges are secondary to the roster itself - fail silently
+  }
+}
+
+function openCreateGroup() {
+  editingGroup.value = null
+  groupEditorOpen.value = true
+}
+
+function openEditGroup(group: ServerGroup) {
+  editingGroup.value = group
+  groupEditorOpen.value = true
+}
+
+function onGroupSaved() {
+  void loadGroups()
+}
+
+async function deleteGroupConfirm(group: ServerGroup) {
+  if (!auth.token.value) return
+  if (!confirm(`删除用户组「${group.name}」？成员会保留，但会失去这个组带来的权限与徽章。`)) return
+  groupsError.value = ''
+  try {
+    await api.deleteServerGroup(auth.token.value, group.id)
+    await loadGroups()
+  } catch {
+    groupsError.value = '删除失败，请稍后重试'
+  }
+}
+
+async function moveGroup(index: number, direction: -1 | 1) {
+  if (!auth.token.value) return
+  const targetIndex = index + direction
+  if (targetIndex < 0 || targetIndex >= groups.value.length) return
+  const reordered = [...groups.value]
+  const tmp = reordered[index]!
+  reordered[index] = reordered[targetIndex]!
+  reordered[targetIndex] = tmp
+  groupsError.value = ''
+  try {
+    groups.value = await api.reorderServerGroups(
+      auth.token.value,
+      reordered.map((g, i) => ({ id: g.id, position: i })),
+    )
+  } catch {
+    groupsError.value = '排序失败，请稍后重试'
+  }
+}
+
+function hasGroup(localpart: string, groupId: string): boolean {
+  return memberGroups.value[localpart]?.some((g) => g.id === groupId) ?? false
+}
+
+const pendingAssignment = ref('')
+
+async function toggleUserGroup(user: AdminUserEntry, group: ServerGroup, assign: boolean) {
+  if (!auth.token.value || pendingAssignment.value) return
+  const key = `${user.localpart}:${group.id}`
+  pendingAssignment.value = key
+  groupsError.value = ''
+  try {
+    if (assign) {
+      await api.addUserToServerGroup(auth.token.value, group.id, user.localpart)
+    } else {
+      await api.removeUserFromServerGroup(auth.token.value, group.id, user.localpart)
+    }
+    await loadMemberGroupBadges()
+  } catch {
+    groupsError.value = '操作失败，请稍后重试'
+  } finally {
+    pendingAssignment.value = ''
   }
 }
 
@@ -246,7 +354,8 @@ onMounted(() => {
   })
   loadInviteCodes()
   loadPacks()
-  if (auth.isServerOwner.value) void loadUsers()
+  if (auth.isAdmin.value) void loadGroups()
+  if (auth.isServerOwner.value) void loadUsers().then(loadMemberGroupBadges)
 })
 </script>
 
@@ -314,12 +423,50 @@ onMounted(() => {
               </WinButton>
               <span v-else class="field__hint">领主</span>
             </div>
+            <div v-if="groups.length" class="user-row__groups">
+              <label v-for="group in groups" :key="group.id" class="user-row__group-checkbox">
+                <input
+                  type="checkbox"
+                  :checked="hasGroup(user.localpart, group.id)"
+                  :disabled="pendingAssignment === `${user.localpart}:${group.id}`"
+                  @change="toggleUserGroup(user, group, ($event.target as HTMLInputElement).checked)"
+                />
+                <span class="user-row__group-dot" :style="{ backgroundColor: group.color ?? 'var(--ctrl-fill-tertiary)' }" />
+                {{ group.name }}
+              </label>
+            </div>
           </li>
         </ul>
         <p v-else-if="!usersLoading" class="field__hint">暂无用户</p>
         <WinButton v-if="usersCursor" Style="DefaultButtonStyle" :IsEnabled="!usersLoading" @Click="loadUsers(false)">
           {{ usersLoading ? '加载中…' : '加载更多' }}
         </WinButton>
+      </section>
+
+      <section v-if="auth.isAdmin.value" class="admin-card">
+        <h2 class="admin-card__title">用户组</h2>
+        <p class="field__hint">服务器级用户组（m0-protocol §7.10a），影响成员在所有据点的合成权限。</p>
+        <div class="groups-toolbar">
+          <WinButton Style="AccentButtonStyle" @Click="openCreateGroup">建组</WinButton>
+        </div>
+        <div v-if="groupsLoading" class="server-admin__loading">加载中…</div>
+        <WinInfoBar v-else-if="groupsError" :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Error">
+          {{ groupsError }}
+        </WinInfoBar>
+        <p v-else-if="!groups.length" class="field__hint">暂无用户组</p>
+        <ul v-else class="group-list">
+          <li v-for="(group, index) in groups" :key="group.id" class="group-row">
+            <span class="group-row__dot" :style="{ backgroundColor: group.color ?? 'var(--ctrl-fill-tertiary)' }" />
+            <span class="group-row__name">{{ group.name }}</span>
+            <span v-if="group.is_moderator" class="group-row__mod-badge">管理员组</span>
+            <div class="group-row__actions">
+              <WinButton Style="SubtleButtonStyle" :IsEnabled="index > 0" @Click="moveGroup(index, -1)">上移</WinButton>
+              <WinButton Style="SubtleButtonStyle" :IsEnabled="index < groups.length - 1" @Click="moveGroup(index, 1)">下移</WinButton>
+              <WinButton Style="SubtleButtonStyle" @Click="openEditGroup(group)">编辑</WinButton>
+              <WinButton Style="AccentButtonStyle" class="win-btn--danger" @Click="deleteGroupConfirm(group)">删除</WinButton>
+            </div>
+          </li>
+        </ul>
       </section>
 
       <section class="admin-card">
@@ -410,6 +557,8 @@ onMounted(() => {
         </div>
       </section>
     </div>
+
+    <GroupEditorModal :open="groupEditorOpen" :group="editingGroup" @close="groupEditorOpen = false" @saved="onGroupSaved" />
   </div>
 </template>
 
@@ -543,6 +692,83 @@ onMounted(() => {
 }
 
 .user-row__actions {
+  margin-left: auto;
+}
+
+.user-row__groups {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 0.3rem;
+}
+
+.user-row__group-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.user-row__group-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.groups-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.group-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.group-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.85rem;
+  border-radius: var(--radius-sm);
+  background: var(--ctrl-fill-secondary);
+}
+
+.group-row__dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.group-row__name {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.group-row__mod-badge {
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: rgb(var(--colors-primary) / 0.16);
+  color: rgb(var(--colors-primary));
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
+.group-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
   margin-left: auto;
 }
 

@@ -1,7 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
 import { verifyToken } from "./auth";
-import { synthesizeEffectivePermissions, type EffectivePermissions } from "./permissions";
-import { typeToKind, type Role, type RoomType, type StrongholdTokenClaims } from "./types";
+import { synthesizeEffectivePermissions, type EffectivePermissions, type ServerGroupPermInput } from "./permissions";
+import { instanceDomain, typeToKind, type Role, type RoomType, type StrongholdTokenClaims } from "./types";
+import { domainOfActor, localpartOfActor } from "./users";
 
 // proposal S4.1/S4.4: stronghold config + capability rules + authoritative member
 // table + persisted tips aggregate, with a WS fan-out for tip.update pushes.
@@ -51,20 +52,6 @@ export type BanRow = {
   banned_at: number;
 };
 
-// task 037: custom groups. perm_* are tri-state (-1 deny / 0 inherit / 1 allow),
-// synthesized against a member's baseline by permissions.ts. position is the
-// synthesis order (ascending) and doubles as UI sort order.
-export type GroupRow = {
-  id: string;
-  name: string;
-  color: string | null;
-  position: number;
-  perm_speak: number;
-  perm_post: number;
-  perm_reply: number;
-  is_moderator: number;
-};
-
 interface TipAttachment {
   actor: string;
   stronghold: string;
@@ -80,7 +67,7 @@ export interface EditConfigSnapshot {
 // crosses federation, never occupies seq, never enters a dedupe table).
 // `effect: "close"` is a hard kick (ban/remove); `effect: "update_deny"` is a
 // live role/deny change - role/deny are pre-computed by StrongholdDO (via
-// getEffective, so groups are already folded in) so RoomDO never has to call
+// revokeActor, so groups are already folded in) so RoomDO never has to call
 // back into StrongholdDO per revoke.
 export interface MemberRevokePayload {
   actor: string;
@@ -88,6 +75,20 @@ export interface MemberRevokePayload {
   effect: "close" | "update_deny";
   role?: Role;
   deny?: number;
+}
+
+// task 048 (m0-protocol §7.10a): D1 lookup of a local user's held server
+// groups, position-ordered - the input shape synthesizeEffectivePermissions
+// (permissions.ts) expects. Shared by StrongholdDO.revokeActor and api.ts's
+// effectiveRole, the only two places that fold server groups into a role/deny.
+export async function fetchServerGroupsForLocalpart(env: Env, localpart: string): Promise<ServerGroupPermInput[]> {
+  const { results } = await env.DB.prepare(
+    "SELECT g.position, g.allow_speak, g.allow_post, g.allow_reply, g.is_moderator " +
+      "FROM user_server_groups usg JOIN server_groups g ON g.id = usg.group_id WHERE usg.localpart = ?"
+  )
+    .bind(localpart)
+    .all<ServerGroupPermInput>();
+  return results;
 }
 
 export class StrongholdDO extends DurableObject<Env> {
@@ -138,15 +139,11 @@ export class StrongholdDO extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS ban (
         actor TEXT PRIMARY KEY, operator TEXT NOT NULL, banned_at INTEGER NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS groups (
-        id TEXT PRIMARY KEY, name TEXT NOT NULL, color TEXT, position INTEGER NOT NULL,
-        perm_speak INTEGER NOT NULL DEFAULT 0, perm_post INTEGER NOT NULL DEFAULT 0,
-        perm_reply INTEGER NOT NULL DEFAULT 0, is_moderator INTEGER NOT NULL DEFAULT 0
-      );
-      CREATE TABLE IF NOT EXISTS member_groups (
-        actor TEXT NOT NULL, group_id TEXT NOT NULL, PRIMARY KEY (actor, group_id)
-      );
     `);
+    // task 048: stronghold-local groups (task 037) moved to server-level D1
+    // tables (server_groups/user_server_groups, migration 0009) - drop the
+    // per-DO tables outright, no migration of their data.
+    this.ctx.storage.sql.exec(`DROP TABLE IF EXISTS groups; DROP TABLE IF EXISTS member_groups;`);
     // Stronghold-level settings added after the config table already existed in
     // deployed strongholds - additive ALTER, guarded so it's a no-op once a DO
     // has already picked the columns up.
@@ -276,21 +273,25 @@ export class StrongholdDO extends DurableObject<Env> {
     }
   }
 
-  // Shared by the group-mutation paths below: recompute one actor's effective
-  // role/deny (groups included) and push it down. null means the actor no longer
-  // resolves to any access (not a member, or banned) - banMember/removeMember
-  // already send their own "close" for that transition, nothing to do here.
-  private async pushEffectiveRevoke(actor: string): Promise<void> {
-    const eff = await this.getEffective(actor);
-    if (!eff) return;
+  // Recompute one actor's effective role/deny (server groups included, m0-protocol
+  // §7.10a) and push it down to every room this stronghold owns. Public - task 048's
+  // server-group admin routes (api.ts, against D1) call this per affected actor
+  // after a group mutation, since that mutation happens outside any single
+  // StrongholdDO. null means the actor no longer resolves to any access (not a
+  // member, or banned) - banMember/removeMember already send their own "close"
+  // for that transition, nothing to do here.
+  async revokeActor(actor: string): Promise<void> {
+    const member = await this.getMember(actor);
+    if (!member || member.banned_at) return;
+    let eff: EffectivePermissions;
+    if (member.role !== "member") {
+      eff = { role: member.role, deny: 0 };
+    } else {
+      // Guests (federated actors) have no users row and thus no server groups.
+      const groups = domainOfActor(actor) === instanceDomain(this.env) ? await fetchServerGroupsForLocalpart(this.env, localpartOfActor(actor)) : [];
+      eff = synthesizeEffectivePermissions("member", member.deny, groups);
+    }
     await this.pushRevokeToRooms({ actor, scope: this.selfId, effect: "update_deny", role: eff.role, deny: eff.deny });
-  }
-
-  private listGroupMemberActors(groupId: string): string[] {
-    return this.ctx.storage.sql
-      .exec<{ actor: string }>("SELECT actor FROM member_groups WHERE group_id = ?", groupId)
-      .toArray()
-      .map((r) => r.actor);
   }
 
   // ---- rooms --------------------------------------------------------------------
@@ -376,7 +377,6 @@ export class StrongholdDO extends DurableObject<Env> {
     if (!rows[0]) return null;
     const sql = this.ctx.storage.sql;
     sql.exec("UPDATE member SET actor = ? WHERE actor = ?", actor, legacy);
-    sql.exec("UPDATE member_groups SET actor = ? WHERE actor = ?", actor, legacy);
     sql.exec("UPDATE ban SET actor = ? WHERE actor = ?", actor, legacy);
     sql.exec("UPDATE config SET owner_actor = ? WHERE owner_actor = ?", actor, legacy);
     return { ...rows[0], actor };
@@ -396,7 +396,7 @@ export class StrongholdDO extends DurableObject<Env> {
     const role = patch.role ?? current.role;
     const deny = role === "mod" ? 0 : patch.deny ?? current.deny;
     this.ctx.storage.sql.exec("UPDATE member SET role = ?, deny = ? WHERE actor = ?", role, deny, actor);
-    await this.pushEffectiveRevoke(actor);
+    await this.revokeActor(actor);
     return { ...current, role, deny };
   }
 
@@ -421,7 +421,7 @@ export class StrongholdDO extends DurableObject<Env> {
     // Both actors' live attachments still carry the pre-transfer roles
     // (m0-protocol §7.3) - the demotion matters for enforcement, the promotion
     // is pushed for symmetry so a reconnect is never needed to pick it up.
-    await Promise.all([this.pushEffectiveRevoke(fromActor), this.pushEffectiveRevoke(toActor)]);
+    await Promise.all([this.revokeActor(fromActor), this.revokeActor(toActor)]);
     return { ...config, owner_actor: toActor };
   }
 
@@ -450,149 +450,6 @@ export class StrongholdDO extends DurableObject<Env> {
 
   async listBans(): Promise<BanRow[]> {
     return this.ctx.storage.sql.exec<BanRow>("SELECT * FROM ban ORDER BY banned_at DESC").toArray();
-  }
-
-  // ---- custom groups (task 037) ----------------------------------------------------
-  // Stronghold-local; a member can hold several. position sets synthesis order
-  // (permissions.ts) and doubles as display order. Built-in owner/mod and the
-  // server_role owner/admin overlay (api.ts) never touch this table - groups
-  // only ever affect a plain "member".
-
-  async createGroup(
-    name: string,
-    color: string | null,
-    permSpeak: number,
-    permPost: number,
-    permReply: number,
-    isModerator: boolean
-  ): Promise<GroupRow> {
-    const id = crypto.randomUUID();
-    const maxPos = this.ctx.storage.sql.exec<{ maxPos: number | null }>("SELECT MAX(position) AS maxPos FROM groups").toArray()[0];
-    const position = (maxPos?.maxPos ?? -1) + 1;
-    this.ctx.storage.sql.exec(
-      "INSERT INTO groups (id, name, color, position, perm_speak, perm_post, perm_reply, is_moderator) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      id, name, color, position, permSpeak, permPost, permReply, isModerator ? 1 : 0
-    );
-    return { id, name, color, position, perm_speak: permSpeak, perm_post: permPost, perm_reply: permReply, is_moderator: isModerator ? 1 : 0 };
-  }
-
-  async listGroups(): Promise<GroupRow[]> {
-    return this.ctx.storage.sql.exec<GroupRow>("SELECT * FROM groups ORDER BY position ASC").toArray();
-  }
-
-  async getGroup(id: string): Promise<GroupRow | null> {
-    const rows = this.ctx.storage.sql.exec<GroupRow>("SELECT * FROM groups WHERE id = ?", id).toArray();
-    return rows[0] ?? null;
-  }
-
-  async updateGroup(
-    id: string,
-    patch: Partial<Pick<GroupRow, "name" | "color" | "position" | "perm_speak" | "perm_post" | "perm_reply" | "is_moderator">>
-  ): Promise<GroupRow | null> {
-    const current = await this.getGroup(id);
-    if (!current) return null;
-    const next = { ...current, ...patch };
-    this.ctx.storage.sql.exec(
-      "UPDATE groups SET name = ?, color = ?, position = ?, perm_speak = ?, perm_post = ?, perm_reply = ?, is_moderator = ? WHERE id = ?",
-      next.name, next.color, next.position, next.perm_speak, next.perm_post, next.perm_reply, next.is_moderator, id
-    );
-    // A group's perms/moderator flag changing re-derives every member who holds
-    // it (m0-protocol §7.3) - membership in the group itself is
-    // untouched by this patch, so the actor set is stable across the update.
-    const actors = this.listGroupMemberActors(id);
-    await Promise.all(actors.map((actor) => this.pushEffectiveRevoke(actor)));
-    return next;
-  }
-
-  // Cascades member_groups rows for this group - a deleted group can't leave
-  // dangling assignments behind.
-  async deleteGroup(id: string): Promise<boolean> {
-    const current = await this.getGroup(id);
-    if (!current) return false;
-    // Capture membership before the cascade delete below removes it - each of
-    // these actors' effective permissions changes now that the group is gone
-    // (m0-protocol §7.3).
-    const actors = this.listGroupMemberActors(id);
-    this.ctx.storage.sql.exec("DELETE FROM member_groups WHERE group_id = ?", id);
-    this.ctx.storage.sql.exec("DELETE FROM groups WHERE id = ?", id);
-    await Promise.all(actors.map((actor) => this.pushEffectiveRevoke(actor)));
-    return true;
-  }
-
-  async reorderGroups(positions: { id: string; position: number }[]): Promise<GroupRow[]> {
-    for (const p of positions) {
-      this.ctx.storage.sql.exec("UPDATE groups SET position = ? WHERE id = ?", p.position, p.id);
-    }
-    // position is the synthesis order (permissions.ts), so a reorder can flip
-    // the effective outcome for anyone holding several of the reordered groups -
-    // re-derive the union of their members (m0-protocol §7.3).
-    const actors = new Set<string>();
-    for (const p of positions) {
-      for (const actor of this.listGroupMemberActors(p.id)) actors.add(actor);
-    }
-    await Promise.all([...actors].map((actor) => this.pushEffectiveRevoke(actor)));
-    return this.listGroups();
-  }
-
-  // ---- member <-> group assignment --------------------------------------------------
-
-  async addMemberToGroup(actor: string, groupId: string): Promise<boolean> {
-    const member = await this.getMember(actor);
-    const group = await this.getGroup(groupId);
-    if (!member || !group) return false;
-    this.ctx.storage.sql.exec(
-      "INSERT INTO member_groups (actor, group_id) VALUES (?, ?) ON CONFLICT(actor, group_id) DO NOTHING",
-      actor, groupId
-    );
-    await this.pushEffectiveRevoke(actor);
-    return true;
-  }
-
-  async removeMemberFromGroup(actor: string, groupId: string): Promise<void> {
-    this.ctx.storage.sql.exec("DELETE FROM member_groups WHERE actor = ? AND group_id = ?", actor, groupId);
-    await this.pushEffectiveRevoke(actor);
-  }
-
-  async listMemberGroups(actor: string): Promise<GroupRow[]> {
-    return this.ctx.storage.sql.exec<GroupRow>(
-      "SELECT g.* FROM groups g JOIN member_groups mg ON mg.group_id = g.id WHERE mg.actor = ? ORDER BY g.position ASC",
-      actor
-    ).toArray();
-  }
-
-  // Batch variant for the members list endpoint (api.ts) - one query instead of
-  // one per row. Every requested actor gets an entry, empty array if group-less.
-  async listGroupsForMembers(actors: string[]): Promise<Record<string, GroupRow[]>> {
-    const result: Record<string, GroupRow[]> = {};
-    for (const actor of actors) result[actor] = [];
-    if (actors.length === 0) return result;
-    const placeholders = actors.map(() => "?").join(",");
-    const rows = this.ctx.storage.sql
-      .exec<GroupRow & { actor: string }>(
-        `SELECT mg.actor AS actor, g.id, g.name, g.color, g.position, g.perm_speak, g.perm_post, g.perm_reply, g.is_moderator ` +
-          `FROM member_groups mg JOIN groups g ON g.id = mg.group_id WHERE mg.actor IN (${placeholders}) ORDER BY g.position ASC`,
-        ...actors
-      )
-      .toArray();
-    for (const row of rows) {
-      const { actor, ...group } = row;
-      result[actor]!.push(group);
-    }
-    return result;
-  }
-
-  // ---- effective permission synthesis (task 037) ------------------------------------
-  // Single source of truth shared by the HTTP permission gate and WS room-token
-  // mint (both in api.ts) - see permissions.ts. null means no access at all (no
-  // membership, or banned); server_role owner/admin overlay is applied by the
-  // caller before ever reaching here (see api.ts's effectiveRole).
-
-  async getEffective(actor: string): Promise<EffectivePermissions | null> {
-    const member = await this.getMember(actor);
-    if (!member || member.banned_at) return null;
-    if (member.role !== "member") return { role: member.role, deny: 0 };
-    const groups = await this.listMemberGroups(actor);
-    return synthesizeEffectivePermissions("member", member.deny, groups);
   }
 
   // ---- tips (S3.3 / S4.4) -----------------------------------------------------------
