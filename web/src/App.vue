@@ -14,6 +14,7 @@ import StrongholdOnboarding from './components/StrongholdOnboarding.vue'
 import StrongholdPanel from './components/StrongholdPanel.vue'
 import { useAuth } from './composables/useAuth'
 import { LEFT_WIDTH_DEFAULT, LEFT_WIDTH_KEY, RIGHT_WIDTH_DEFAULT, RIGHT_WIDTH_KEY } from './composables/useColumnResize'
+import { useDocumentTitle } from './composables/useDocumentTitle'
 import { useInstanceConfig } from './composables/useInstanceConfig'
 import { useShellView } from './composables/useShellView'
 import { useStronghold } from './composables/useStronghold'
@@ -25,9 +26,10 @@ const { activeView } = useShellView()
 const { config: instanceConfig } = useInstanceConfig()
 const { nodes, loading: strongholdsLoading } = useStronghold()
 const hasStrongholds = computed(() => nodes.value.length > 0)
+useDocumentTitle()
 
-// task 034: an unauthenticated visitor only hits the full-screen gate when
-// the instance doesn't allow guest browsing (or its config hasn't loaded
+// an unauthenticated visitor only hits the full-screen gate when the
+// instance doesn't allow guest browsing (or its config hasn't loaded
 // yet, same fallback as before) - otherwise the four-column shell renders
 // directly in its read-only guest state (useStronghold's isGuestMode).
 const showAuthGate = computed(() => !auth.isAuthenticated.value && !instanceConfig.value?.allow_guest_browsing)

@@ -13,7 +13,7 @@ function onCreated() {
 
 <template>
   <nav class="node-rail">
-    <div class="node-rail__logo">OM</div>
+    <img class="node-rail__logo" src="/favicon.svg" alt="OMEW" />
     <ul class="node-rail__list">
       <li v-for="node in nodes" :key="node.id">
         <button
