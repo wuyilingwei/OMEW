@@ -1,25 +1,20 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { api, ApiRequestError } from '../api'
-import type { Group, PublicUser, StrongholdMember } from '../api/types'
+import type { MemberGroupRef, PublicUser, StrongholdMember } from '../api/types'
 import { useAuth } from '../composables/useAuth'
-import { useStronghold } from '../composables/useStronghold'
 import { WinButton } from '../vendor/winui'
 import AvatarBadge from './AvatarBadge.vue'
 
-// canManage: whether the viewer may assign this member to custom groups
-// (task 037/039) - the caller passes its own owner/mod (+ server-admin
-// overlay) check, same gate the server enforces on the PUT/DELETE endpoints.
-const props = defineProps<{ member: StrongholdMember; canManage: boolean; groups: Group[] }>()
-const emit = defineEmits<{ close: []; 'groups-changed': [] }>()
+// task 048: server groups are server-wide - badges are read-only here
+// (assignment moved to ServerAdminPanel's admin-only group management).
+const props = defineProps<{ member: StrongholdMember; groups: MemberGroupRef[] }>()
+defineEmits<{ close: [] }>()
 
 const ROLE_LABEL: Record<string, string> = { owner: '领主', mod: '管理员', member: '成员' }
 
 const auth = useAuth()
-const { selectedNodeId } = useStronghold()
 const profile = ref<PublicUser | null>(null)
-const groupActionError = ref('')
-const pendingGroupId = ref('')
 
 onMounted(async () => {
   if (!auth.token.value) return
@@ -31,32 +26,6 @@ onMounted(async () => {
     if (!(err instanceof ApiRequestError)) throw err
   }
 })
-
-// server 403s a group (un)assignment targeting an owner - UI disables ahead
-// of that round trip instead of surfacing the rejection.
-const canAssignGroups = computed(() => props.canManage && props.member.role !== 'owner')
-
-function hasGroup(groupId: string): boolean {
-  return props.member.groups.some((g) => g.id === groupId)
-}
-
-async function toggleGroup(group: Group, assign: boolean) {
-  if (!auth.token.value || !canAssignGroups.value || pendingGroupId.value) return
-  groupActionError.value = ''
-  pendingGroupId.value = group.id
-  try {
-    if (assign) {
-      await api.addMemberToGroup(auth.token.value, selectedNodeId.value, props.member.actor, group.id)
-    } else {
-      await api.removeMemberFromGroup(auth.token.value, selectedNodeId.value, props.member.actor, group.id)
-    }
-    emit('groups-changed')
-  } catch {
-    groupActionError.value = '操作失败，请稍后重试'
-  } finally {
-    pendingGroupId.value = ''
-  }
-}
 </script>
 
 <template>
@@ -75,25 +44,14 @@ async function toggleGroup(group: Group, assign: boolean) {
           <dd>{{ new Date(member.joined_at).toLocaleDateString() }}</dd>
         </dl>
 
-        <div v-if="canManage" class="member-info-card__groups">
+        <div v-if="groups.length" class="member-info-card__groups">
           <h3 class="member-info-card__groups-title">用户组</h3>
-          <p v-if="member.role === 'owner'" class="field__hint">领主不可分组</p>
-          <p v-else-if="!groups.length" class="field__hint">据点尚未创建用户组</p>
-          <ul v-else class="member-info-card__group-list">
+          <ul class="member-info-card__group-list">
             <li v-for="group in groups" :key="group.id" class="member-info-card__group-row">
-              <label class="member-info-card__group-checkbox">
-                <input
-                  type="checkbox"
-                  :checked="hasGroup(group.id)"
-                  :disabled="!canAssignGroups || pendingGroupId === group.id"
-                  @change="toggleGroup(group, ($event.target as HTMLInputElement).checked)"
-                />
-                <span class="member-info-card__group-dot" :style="{ backgroundColor: group.color ?? 'var(--ctrl-fill-tertiary)' }" />
-                {{ group.name }}
-              </label>
+              <span class="member-info-card__group-dot" :style="{ backgroundColor: group.color ?? 'var(--ctrl-fill-tertiary)' }" />
+              {{ group.name }}
             </li>
           </ul>
-          <p v-if="groupActionError" class="field__error">{{ groupActionError }}</p>
         </div>
       </div>
     </div>
@@ -198,13 +156,12 @@ async function toggleGroup(group: Group, assign: boolean) {
   gap: 0.3rem;
 }
 
-.member-info-card__group-checkbox {
+.member-info-card__group-row {
   display: flex;
   align-items: center;
   gap: 0.45rem;
   font-size: 0.82rem;
   color: var(--text-primary);
-  cursor: pointer;
 }
 
 .member-info-card__group-dot {

@@ -24,7 +24,7 @@ const auth = useAuth()
 // are two independent full-screen overlays with separate entry points (task
 // 039 split) - never share navigation state beyond this top-level view key.
 const view = ref<'app' | 'server-admin' | 'stronghold-panel'>('app')
-const strongholdPanelTab = ref<'members' | 'groups' | 'settings'>('members')
+const strongholdPanelTab = ref<'members' | 'settings'>('members')
 const { activeView } = useShellView()
 const { config: instanceConfig } = useInstanceConfig()
 const { nodes, loading: strongholdsLoading } = useStronghold()
@@ -37,7 +37,7 @@ useDocumentTitle()
 // directly in its read-only guest state (useStronghold's isGuestMode).
 const showAuthGate = computed(() => !auth.isAuthenticated.value && !instanceConfig.value?.allow_guest_browsing)
 
-function openStrongholdPanel(tab: 'members' | 'groups' | 'settings') {
+function openStrongholdPanel(tab: 'members' | 'settings') {
   strongholdPanelTab.value = tab
   view.value = 'stronghold-panel'
 }

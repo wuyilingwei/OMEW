@@ -16,9 +16,6 @@ import type {
   EditRetractResult,
   Emote,
   EmotePack,
-  Group,
-  GroupCreatePayload,
-  GroupPatch,
   InviteCode,
   ItemBody,
   LoginPayload,
@@ -36,6 +33,9 @@ import type {
   RoomSummary,
   RoomTokenResponse,
   RoomType,
+  ServerGroup,
+  ServerGroupCreatePayload,
+  ServerGroupPatch,
   ServerRole,
   StorageUsage,
   StrongholdApplication,
@@ -223,20 +223,17 @@ const strongholds = new Map<string, MockStrongholdState>()
 const strongholdMembers = new Map<string, StrongholdMember[]>()
 const strongholdBans = new Map<string, BanEntry[]>()
 
-// task 037/039: per-stronghold custom groups, and each member's group
-// membership as a set of group ids - mirrors the server's `groups` /
-// `member_groups` tables closely enough for a dev/visual check.
-const strongholdGroups = new Map<string, Group[]>()
-const memberGroupIds = new Map<string, Map<string, Set<string>>>() // nodeId -> actor -> group ids
+// task 048: server-wide user groups, and each local user's group membership
+// as a set of group ids - mirrors the server's `server_groups` /
+// `user_server_groups` tables closely enough for a dev/visual check.
+const serverGroups: ServerGroup[] = []
+const userGroupIds = new Map<string, Set<string>>() // localpart -> group ids
 
-function groupsFor(nodeId: string): Group[] {
-  return strongholdGroups.get(nodeId) ?? []
-}
-
-function memberGroupsFor(nodeId: string, actor: string): MemberGroupRef[] {
-  const ids = memberGroupIds.get(nodeId)?.get(actor)
+function memberGroupsFor(localpart: string): MemberGroupRef[] {
+  const ids = userGroupIds.get(localpart)
   if (!ids || ids.size === 0) return []
-  return groupsFor(nodeId)
+  return [...serverGroups]
+    .sort((a, b) => a.position - b.position)
     .filter((g) => ids.has(g.id))
     .map((g) => ({ id: g.id, name: g.name, color: g.color }))
 }
@@ -324,30 +321,33 @@ function seedDemoStronghold(): void {
     ]),
   })
 
-  // task 037/039: two demo groups + one assignment, so the groups tab and a
-  // member badge both have something to show during a mock visual check.
-  const testerGroup: Group = {
-    id: 'grp-tester',
-    name: '内测成员',
-    color: '#4b9dd7',
-    position: 0,
-    perm_speak: 0,
-    perm_post: 1,
-    perm_reply: 0,
-    is_moderator: false,
+  // task 048: two demo server groups + one assignment, so the server-groups
+  // admin tab and a member badge both have something to show during a mock
+  // visual check.
+  if (serverGroups.length === 0) {
+    const testerGroup: ServerGroup = {
+      id: 'grp-tester',
+      name: '内测成员',
+      color: '#4b9dd7',
+      position: 0,
+      allow_speak: 0,
+      allow_post: 1,
+      allow_reply: 0,
+      is_moderator: false,
+    }
+    const quietedGroup: ServerGroup = {
+      id: 'grp-quieted',
+      name: '禁言观察',
+      color: '#af5d3e',
+      position: 1,
+      allow_speak: -1,
+      allow_post: -1,
+      allow_reply: -1,
+      is_moderator: false,
+    }
+    serverGroups.push(testerGroup, quietedGroup)
+    userGroupIds.set('aki', new Set([testerGroup.id]))
   }
-  const quietedGroup: Group = {
-    id: 'grp-quieted',
-    name: '禁言观察',
-    color: '#af5d3e',
-    position: 1,
-    perm_speak: -1,
-    perm_post: -1,
-    perm_reply: -1,
-    is_moderator: false,
-  }
-  strongholdGroups.set(id, [testerGroup, quietedGroup])
-  memberGroupIds.set(id, new Map([[actorFor('aki'), new Set([testerGroup.id])]]))
 
   strongholdMembers.set(id, [
     {
@@ -360,7 +360,6 @@ function seedDemoStronghold(): void {
       deny_comment: false,
       joined_at: daysAgo(30),
       is_guest: false,
-      groups: [],
     },
     {
       actor: actorFor('rin'),
@@ -372,7 +371,6 @@ function seedDemoStronghold(): void {
       deny_comment: false,
       joined_at: daysAgo(20),
       is_guest: false,
-      groups: [],
     },
     {
       actor: actorFor('aki'),
@@ -384,7 +382,6 @@ function seedDemoStronghold(): void {
       deny_comment: false,
       joined_at: daysAgo(10),
       is_guest: false,
-      groups: memberGroupsFor(id, actorFor('aki')),
     },
   ])
   strongholdBans.set(id, [])
@@ -679,12 +676,9 @@ export const mockApi = {
         deny_comment: false,
         joined_at: new Date().toISOString(),
         is_guest: false,
-        groups: [],
       },
     ])
     strongholdBans.set(id, [])
-    strongholdGroups.set(id, [])
-    memberGroupIds.set(id, new Map())
     return delay(toStrongholdConfig(state))
   },
 
@@ -704,7 +698,6 @@ export const mockApi = {
       deny_comment: false,
       joined_at: new Date().toISOString(),
       is_guest: false,
-      groups: [],
     }
     strongholdMembers.get(nodeId)?.push(member)
     return delay(member)
@@ -839,7 +832,6 @@ export const mockApi = {
           deny_comment: true,
           joined_at: ban.banned_at,
           is_guest: false,
-          groups: memberGroupsFor(nodeId, ban.actor),
         })),
         next_cursor: null,
       })
@@ -1067,103 +1059,92 @@ export const mockApi = {
           deny_comment: false,
           joined_at: new Date().toISOString(),
           is_guest: false,
-          groups: [],
         },
       ])
       strongholdBans.set(nodeId, [])
-      strongholdGroups.set(nodeId, [])
-      memberGroupIds.set(nodeId, new Map())
     }
     return delay({ id: application.id, state: application.state })
   },
 
-  // ---- custom groups (task 037/039) --------------------------------------------
+  // ---- server-level user groups (task 048, m0-protocol §7.10a) -----------------
 
-  async getGroups(token: string, nodeId: string): Promise<Group[]> {
-    requireManager(token, nodeId)
-    return delay([...groupsFor(nodeId)])
+  async getServerGroups(token: string): Promise<ServerGroup[]> {
+    requireAdmin(token)
+    return delay([...serverGroups].sort((a, b) => a.position - b.position))
   },
 
-  async createGroup(token: string, nodeId: string, payload: GroupCreatePayload): Promise<Group> {
-    requireManager(token, nodeId)
+  async createServerGroup(token: string, payload: ServerGroupCreatePayload): Promise<ServerGroup> {
+    requireAdmin(token)
     if (!payload.name || payload.name.length > 32) throw new ApiRequestError('GROUP_NAME_INVALID', 400)
-    const list = strongholdGroups.get(nodeId) ?? []
-    const position = list.length ? Math.max(...list.map((g) => g.position)) + 1 : 0
-    const group: Group = {
+    const position = serverGroups.length ? Math.max(...serverGroups.map((g) => g.position)) + 1 : 0
+    const group: ServerGroup = {
       id: `grp-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
       name: payload.name,
       color: payload.color ?? null,
       position,
-      perm_speak: payload.perm_speak ?? 0,
-      perm_post: payload.perm_post ?? 0,
-      perm_reply: payload.perm_reply ?? 0,
+      allow_speak: payload.allow_speak ?? 0,
+      allow_post: payload.allow_post ?? 0,
+      allow_reply: payload.allow_reply ?? 0,
       is_moderator: payload.is_moderator ?? false,
     }
-    strongholdGroups.set(nodeId, [...list, group])
+    serverGroups.push(group)
     return delay(group, 120)
   },
 
-  async updateGroup(token: string, nodeId: string, groupId: string, patch: GroupPatch): Promise<Group> {
-    requireManager(token, nodeId)
+  async updateServerGroup(token: string, groupId: string, patch: ServerGroupPatch): Promise<ServerGroup> {
+    requireAdmin(token)
     if (patch.name !== undefined && (!patch.name || patch.name.length > 32)) throw new ApiRequestError('GROUP_NAME_INVALID', 400)
-    const list = strongholdGroups.get(nodeId) ?? []
-    const idx = list.findIndex((g) => g.id === groupId)
+    const idx = serverGroups.findIndex((g) => g.id === groupId)
     if (idx < 0) throw new ApiRequestError('NOT_FOUND', 404)
-    const updated = { ...list[idx]!, ...patch }
-    const next = [...list]
-    next[idx] = updated
-    strongholdGroups.set(nodeId, next)
+    const updated = { ...serverGroups[idx]!, ...patch }
+    serverGroups[idx] = updated
     return delay(updated, 120)
   },
 
-  async deleteGroup(token: string, nodeId: string, groupId: string): Promise<void> {
-    requireManager(token, nodeId)
-    const list = strongholdGroups.get(nodeId) ?? []
-    if (!list.some((g) => g.id === groupId)) throw new ApiRequestError('NOT_FOUND', 404)
-    strongholdGroups.set(
-      nodeId,
-      list.filter((g) => g.id !== groupId),
-    )
-    for (const assigned of memberGroupIds.get(nodeId)?.values() ?? []) assigned.delete(groupId)
+  async deleteServerGroup(token: string, groupId: string): Promise<void> {
+    requireAdmin(token)
+    const idx = serverGroups.findIndex((g) => g.id === groupId)
+    if (idx < 0) throw new ApiRequestError('NOT_FOUND', 404)
+    serverGroups.splice(idx, 1)
+    for (const assigned of userGroupIds.values()) assigned.delete(groupId)
     return delay(undefined, 120)
   },
 
-  async reorderGroups(token: string, nodeId: string, positions: { id: string; position: number }[]): Promise<Group[]> {
-    requireManager(token, nodeId)
-    const list = strongholdGroups.get(nodeId) ?? []
+  async reorderServerGroups(token: string, positions: { id: string; position: number }[]): Promise<ServerGroup[]> {
+    requireAdmin(token)
     const byId = new Map(positions.map((p) => [p.id, p.position]))
-    const next = list.map((g) => (byId.has(g.id) ? { ...g, position: byId.get(g.id)! } : g)).sort((a, b) => a.position - b.position)
-    strongholdGroups.set(nodeId, next)
-    return delay([...next])
+    for (let i = 0; i < serverGroups.length; i++) {
+      const g = serverGroups[i]!
+      if (byId.has(g.id)) serverGroups[i] = { ...g, position: byId.get(g.id)! }
+    }
+    serverGroups.sort((a, b) => a.position - b.position)
+    return delay([...serverGroups])
   },
 
-  async addMemberToGroup(token: string, nodeId: string, actor: string, groupId: string): Promise<void> {
-    requireManager(token, nodeId)
-    const target = findMember(nodeId, actor)
-    if (!target) throw new ApiRequestError('NOT_FOUND', 404)
-    if (target.role === 'owner') throw new ApiRequestError('FORBIDDEN', 403)
-    if (!groupsFor(nodeId).some((g) => g.id === groupId)) throw new ApiRequestError('NOT_FOUND', 404)
-    let byActor = memberGroupIds.get(nodeId)
-    if (!byActor) {
-      byActor = new Map()
-      memberGroupIds.set(nodeId, byActor)
-    }
-    let ids = byActor.get(actor)
+  async addUserToServerGroup(token: string, groupId: string, localpart: string): Promise<void> {
+    requireAdmin(token)
+    if (!users.some((u) => u.username === localpart)) throw new ApiRequestError('NOT_FOUND', 404)
+    if (!serverGroups.some((g) => g.id === groupId)) throw new ApiRequestError('NOT_FOUND', 404)
+    let ids = userGroupIds.get(localpart)
     if (!ids) {
       ids = new Set()
-      byActor.set(actor, ids)
+      userGroupIds.set(localpart, ids)
     }
     ids.add(groupId)
-    target.groups = memberGroupsFor(nodeId, actor)
     return delay(undefined, 80)
   },
 
-  async removeMemberFromGroup(token: string, nodeId: string, actor: string, groupId: string): Promise<void> {
-    requireManager(token, nodeId)
-    memberGroupIds.get(nodeId)?.get(actor)?.delete(groupId)
-    const target = findMember(nodeId, actor)
-    if (target) target.groups = memberGroupsFor(nodeId, actor)
+  async removeUserFromServerGroup(token: string, groupId: string, localpart: string): Promise<void> {
+    requireAdmin(token)
+    userGroupIds.get(localpart)?.delete(groupId)
     return delay(undefined, 80)
+  },
+
+  // Batch read-only actor -> groups lookup (guest-readable), keyed by localpart.
+  async getMemberGroups(_token: string | null, localparts: string[]): Promise<Record<string, MemberGroupRef[]>> {
+    const result: Record<string, MemberGroupRef[]> = {}
+    for (const localpart of new Set(localparts)) result[localpart] = memberGroupsFor(localpart)
+    return delay(result, 80)
   },
 
   // ---- server-level role appointment (task 035/039, server_owner only) --------

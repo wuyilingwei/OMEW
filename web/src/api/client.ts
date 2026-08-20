@@ -11,9 +11,6 @@ import type {
   EditRetractResult,
   Emote,
   EmotePack,
-  Group,
-  GroupCreatePayload,
-  GroupPatch,
   InstanceConfig,
   InviteCode,
   LoginPayload,
@@ -29,6 +26,9 @@ import type {
   RegisterPayload,
   RoomSummary,
   RoomTokenResponse,
+  ServerGroup,
+  ServerGroupCreatePayload,
+  ServerGroupPatch,
   ServerRole,
   StorageUsage,
   StrongholdApplication,
@@ -85,7 +85,6 @@ interface WireMemberEntry {
   joined_at: number
   is_guest: boolean
   home_domain?: string
-  groups: MemberGroupRef[]
 }
 
 function toStrongholdMember(entry: WireMemberEntry): StrongholdMember {
@@ -98,7 +97,6 @@ function toStrongholdMember(entry: WireMemberEntry): StrongholdMember {
     joined_at: new Date(entry.joined_at).toISOString(),
     is_guest: entry.is_guest,
     home_domain: entry.home_domain,
-    groups: entry.groups,
   }
 }
 
@@ -337,49 +335,57 @@ export const realApi = {
       body: JSON.stringify({ to: toActor }),
     }),
 
-  // ---- custom groups (task 037/039) --------------------------------------------
+  // ---- server-level user groups (task 048, m0-protocol §7.10a) -----------------
 
-  getGroups: (token: string, nodeId: string) =>
-    request<{ groups: Group[] }>(`/api/stronghold/${nodeId}/groups`, { headers: authHeaders(token) }).then((r) => r.groups),
+  getServerGroups: (token: string) =>
+    request<{ groups: ServerGroup[] }>('/api/admin/server-groups', { headers: authHeaders(token) }).then((r) => r.groups),
 
-  createGroup: (token: string, nodeId: string, payload: GroupCreatePayload) =>
-    request<Group>(`/api/stronghold/${nodeId}/groups`, {
+  createServerGroup: (token: string, payload: ServerGroupCreatePayload) =>
+    request<ServerGroup>('/api/admin/server-groups', {
       method: 'POST',
       headers: authHeaders(token),
       body: JSON.stringify(payload),
     }),
 
-  updateGroup: (token: string, nodeId: string, groupId: string, patch: GroupPatch) =>
-    request<Group>(`/api/stronghold/${nodeId}/groups/${encodeURIComponent(groupId)}`, {
+  updateServerGroup: (token: string, groupId: string, patch: ServerGroupPatch) =>
+    request<ServerGroup>(`/api/admin/server-groups/${encodeURIComponent(groupId)}`, {
       method: 'PATCH',
       headers: authHeaders(token),
       body: JSON.stringify(patch),
     }),
 
-  deleteGroup: (token: string, nodeId: string, groupId: string) =>
-    request<void>(`/api/stronghold/${nodeId}/groups/${encodeURIComponent(groupId)}`, {
+  deleteServerGroup: (token: string, groupId: string) =>
+    request<void>(`/api/admin/server-groups/${encodeURIComponent(groupId)}`, {
       method: 'DELETE',
       headers: authHeaders(token),
     }),
 
-  reorderGroups: (token: string, nodeId: string, positions: { id: string; position: number }[]) =>
-    request<{ groups: Group[] }>(`/api/stronghold/${nodeId}/groups`, {
+  reorderServerGroups: (token: string, positions: { id: string; position: number }[]) =>
+    request<{ groups: ServerGroup[] }>('/api/admin/server-groups', {
       method: 'PATCH',
       headers: authHeaders(token),
       body: JSON.stringify({ positions }),
     }).then((r) => r.groups),
 
-  addMemberToGroup: (token: string, nodeId: string, actor: string, groupId: string) =>
-    request<void>(`/api/stronghold/${nodeId}/members/${encodeURIComponent(actor)}/groups/${encodeURIComponent(groupId)}`, {
+  addUserToServerGroup: (token: string, groupId: string, localpart: string) =>
+    request<void>(`/api/admin/server-groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(localpart)}`, {
       method: 'PUT',
       headers: authHeaders(token),
     }),
 
-  removeMemberFromGroup: (token: string, nodeId: string, actor: string, groupId: string) =>
-    request<void>(`/api/stronghold/${nodeId}/members/${encodeURIComponent(actor)}/groups/${encodeURIComponent(groupId)}`, {
+  removeUserFromServerGroup: (token: string, groupId: string, localpart: string) =>
+    request<void>(`/api/admin/server-groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(localpart)}`, {
       method: 'DELETE',
       headers: authHeaders(token),
     }),
+
+  // Batch read-only actor -> groups lookup for member lists / message badges
+  // (guest-readable, keyed by localpart - only local users can be assigned).
+  getMemberGroups: (token: string | null, localparts: string[]) =>
+    request<{ groups: Record<string, MemberGroupRef[]> }>(
+      `/api/server-groups/members?localparts=${encodeURIComponent([...new Set(localparts)].join(','))}`,
+      { headers: optionalAuthHeaders(token) },
+    ).then((r) => r.groups),
 
   getUser: (token: string, actor: string) =>
     request<{ actor: string; display_name: string; is_guest: boolean; home_domain?: string }>(

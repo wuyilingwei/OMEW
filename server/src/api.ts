@@ -161,15 +161,20 @@ async function broadcastGroupRevoke(env: Env, localparts: string[]): Promise<voi
   await Promise.all(
     unique.map(async (localpart) => {
       const actor = `@${localpart}:${home}`;
-      const { results } = await env.DB.prepare("SELECT stronghold_id FROM stronghold_member_index WHERE actor = ?")
-        .bind(actor)
-        .all<{ stronghold_id: string }>();
-      await Promise.all(
-        results.map((row) => {
-          const stub = env.STRONGHOLD_DO.getByName(row.stronghold_id);
-          return stub.revokeActor(actor).catch(() => {});
-        })
-      );
+      try {
+        const { results } = await env.DB.prepare("SELECT stronghold_id FROM stronghold_member_index WHERE actor = ?")
+          .bind(actor)
+          .all<{ stronghold_id: string }>();
+        await Promise.all(
+          results.map((row) => {
+            const stub = env.STRONGHOLD_DO.getByName(row.stronghold_id);
+            return stub.revokeActor(actor).catch(() => {});
+          })
+        );
+      } catch {
+        // D1 lookup failure never blocks the caller's own mutation, which has
+        // already committed - see the fire-and-forget note above.
+      }
     })
   );
 }

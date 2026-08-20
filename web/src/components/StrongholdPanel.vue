@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { api } from '../api'
-import type { Group, MemberPatch, MemberTab, StrongholdConfigPatch, StrongholdMember } from '../api/types'
+import type { MemberGroupRef, MemberPatch, MemberTab, StrongholdConfigPatch, StrongholdMember } from '../api/types'
 import { EMPTY_STATE } from '../assets/mew'
 import { useAuth } from '../composables/useAuth'
 import { useStorageUsage } from '../composables/useStorageUsage'
@@ -12,14 +12,14 @@ import { WinButton, WinInfoBar, WinSelectorBar, WinToggleSwitch } from '../vendo
 import AvatarBadge from './AvatarBadge.vue'
 import CoverUploader from './CoverUploader.vue'
 import EmptyState from './EmptyState.vue'
-import GroupEditorModal from './GroupEditorModal.vue'
 import MemberInfoCard from './MemberInfoCard.vue'
 
-// stronghold-scoped management only (members / custom groups / stronghold
+// stronghold-scoped management only (members / blacklist / stronghold
 // settings) - server-level administration (policy, server members, invite
-// codes, emote packs) lives in the separate ServerAdminPanel (task 039
-// split: the two must not share a component or entry point).
-const props = withDefaults(defineProps<{ initialTab?: 'members' | 'groups' | 'settings' }>(), { initialTab: 'members' })
+// codes, emote packs, user groups) lives in the separate ServerAdminPanel
+// (task 048: server groups are server-wide, not per-stronghold - this panel
+// only ever reads group badges through the read-only batch endpoint).
+const props = withDefaults(defineProps<{ initialTab?: 'members' | 'settings' }>(), { initialTab: 'members' })
 defineEmits<{ close: [] }>()
 
 const auth = useAuth()
@@ -33,7 +33,7 @@ const MEMBER_TABS: { Text: string; value: MemberTab }[] = [
   { Text: '黑名单', value: 'banned' },
 ]
 
-const panelTab = ref<'members' | 'groups' | 'settings'>(props.initialTab)
+const panelTab = ref<'members' | 'settings'>(props.initialTab)
 // m0-protocol §7.10: a server owner/admin manages every stronghold with
 // owner-equivalent permission even without a membership row - mirrors the
 // server's overlayRole/effectiveRole gate (api.ts), not just the local role.
@@ -41,15 +41,12 @@ const canManage = computed(() => myRole.value === 'owner' || myRole.value === 'm
 const isOwner = computed(() => myRole.value === 'owner')
 
 const panelTabOptions = computed(() => {
-  const opts: { Text: string; value: 'members' | 'groups' | 'settings' }[] = [{ Text: '成员列表', value: 'members' }]
-  if (canManage.value) {
-    opts.push({ Text: '用户组', value: 'groups' })
-    opts.push({ Text: '据点设置', value: 'settings' })
-  }
+  const opts: { Text: string; value: 'members' | 'settings' }[] = [{ Text: '成员列表', value: 'members' }]
+  if (canManage.value) opts.push({ Text: '据点设置', value: 'settings' })
   return opts
 })
 const panelTabSelected = computed(() => panelTabOptions.value.find((o) => o.value === panelTab.value))
-function onPanelTabSelect(item: { value: 'members' | 'groups' | 'settings' }) {
+function onPanelTabSelect(item: { value: 'members' | 'settings' }) {
   panelTab.value = item.value
 }
 
@@ -70,6 +67,24 @@ const membersError = ref('')
 const actionError = ref('')
 const infoCardMember = ref<StrongholdMember | null>(null)
 
+// task 048: server groups are server-wide - member rows read badges through
+// the read-only batch lookup, keyed by localpart, rather than a `groups`
+// field on the member entry itself.
+const memberGroups = ref<Record<string, MemberGroupRef[]>>({})
+
+async function loadMemberGroups(localparts: string[]) {
+  const unique = [...new Set(localparts)]
+  if (unique.length === 0) {
+    memberGroups.value = {}
+    return
+  }
+  try {
+    memberGroups.value = await api.getMemberGroups(auth.token.value, unique)
+  } catch {
+    // badges are secondary to the roster itself - fail silently
+  }
+}
+
 async function loadMembers() {
   if (!auth.token.value) return
   membersLoading.value = true
@@ -77,6 +92,7 @@ async function loadMembers() {
   try {
     const page = await api.getStrongholdMembers(auth.token.value, selectedNodeId.value, memberTab.value)
     members.value = page.members
+    void loadMemberGroups(page.members.map((m) => m.username))
   } catch {
     membersError.value = '加载成员列表失败'
   } finally {
@@ -135,96 +151,6 @@ function unban(member: StrongholdMember) {
 function transfer(member: StrongholdMember) {
   if (!confirm(`将领主权限转让给「${member.display_name}」？转让后你将不再拥有该据点的管理权限。`)) return
   runAction((token) => api.transferOwnership(token, selectedNodeId.value, member.actor))
-}
-
-// ---- groups tab (task 037/039) ----
-const groups = ref<Group[]>([])
-const groupsLoading = ref(false)
-const groupsError = ref('')
-const groupEditorOpen = ref(false)
-const editingGroup = ref<Group | null>(null)
-
-async function loadGroups() {
-  if (!auth.token.value || !canManage.value) return
-  groupsLoading.value = true
-  groupsError.value = ''
-  try {
-    groups.value = await api.getGroups(auth.token.value, selectedNodeId.value)
-  } catch {
-    groupsError.value = '加载用户组失败'
-  } finally {
-    groupsLoading.value = false
-  }
-}
-
-// immediate: true matters here - the right column's "用户组" shortcut mounts
-// this panel with initialTab='groups' directly, so the tab is already
-// 'groups' on the very first run with no prior value to change from.
-watch(
-  [panelTab, selectedNodeId],
-  ([tab]) => {
-    if (tab === 'groups') void loadGroups()
-  },
-  { immediate: true },
-)
-
-// member counts read off the currently-loaded "all" members roster - accurate
-// as long as the member sub-tab hasn't been switched away from "all" since
-// the groups tab was opened (no extra always-on fetch just for a headcount).
-const groupMemberCount = computed(() => {
-  const counts = new Map<string, number>()
-  for (const member of members.value) {
-    for (const g of member.groups) counts.set(g.id, (counts.get(g.id) ?? 0) + 1)
-  }
-  return counts
-})
-
-function openCreateGroup() {
-  editingGroup.value = null
-  groupEditorOpen.value = true
-}
-
-function openEditGroup(group: Group) {
-  editingGroup.value = group
-  groupEditorOpen.value = true
-}
-
-function onGroupSaved() {
-  void loadGroups()
-  void loadMembers()
-}
-
-async function deleteGroupConfirm(group: Group) {
-  if (!auth.token.value) return
-  if (!confirm(`删除用户组「${group.name}」？成员会保留，但会失去这个组带来的权限与徽章。`)) return
-  groupsError.value = ''
-  try {
-    await api.deleteGroup(auth.token.value, selectedNodeId.value, group.id)
-    await loadGroups()
-    await loadMembers()
-  } catch {
-    groupsError.value = '删除失败，请稍后重试'
-  }
-}
-
-async function moveGroup(index: number, direction: -1 | 1) {
-  if (!auth.token.value) return
-  const targetIndex = index + direction
-  if (targetIndex < 0 || targetIndex >= groups.value.length) return
-  const reordered = [...groups.value]
-  const tmp = reordered[index]!
-  reordered[index] = reordered[targetIndex]!
-  reordered[targetIndex] = tmp
-  groupsError.value = ''
-  try {
-    groups.value = await api.reorderGroups(
-      auth.token.value,
-      selectedNodeId.value,
-      reordered.map((g, i) => ({ id: g.id, position: i })),
-    )
-  } catch {
-    groupsError.value = '排序失败，请稍后重试'
-  }
 }
 
 // ---- settings tab ----
@@ -330,8 +256,8 @@ async function saveSettings() {
             <span class="member-row__names">
               <span class="member-row__display-name">{{ member.display_name }}</span>
               <span class="member-row__actor">{{ member.actor }}</span>
-              <span v-if="member.groups.length" class="member-row__groups">
-                <span v-for="g in member.groups" :key="g.id" class="group-badge">
+              <span v-if="memberGroups[member.username]?.length" class="member-row__groups">
+                <span v-for="g in memberGroups[member.username]" :key="g.id" class="group-badge">
                   <span class="group-badge__dot" :style="{ backgroundColor: g.color ?? 'var(--ctrl-fill-tertiary)' }" />
                   {{ g.name }}
                 </span>
@@ -389,33 +315,6 @@ async function saveSettings() {
       </ul>
     </div>
 
-    <div v-else-if="panelTab === 'groups'" class="stronghold-panel__body">
-      <div class="groups-toolbar">
-        <WinButton Style="AccentButtonStyle" @Click="openCreateGroup">建组</WinButton>
-      </div>
-
-      <div v-if="groupsLoading" class="stronghold-panel__loading">加载中…</div>
-      <WinInfoBar v-else-if="groupsError" :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Error">
-        {{ groupsError }}
-      </WinInfoBar>
-      <EmptyState v-else-if="!groups.length" :image="EMPTY_STATE.members" text="暂无用户组" />
-
-      <ul v-else class="group-list">
-        <li v-for="(group, index) in groups" :key="group.id" class="group-row">
-          <span class="group-row__dot" :style="{ backgroundColor: group.color ?? 'var(--ctrl-fill-tertiary)' }" />
-          <span class="group-row__name">{{ group.name }}</span>
-          <span v-if="group.is_moderator" class="group-row__mod-badge">管理员组</span>
-          <span class="group-row__count">{{ groupMemberCount.get(group.id) ?? 0 }} 人</span>
-          <div class="group-row__actions">
-            <WinButton Style="SubtleButtonStyle" :IsEnabled="index > 0" @Click="moveGroup(index, -1)">上移</WinButton>
-            <WinButton Style="SubtleButtonStyle" :IsEnabled="index < groups.length - 1" @Click="moveGroup(index, 1)">下移</WinButton>
-            <WinButton Style="SubtleButtonStyle" @Click="openEditGroup(group)">编辑</WinButton>
-            <WinButton Style="AccentButtonStyle" class="win-btn--danger" @Click="deleteGroupConfirm(group)">删除</WinButton>
-          </div>
-        </li>
-      </ul>
-    </div>
-
     <div v-else class="stronghold-panel__body">
       <div v-if="settingsLoading" class="stronghold-panel__loading">加载中…</div>
       <template v-else>
@@ -466,12 +365,9 @@ async function saveSettings() {
     <MemberInfoCard
       v-if="infoCardMember"
       :member="infoCardMember"
-      :can-manage="canManage"
-      :groups="groups"
+      :groups="memberGroups[infoCardMember.username] ?? []"
       @close="infoCardMember = null"
-      @groups-changed="loadMembers"
     />
-    <GroupEditorModal :open="groupEditorOpen" :group="editingGroup" @close="groupEditorOpen = false" @saved="onGroupSaved" />
   </div>
 </template>
 
@@ -648,65 +544,6 @@ async function saveSettings() {
 }
 
 .member-row__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-  margin-left: auto;
-}
-
-.groups-toolbar {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.group-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.group-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.6rem 0.85rem;
-  border-radius: var(--radius-sm);
-  background: var(--card-bg);
-  border: 1px solid var(--card-stroke);
-}
-
-.group-row__dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  flex: 0 0 auto;
-}
-
-.group-row__name {
-  font-size: 0.88rem;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.group-row__mod-badge {
-  padding: 0.1rem 0.5rem;
-  border-radius: 999px;
-  background: rgb(var(--colors-primary) / 0.16);
-  color: rgb(var(--colors-primary));
-  font-size: 0.68rem;
-  font-weight: 600;
-}
-
-.group-row__count {
-  font-size: 0.75rem;
-  color: var(--text-tertiary);
-}
-
-.group-row__actions {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
