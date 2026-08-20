@@ -1,4 +1,6 @@
 <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="OMEW">
+  <!-- fixed white tile so the mark stays legible on dark tab bars and themed chrome -->
+  <rect x="0" y="0" width="512" height="512" rx="96" fill="#FFFFFF"/>
   <!-- ring = the "O" of OpenMew; letterforms redrawn in homage style, not copied -->
   <circle cx="256" cy="258" r="226" fill="none" stroke="#D9E4F7" stroke-width="38"/>
   <g fill="none" stroke-linecap="round" stroke-linejoin="round">
