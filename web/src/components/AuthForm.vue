@@ -76,6 +76,11 @@ const registerError = ref('')
 const registerBusy = ref(false)
 const pendingBackup = ref<{ session: AuthResponse; pubkeyBase64: string; envelope: OwnershipEnvelope } | null>(null)
 
+// m0-protocol §7.9a: the custody passphrase defaults to the login password
+// (no separate field) - independent custody passphrase is an opt-in advanced
+// mode, off by default, that restores the old two-field behavior.
+const useIndependentOwnershipPassphrase = ref(false)
+
 // exposed so a modal host can warn before discarding an unexported backup
 defineExpose({ hasPendingBackup: computed(() => pendingBackup.value != null) })
 
@@ -107,14 +112,18 @@ async function submitRegister() {
     passwordError(registerForm.password),
     needs('email') ? emailError(registerForm.email) : '',
     needs('code') ? requiredError(registerForm.code, '邀请码') : '',
-    ownershipPassphraseError(registerForm.ownershipPassphrase, registerForm.password),
   ].filter(Boolean)
-  if (registerForm.ownershipPassphrase !== registerForm.ownershipPassphraseConfirm) errors.push('两次输入的所有权口令不一致')
+  if (useIndependentOwnershipPassphrase.value) {
+    const ownershipErr = ownershipPassphraseError(registerForm.ownershipPassphrase, registerForm.password)
+    if (ownershipErr) errors.push(ownershipErr)
+    if (registerForm.ownershipPassphrase !== registerForm.ownershipPassphraseConfirm) errors.push('两次输入的所有权口令不一致')
+  }
   registerError.value = errors.join('；')
   if (registerError.value) return
   registerBusy.value = true
   try {
-    const { pubkeyBase64, envelope } = await generateOwnershipKey(registerForm.ownershipPassphrase)
+    const custodyPassphrase = useIndependentOwnershipPassphrase.value ? registerForm.ownershipPassphrase : registerForm.password
+    const { pubkeyBase64, envelope } = await generateOwnershipKey(custodyPassphrase)
     const session = await auth.register({
       username: registerForm.username,
       password: registerForm.password,
@@ -178,7 +187,7 @@ function finishRegistration() {
     <template v-else>
       <div v-if="pendingBackup" class="auth-form">
         <WinInfoBar :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Success">
-          注册成功。请务必导出并妥善保管所有权密钥备份——它是账号迁移的唯一凭证，服务器不会保存明文私钥。
+          注册成功。请务必导出并妥善保管所有权密钥备份——导出内容含你的加密私钥，是账号迁移的唯一凭证，服务器不会保存明文私钥。
         </WinInfoBar>
         <WinButton Style="DefaultButtonStyle" @Click="exportBackup">导出所有权密钥备份</WinButton>
         <WinButton Style="AccentButtonStyle" class="auth-form__submit" @Click="finishRegistration">
@@ -223,7 +232,19 @@ function finishRegistration() {
           <input id="register-code" v-model.trim="registerForm.code" type="text" required />
         </div>
 
-        <fieldset class="auth-form__ownership">
+        <div class="auth-form__advanced-toggle">
+          <button
+            type="button"
+            class="auth-form__advanced-toggle-btn"
+            :aria-expanded="useIndependentOwnershipPassphrase"
+            @click="useIndependentOwnershipPassphrase = !useIndependentOwnershipPassphrase"
+          >
+            <span class="auth-form__advanced-toggle-icon" :class="{ 'auth-form__advanced-toggle-icon--open': useIndependentOwnershipPassphrase }">▸</span>
+            高级：使用独立所有权口令
+          </button>
+        </div>
+
+        <fieldset v-if="useIndependentOwnershipPassphrase" class="auth-form__ownership">
           <legend class="field__label">所有权口令</legend>
           <p class="field__hint">
             独立于登录密码，永远不会发送到服务器——仅在本地用于加密你的账号所有权密钥，供将来账号迁移使用。请牢记，遗失后将无法找回。
@@ -251,6 +272,9 @@ function finishRegistration() {
             />
           </div>
         </fieldset>
+        <p v-else class="field__hint">
+          账号所有权密钥将使用登录密码托管加密，无需单独设置。
+        </p>
 
         <p v-if="registerError" class="field__error">{{ registerError }}</p>
         <WinButton Style="AccentButtonStyle" class="auth-form__submit" type="submit" :IsEnabled="!registerBusy">
@@ -310,5 +334,34 @@ function finishRegistration() {
 
 .auth-form__ownership legend {
   padding: 0 0.3rem;
+}
+
+.auth-form__advanced-toggle {
+  display: flex;
+}
+
+.auth-form__advanced-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.auth-form__advanced-toggle-btn:hover {
+  color: var(--text-primary);
+}
+
+.auth-form__advanced-toggle-icon {
+  display: inline-block;
+  transition: transform var(--fast-duration, 0.1s) var(--fast-out-slow-in, ease);
+}
+
+.auth-form__advanced-toggle-icon--open {
+  transform: rotate(90deg);
 }
 </style>

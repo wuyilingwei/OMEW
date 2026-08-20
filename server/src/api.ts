@@ -32,6 +32,7 @@ const SESSION_TOKEN_TTL_S = 24 * 60 * 60; // m0-protocol S7.2: session token lif
 const ROOM_TOKEN_TTL_S = 300; // m0-protocol S7.3: room/stronghold WS token exp MUST <= 300s.
 const MAX_BODY_BYTES = 64 * 1024;
 const USERS_PAGE_SIZE = 50;
+const MAX_OWNERSHIP_CIPHERTEXT_BYTES = 8 * 1024; // m0-protocol §7.9a: custody ciphertext size cap
 
 const RES_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
@@ -343,6 +344,20 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     // Same strength check as registration (users.ts has no separate policy for it).
     if (newPassword.length < 8) return apiError(400, "PASSWORD_INVALID");
 
+    // Optional (m0-protocol §7.9a): when the custody passphrase defaults to the
+    // login password, the client re-wraps the custody ciphertext under the new
+    // password and submits it alongside the password change so both move
+    // together atomically. Absent when the account uses an independent custody
+    // passphrase (client couldn't unseal with the old login password, so it
+    // leaves the ciphertext untouched).
+    const newOwnershipCiphertext = typeof body.new_ownership_ciphertext === "string" ? body.new_ownership_ciphertext : undefined;
+    if (newOwnershipCiphertext !== undefined) {
+      const byteLength = new TextEncoder().encode(newOwnershipCiphertext).length;
+      if (byteLength === 0 || byteLength > MAX_OWNERSHIP_CIPHERTEXT_BYTES) {
+        return apiError(400, "OWNERSHIP_CIPHERTEXT_INVALID");
+      }
+    }
+
     const localpart = localpartOfActor(actor);
     const user = await env.DB.prepare("SELECT pw_hash, pw_salt FROM users WHERE localpart = ?")
       .bind(localpart)
@@ -353,13 +368,33 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (!user || !valid) return apiError(401, "AUTH_FAILED");
 
     const { hash, salt } = await hashPassword(newPassword);
-    await env.DB.prepare("UPDATE users SET pw_hash = ?, pw_salt = ? WHERE localpart = ?")
-      .bind(hash, salt, localpart)
-      .run();
+    if (newOwnershipCiphertext !== undefined) {
+      await env.DB.prepare("UPDATE users SET pw_hash = ?, pw_salt = ?, ownership_ciphertext = ? WHERE localpart = ?")
+        .bind(hash, salt, newOwnershipCiphertext, localpart)
+        .run();
+    } else {
+      await env.DB.prepare("UPDATE users SET pw_hash = ?, pw_salt = ? WHERE localpart = ?")
+        .bind(hash, salt, localpart)
+        .run();
+    }
     // v1: no server-side session revocation list exists, so this user's other
     // outstanding session tokens stay valid until their own 24h TTL expiry rather
     // than being force-invalidated here.
     return new Response(null, { status: 204, headers: cors() });
+  }
+
+  // GET /api/me/ownership: lets the change-password flow fetch the caller's own
+  // custody envelope client-side so it can attempt to unseal it with the old
+  // password and re-wrap it with the new one (m0-protocol §7.9a).
+  if (method === "GET" && path === "/api/me/ownership") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const localpart = localpartOfActor(actor);
+    const user = await env.DB.prepare("SELECT ownership_pubkey, ownership_ciphertext FROM users WHERE localpart = ?")
+      .bind(localpart)
+      .first<{ ownership_pubkey: string | null; ownership_ciphertext: string | null }>();
+    if (!user) return apiError(404, "NOT_FOUND");
+    return json({ ownership_pubkey: user.ownership_pubkey ?? "", ownership_ciphertext: user.ownership_ciphertext ?? "" });
   }
 
   // ---- instance admin --------------------------------------------------------------

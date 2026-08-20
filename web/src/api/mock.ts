@@ -22,6 +22,7 @@ import type {
   MemberPage,
   MemberPatch,
   MemberTab,
+  OwnershipResponse,
   PostPage,
   PostThread,
   PublicUser,
@@ -41,6 +42,8 @@ import type {
 
 interface MockUser extends AuthUser {
   password: string
+  ownership_pubkey: string
+  ownership_ciphertext: string
 }
 
 let config: AdminInstanceConfig = {
@@ -83,6 +86,8 @@ const users: MockUser[] = [
     is_admin: true,
     email: 'admin@example.com',
     email_verified: true,
+    ownership_pubkey: 'mock-seed-pubkey',
+    ownership_ciphertext: 'mock-seed-ciphertext',
   },
 ]
 
@@ -102,7 +107,7 @@ function makeToken(): string {
 }
 
 function stripPassword(user: MockUser): AuthUser {
-  const { password: _password, ...rest } = user
+  const { password: _password, ownership_pubkey: _pubkey, ownership_ciphertext: _ciphertext, ...rest } = user
   return rest
 }
 
@@ -429,12 +434,21 @@ export const mockApi = {
     return delay(entries)
   },
 
-  async changePassword(token: string, payload: { old_password: string; new_password: string }): Promise<void> {
+  async changePassword(
+    token: string,
+    payload: { old_password: string; new_password: string; new_ownership_ciphertext?: string },
+  ): Promise<void> {
     const user = requireUser(token)
     if (payload.old_password !== user.password) throw new ApiRequestError('AUTH_FAILED', 401)
     if (payload.new_password.length < 8) throw new ApiRequestError('PASSWORD_INVALID', 400)
     user.password = payload.new_password
+    if (payload.new_ownership_ciphertext) user.ownership_ciphertext = payload.new_ownership_ciphertext
     return delay(undefined, 150)
+  },
+
+  async getOwnership(token: string): Promise<OwnershipResponse> {
+    const user = requireUser(token)
+    return delay({ ownership_pubkey: user.ownership_pubkey, ownership_ciphertext: user.ownership_ciphertext })
   },
 
   async register(payload: RegisterPayload): Promise<AuthResponse> {
@@ -456,6 +470,8 @@ export const mockApi = {
       is_admin: false,
       email: payload.email ?? null,
       email_verified: false,
+      ownership_pubkey: payload.ownership_pubkey,
+      ownership_ciphertext: payload.ownership_ciphertext,
     }
     users.push(user)
     const token = makeToken()

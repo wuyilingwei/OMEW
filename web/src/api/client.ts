@@ -3,6 +3,7 @@ import type {
   AdminInstanceConfig,
   AuthResponse,
   BanEntry,
+  ChangePasswordPayload,
   CreateRoomPayload,
   CreateStrongholdPayload,
   DirectoryEntry,
@@ -15,6 +16,7 @@ import type {
   MemberPage,
   MemberPatch,
   MemberTab,
+  OwnershipResponse,
   PostPage,
   PostThread,
   PublicUser,
@@ -141,8 +143,10 @@ export const realApi = {
   login: (payload: LoginPayload) =>
     request<AuthResponse>('/api/login', { method: 'POST', body: JSON.stringify(payload) }),
 
-  changePassword: (token: string, payload: { old_password: string; new_password: string }) =>
+  changePassword: (token: string, payload: ChangePasswordPayload) =>
     request<void>('/api/me/password', { method: 'POST', headers: authHeaders(token), body: JSON.stringify(payload) }),
+
+  getOwnership: (token: string) => request<OwnershipResponse>('/api/me/ownership', { headers: authHeaders(token) }),
 
   getAdminConfig: (token: string) =>
     request<AdminInstanceConfig>('/api/admin/instance/config', { headers: authHeaders(token) }),

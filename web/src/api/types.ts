@@ -55,6 +55,17 @@ export interface LoginPayload {
   password: string
 }
 
+export interface OwnershipResponse {
+  ownership_pubkey: string
+  ownership_ciphertext: string
+}
+
+export interface ChangePasswordPayload {
+  old_password: string
+  new_password: string
+  new_ownership_ciphertext?: string
+}
+
 export interface InviteCode {
   code: string
   created_by: string
