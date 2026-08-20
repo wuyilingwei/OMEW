@@ -47,7 +47,7 @@ async function onFileChange(event: Event) {
     noteUploaded(result.size)
     emit('update:modelValue', result.url)
   } catch (err) {
-    error.value = err instanceof ApiRequestError ? (UPLOAD_ERROR_MESSAGES[err.code] ?? `上传失败：${err.code}`) : '上传失败，请稍后重试'
+    error.value = err instanceof ApiRequestError ? (UPLOAD_ERROR_MESSAGES[err.code] ?? '上传失败，请稍后重试') : '上传失败，请稍后重试'
   } finally {
     uploading.value = false
     input.value = ''

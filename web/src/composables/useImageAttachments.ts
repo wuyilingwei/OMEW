@@ -44,7 +44,7 @@ export function useImageAttachments() {
         items.value.push({ id: result.id, url: result.url, mime: result.mime })
         noteUploaded(result.size)
       } catch (err) {
-        error.value = err instanceof ApiRequestError ? (UPLOAD_ERROR_MESSAGES[err.code] ?? `上传失败：${err.code}`) : '上传失败，请稍后重试'
+        error.value = err instanceof ApiRequestError ? (UPLOAD_ERROR_MESSAGES[err.code] ?? '上传失败，请稍后重试') : '上传失败，请稍后重试'
       } finally {
         uploading.value = false
       }

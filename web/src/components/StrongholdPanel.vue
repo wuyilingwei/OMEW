@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { api, ApiRequestError } from '../api'
+import { api } from '../api'
 import type { Group, MemberPatch, MemberTab, StrongholdConfigPatch, StrongholdMember } from '../api/types'
 import { EMPTY_STATE } from '../assets/mew'
 import { useAuth } from '../composables/useAuth'
@@ -92,8 +92,8 @@ async function runAction(action: (token: string) => Promise<unknown>) {
   try {
     await action(auth.token.value)
     await loadMembers()
-  } catch (err) {
-    actionError.value = err instanceof ApiRequestError ? `操作失败：${err.code}` : '操作失败，请稍后重试'
+  } catch {
+    actionError.value = '操作失败，请稍后重试'
   }
 }
 
@@ -202,8 +202,8 @@ async function deleteGroupConfirm(group: Group) {
     await api.deleteGroup(auth.token.value, selectedNodeId.value, group.id)
     await loadGroups()
     await loadMembers()
-  } catch (err) {
-    groupsError.value = err instanceof ApiRequestError ? `删除失败：${err.code}` : '删除失败，请稍后重试'
+  } catch {
+    groupsError.value = '删除失败，请稍后重试'
   }
 }
 
@@ -222,8 +222,8 @@ async function moveGroup(index: number, direction: -1 | 1) {
       selectedNodeId.value,
       reordered.map((g, i) => ({ id: g.id, position: i })),
     )
-  } catch (err) {
-    groupsError.value = err instanceof ApiRequestError ? `排序失败：${err.code}` : '排序失败，请稍后重试'
+  } catch {
+    groupsError.value = '排序失败，请稍后重试'
   }
 }
 
@@ -286,8 +286,8 @@ async function saveSettings() {
   try {
     await api.patchStrongholdConfig(auth.token.value, selectedNodeId.value, patch)
     settingsSaveOk.value = true
-  } catch (err) {
-    settingsError.value = err instanceof ApiRequestError ? `保存失败：${err.code}` : '保存失败，请稍后重试'
+  } catch {
+    settingsError.value = '保存失败，请稍后重试'
   } finally {
     settingsSaving.value = false
   }

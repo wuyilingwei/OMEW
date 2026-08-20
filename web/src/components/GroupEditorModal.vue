@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { api, ApiRequestError } from '../api'
+import { api } from '../api'
 import type { Group, GroupPermValue } from '../api/types'
 import { GROUP_COLOR_SWATCHES } from '../constants/groupColors'
 import { useAuth } from '../composables/useAuth'
@@ -91,8 +91,8 @@ async function save() {
     }
     emit('saved')
     emit('close')
-  } catch (err) {
-    error.value = err instanceof ApiRequestError ? `保存失败：${err.code}` : '保存失败，请稍后重试'
+  } catch {
+    error.value = '保存失败，请稍后重试'
   } finally {
     saving.value = false
   }

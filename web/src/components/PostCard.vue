@@ -4,6 +4,7 @@ import { usePostModal } from '../composables/usePostModal'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
 import { actorLocalpart } from '../utils/actor'
 import AvatarBadge from './AvatarBadge.vue'
+import AppIcon from './icons/AppIcon.vue'
 
 const props = defineProps<{ post: PostSummary }>()
 const { open } = usePostModal()
@@ -36,7 +37,11 @@ function formatTime(ts: number): string {
           <span class="post-card__author">{{ authorName() }}</span>
         </span>
         <span class="post-card__time">
-          {{ post.reply_count > 0 ? `${post.reply_count} 回复 · ` : '' }}{{ formatTime(post.bumped_at) }}
+          <template v-if="post.reply_count > 0">
+            {{ post.reply_count }} 回复
+            <AppIcon name="dot" :size="4" class="post-card__dot" />
+          </template>
+          {{ formatTime(post.bumped_at) }}
         </span>
       </div>
     </div>
@@ -109,5 +114,10 @@ function formatTime(ts: number): string {
   display: flex;
   align-items: center;
   gap: 0.4rem;
+}
+
+.post-card__dot {
+  margin: 0 0.3em;
+  vertical-align: middle;
 }
 </style>
