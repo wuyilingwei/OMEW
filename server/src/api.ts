@@ -3,7 +3,7 @@ import { dummyPasswordFields, hashPassword, newJti, signToken, verifyPassword, v
 import { handleInbox } from "./inbox";
 import type { ConfigRow, MemberRow } from "./stronghold-do";
 import {
-  HOME_DOMAIN,
+  instanceDomain,
   typeToKind,
   type Role,
   type RoomTokenClaims,
@@ -99,7 +99,7 @@ async function requireAdmin(request: Request, env: Env): Promise<{ actor: string
 // elsewhere (m0-protocol §7.9 policy gate) rather than off the request's bearer
 // token. Guest actors (foreign domain) are never local admins.
 async function isActorAdmin(env: Env, actor: string): Promise<boolean> {
-  if (domainOfActor(actor) !== HOME_DOMAIN) return false;
+  if (domainOfActor(actor) !== instanceDomain(env)) return false;
   const row = await env.DB.prepare("SELECT is_admin FROM users WHERE localpart = ?")
     .bind(localpartOfActor(actor))
     .first<{ is_admin: number }>();
@@ -158,7 +158,18 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
       // Policy value only (open/restricted/application) - enough for the client
       // to shape its "create stronghold" entry point; creators/peers stay admin-only.
       stronghold_creation: config.stronghold_creation_policy,
+      allow_guest_browsing: config.allow_guest_browsing,
     });
+  }
+
+  // Task 034: unauthenticated public-stronghold discovery. When the policy is
+  // off the endpoint itself acts not-found rather than an empty list, matching
+  // "you need to be logged in" 401s used elsewhere for a disabled read path -
+  // there is no logged-in variant of this endpoint to fall back to either way.
+  if (method === "GET" && path === "/api/directory") {
+    const config = await getInstanceConfig(env);
+    if (!config.allow_guest_browsing) return apiError(404, "NOT_FOUND");
+    return json({ strongholds: await listPublicDirectory(env) });
   }
 
   if (method === "POST" && path === "/api/register") {
@@ -208,7 +219,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     // is never blocked on verification.
 
     const { hash, salt } = await hashPassword(password);
-    const actor = `@${username}:${HOME_DOMAIN}`;
+    const actor = `@${username}:${instanceDomain(env)}`;
     const now = Date.now();
 
     const statements = [
@@ -281,9 +292,41 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
       return apiError(401, "AUTH_FAILED");
     }
 
-    const actor = `@${username}:${HOME_DOMAIN}`;
+    const actor = `@${username}:${instanceDomain(env)}`;
     const token = await issueSessionToken(actor, env);
     return json({ token, user: toPublicUser(user, actor) });
+  }
+
+  // ---- account: change password ----------------------------------------------------
+
+  if (method === "POST" && path === "/api/me/password") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+
+    const oldPassword = String(body.old_password ?? "");
+    const newPassword = String(body.new_password ?? "");
+    // Same strength check as registration (users.ts has no separate policy for it).
+    if (newPassword.length < 8) return apiError(400, "PASSWORD_INVALID");
+
+    const localpart = localpartOfActor(actor);
+    const user = await env.DB.prepare("SELECT pw_hash, pw_salt FROM users WHERE localpart = ?")
+      .bind(localpart)
+      .first<{ pw_hash: string | null; pw_salt: string | null }>();
+    // Same constant-cost-regardless-of-outcome shape as /api/login.
+    const dummy = dummyPasswordFields();
+    const valid = await verifyPassword(oldPassword, user?.pw_hash ?? dummy.hash, user?.pw_salt ?? dummy.salt);
+    if (!user || !valid) return apiError(401, "AUTH_FAILED");
+
+    const { hash, salt } = await hashPassword(newPassword);
+    await env.DB.prepare("UPDATE users SET pw_hash = ?, pw_salt = ? WHERE localpart = ?")
+      .bind(hash, salt, localpart)
+      .run();
+    // v1: no server-side session revocation list exists, so this user's other
+    // outstanding session tokens stay valid until their own 24h TTL expiry rather
+    // than being force-invalidated here.
+    return new Response(null, { status: 204, headers: cors() });
   }
 
   // ---- instance admin --------------------------------------------------------------
@@ -320,10 +363,13 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (!isValidStrongholdCreationPolicy(strongholdCreationPolicy)) return apiError(400, "CONFIG_INVALID");
     const strongholdCreators = "stronghold_creators" in body ? body.stronghold_creators : current.stronghold_creators;
     if (!isValidActorList(strongholdCreators)) return apiError(400, "CONFIG_INVALID");
+    const allowGuestBrowsing = "allow_guest_browsing" in body ? body.allow_guest_browsing : current.allow_guest_browsing;
+    if (typeof allowGuestBrowsing !== "boolean") return apiError(400, "CONFIG_INVALID");
 
     await env.DB.prepare(
       "UPDATE instance_config SET allow_root = ?, root_requirements = ?, trusted_identity_servers = ?, max_file_bytes = ?, " +
-        "user_storage_quota_bytes = ?, federation_peers = ?, stronghold_creation_policy = ?, stronghold_creators = ? WHERE id = 1"
+        "user_storage_quota_bytes = ?, federation_peers = ?, stronghold_creation_policy = ?, stronghold_creators = ?, " +
+        "allow_guest_browsing = ? WHERE id = 1"
     )
       .bind(
         allowRoot ? 1 : 0,
@@ -333,7 +379,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
         userStorageQuotaBytes,
         JSON.stringify(federationPeers),
         strongholdCreationPolicy,
-        JSON.stringify(strongholdCreators)
+        JSON.stringify(strongholdCreators),
+        allowGuestBrowsing ? 1 : 0
       )
       .run();
     return json({
@@ -345,6 +392,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
       federation_peers: federationPeers,
       stronghold_creation_policy: strongholdCreationPolicy,
       stronghold_creators: strongholdCreators,
+      allow_guest_browsing: allowGuestBrowsing,
     });
   }
 
@@ -844,6 +892,17 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const room = await stub.createRoom(resId, type, name, ["text"], false);
     return json(room, 201);
   }
+  // Task 034: the only other room listing under the /api/* flat-shape surface is
+  // embedded per-actor in GET /api/me/strongholds (auth-only, "my strongholds") -
+  // this is the by-id equivalent, open to a guest on a public stronghold.
+  if (m && method === "GET") {
+    const gate = await resolveGuestOrMember(request, env, m.id!);
+    if (gate instanceof Response) return gate;
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const rooms = await stub.listRooms();
+    const visible = gate.kind === "guest" ? rooms.filter((r) => !r.restricted) : rooms;
+    return json(visible.map((r) => ({ id: r.res_id, name: r.name, type: r.type })));
+  }
 
   m = match("/api/stronghold/:id/join", path);
   if (m && method === "POST") {
@@ -910,14 +969,9 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
   m = match("/api/stronghold/:id/config", path);
   if (m && method === "GET") {
-    const actor = await requireActor(request, env);
-    if (!actor) return apiError(401, "AUTH_REQUIRED");
-    const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    const config = await stub.getConfig();
-    if (!config) return apiError(404, "NOT_FOUND");
-    const member = await stub.getMember(actor);
-    if (!member || member.banned_at) return apiError(403, "FORBIDDEN");
-    return json(toApiConfig(config));
+    const gate = await resolveGuestOrMember(request, env, m.id!);
+    if (gate instanceof Response) return gate;
+    return json(toApiConfig(gate.config));
   }
   if (m && method === "PATCH") {
     const actor = await requireActor(request, env);
@@ -1159,7 +1213,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const target = m.actor!;
     if (!target.startsWith("@") || !target.includes(":")) return apiError(400, "MALFORMED");
 
-    if (domainOfActor(target) === HOME_DOMAIN) {
+    if (domainOfActor(target) === instanceDomain(env)) {
       const row = await env.DB.prepare("SELECT display_name, created_at FROM users WHERE localpart = ?")
         .bind(localpartOfActor(target))
         .first<{ display_name: string; created_at: number }>();
@@ -1246,11 +1300,30 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
   m = match("/stronghold/:id/rooms/:resId/history", path);
   if (m && method === "GET") {
-    const gate = await requireRole(request, env, m.id!, ["owner", "mod", "member"]);
-    if (gate instanceof Response) return gate;
+    // Task 034: this route predates the flat {error:CODE} /api/* surface and
+    // keeps its own nested {error:{code,message}} shape (see the note atop this
+    // file), so it can't reuse resolveGuestOrMember/apiError - same guest gate,
+    // shaped to match its existing error responses instead.
     const strongholdStub = env.STRONGHOLD_DO.getByName(m.id!);
+    const config = await strongholdStub.getConfig();
+    if (!config) return errorResponse(404, "OMEW_NOT_FOUND", "stronghold not found");
+
+    const actor = await requireActor(request, env);
+    let isGuest = false;
+    if (actor) {
+      const member = await strongholdStub.getMember(actor);
+      if (!member || member.banned_at) return errorResponse(403, "OMEW_BANNED", "not a member or banned");
+    } else {
+      const policy = await getInstanceConfig(env);
+      if (!(policy.allow_guest_browsing && config.visibility === "public")) {
+        return errorResponse(401, "OMEW_SESSION_INVALID", "auth required");
+      }
+      isGuest = true;
+    }
+
     const room = await strongholdStub.getRoom(m.resId!);
     if (!room) return errorResponse(404, "OMEW_ROOM_NOT_FOUND", "room not found");
+    if (isGuest && room.restricted) return errorResponse(404, "OMEW_ROOM_NOT_FOUND", "room not found");
     const roomRef = `${m.id!}/${typeToKind(room.type)}/${m.resId!}`;
     const before = url.searchParams.has("before") ? Number(url.searchParams.get("before")) : null;
     const limit = url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : 50;
@@ -1266,13 +1339,12 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
   m = match("/api/stronghold/:id/rooms/:resId/posts", path);
   if (m && method === "GET") {
-    const actor = await requireActor(request, env);
-    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const gate = await resolveGuestOrMember(request, env, m.id!);
+    if (gate instanceof Response) return gate;
     const strongholdStub = env.STRONGHOLD_DO.getByName(m.id!);
-    const member = await strongholdStub.getMember(actor);
-    if (!member || member.banned_at) return apiError(403, "FORBIDDEN");
     const room = await strongholdStub.getRoom(m.resId!);
     if (!room) return apiError(404, "NOT_FOUND");
+    if (guestBlockedFromRoom(gate, room)) return apiError(404, "NOT_FOUND");
     if (room.type !== "section") return apiError(400, "ROOM_NOT_SECTION");
 
     const roomRef = `${m.id!}/${typeToKind(room.type)}/${m.resId!}`;
@@ -1284,13 +1356,12 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
   m = match("/api/stronghold/:id/rooms/:resId/posts/:seq", path);
   if (m && method === "GET") {
-    const actor = await requireActor(request, env);
-    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const gate = await resolveGuestOrMember(request, env, m.id!);
+    if (gate instanceof Response) return gate;
     const strongholdStub = env.STRONGHOLD_DO.getByName(m.id!);
-    const member = await strongholdStub.getMember(actor);
-    if (!member || member.banned_at) return apiError(403, "FORBIDDEN");
     const room = await strongholdStub.getRoom(m.resId!);
     if (!room) return apiError(404, "NOT_FOUND");
+    if (guestBlockedFromRoom(gate, room)) return apiError(404, "NOT_FOUND");
     if (room.type !== "section") return apiError(400, "ROOM_NOT_SECTION");
     const seq = Number(m.seq);
     if (!Number.isFinite(seq)) return apiError(400, "MALFORMED");
@@ -1589,8 +1660,9 @@ interface ActorProfile {
 async function actorProfiles(env: Env, actors: string[]): Promise<Map<string, ActorProfile>> {
   const result = new Map<string, ActorProfile>();
   const unique = [...new Set(actors)];
-  const localActors = unique.filter((a) => domainOfActor(a) === HOME_DOMAIN);
-  const guestActors = unique.filter((a) => domainOfActor(a) !== HOME_DOMAIN);
+  const home = instanceDomain(env);
+  const localActors = unique.filter((a) => domainOfActor(a) === home);
+  const guestActors = unique.filter((a) => domainOfActor(a) !== home);
 
   if (localActors.length > 0) {
     const localparts = localActors.map(localpartOfActor);
@@ -1675,4 +1747,69 @@ async function requireRole(request: Request, env: Env, strongholdId: string, rol
   if (!member || member.banned_at) return errorResponse(403, "OMEW_BANNED", "not a member or banned");
   if (!roles.includes(member.role)) return errorResponse(403, "OMEW_FORBIDDEN", "insufficient role");
   return { actor, role: member.role };
+}
+
+// ---- guest read gate (task 034 / m0-protocol §8.2) -------------------------------
+// A public stronghold MAY serve unauthenticated reads; this instance's
+// allow_guest_browsing toggle decides whether it actually does. An authenticated
+// request keeps the existing membership gate untouched (works the same on a
+// private stronghold as before - guest fallback only ever applies when no actor
+// could be resolved from the request, and only to GET/read routes). No
+// distinction is made between a missing Authorization header and an invalid one -
+// both already collapse to "no actor" in requireActor, same as every other route
+// in this file.
+async function resolveGuestOrMember(
+  request: Request,
+  env: Env,
+  strongholdId: string
+): Promise<
+  | { kind: "member"; actor: string; member: MemberRow; config: ConfigRow }
+  | { kind: "guest"; config: ConfigRow }
+  | Response
+> {
+  const stub = env.STRONGHOLD_DO.getByName(strongholdId);
+  const config = await stub.getConfig();
+  if (!config) return apiError(404, "NOT_FOUND");
+
+  const actor = await requireActor(request, env);
+  if (actor) {
+    const member = await stub.getMember(actor);
+    if (!member || member.banned_at) return apiError(403, "FORBIDDEN");
+    return { kind: "member", actor, member, config };
+  }
+
+  const policy = await getInstanceConfig(env);
+  if (policy.allow_guest_browsing && config.visibility === "public") {
+    return { kind: "guest", config };
+  }
+  return apiError(401, "AUTH_REQUIRED");
+}
+
+// §8.2: a `restricted: true` room MUST stay owner/mod-only and MUST NOT enter
+// directory/search/tips summaries - a guest is never owner/mod, so this only ever
+// blocks the guest branch. Pre-existing authenticated-member behavior for
+// restricted rooms is unchanged by task 034 and out of this helper's scope.
+function guestBlockedFromRoom(gate: { kind: "member" | "guest" }, room: { restricted: number }): boolean {
+  return gate.kind === "guest" && Boolean(room.restricted);
+}
+
+// Public stronghold directory (task 034), fanned out from the member index the
+// same way GET /api/me/strongholds does. Small instance scale: a live COUNT via
+// listMembers() per entry is fine, no cache column needed yet.
+async function listPublicDirectory(
+  env: Env
+): Promise<Array<{ id: string; name: string; description: string | null; cover: string | null; member_count: number }>> {
+  const { results } = await env.DB.prepare("SELECT DISTINCT stronghold_id FROM stronghold_member_index").all<{
+    stronghold_id: string;
+  }>();
+  const entries = await Promise.all(
+    results.map(async (row) => {
+      const stub = env.STRONGHOLD_DO.getByName(row.stronghold_id);
+      const config = await stub.getConfig();
+      if (!config || config.visibility !== "public") return null;
+      const members = await stub.listMembers();
+      return { id: config.id, name: config.name, description: config.description, cover: config.cover, member_count: members.length };
+    })
+  );
+  return entries.filter((e): e is NonNullable<typeof e> => e != null);
 }

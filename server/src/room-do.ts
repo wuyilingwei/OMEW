@@ -5,7 +5,7 @@ import {
   DENY_CHANNEL_SPEAK,
   DENY_SECTION_POST,
   DENY_SECTION_REPLY,
-  HOME_DOMAIN,
+  instanceDomain,
   type Role,
   type RoomTokenClaims,
 } from "./types";
@@ -14,10 +14,6 @@ import {
 // degenerate case where every item has parent_seq IS NULL. Kind (ch|sec) is carried
 // in the room-ref, not stored separately here - it only matters for the deny-bit
 // rule below and is read off the WS token's `room` claim at handshake time.
-
-// proposal S4.1: this instance's own domain is not yet wired up (no federation in
-// M1) - envelopes are stamped with a fixed local origin until M5/M6.
-const HOME_ORIGIN = HOME_DOMAIN;
 
 const BATCH_WINDOW_MS = 80;
 const HISTORY_DEFAULT_LIMIT = 50;
@@ -337,10 +333,15 @@ export class RoomDO extends DurableObject<Env> {
       return;
     }
 
+    // proposal S4.1: envelopes are stamped with this instance's own domain
+    // (task 033: INSTANCE_DOMAIN wrangler var, falling back to "local") until
+    // true federation signing lands in M5/M6.
+    const homeOrigin = instanceDomain(this.env);
+
     const existing = this.ctx.storage.sql
       .exec<{ seq: number }>(
         "SELECT seq FROM dedupe_local WHERE origin = ? AND client_id = ?",
-        HOME_ORIGIN,
+        homeOrigin,
         clientId
       )
       .toArray();
@@ -376,11 +377,11 @@ export class RoomDO extends DurableObject<Env> {
     const bodyJson = JSON.stringify(finalBody);
     this.ctx.storage.sql.exec(
       "INSERT INTO item (seq, parent_seq, root_seq, actor, origin, client_id, kind, ts, body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      seq, parentSeq, rootSeq, attachment.actor, HOME_ORIGIN, clientId, kind, ts, bodyJson
+      seq, parentSeq, rootSeq, attachment.actor, homeOrigin, clientId, kind, ts, bodyJson
     );
     this.ctx.storage.sql.exec(
       "INSERT INTO dedupe_local (origin, client_id, seq, ts) VALUES (?, ?, ?, ?)",
-      HOME_ORIGIN, clientId, seq, ts
+      homeOrigin, clientId, seq, ts
     );
 
     if (isSectionPost) {
