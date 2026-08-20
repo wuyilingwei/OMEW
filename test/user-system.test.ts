@@ -2,78 +2,75 @@ import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { apiRequest, ensureMigrated, registerUser } from "./helpers";
 
-// Real user system (registration gate, invite codes, admin bootstrap, login,
-// federation trust list) replacing the M1 dev-token stub.
+// Real user system (registration gate, invite codes, owner bootstrap, login,
+// federation trust list) replacing the M1 dev-token stub. Instance policy
+// (allow_root / root_requirements / trusted_identity_servers) is env config as
+// of task 035 - see server/src/config.ts - so these tests set env vars directly
+// instead of writing the old instance_config D1 table.
 
 const OWNERSHIP = { ownership_pubkey: "test-pubkey", ownership_ciphertext: "test-ciphertext-blob" };
 
-interface InstanceConfigRow {
-  allow_root: number;
-  root_requirements: string;
-  trusted_identity_servers: string;
-}
-
-async function setInstanceConfig(overrides: {
+function setInstanceEnv(overrides: {
   allow_root?: boolean;
   root_requirements?: string[];
   trusted_identity_servers?: string[];
-}): Promise<void> {
-  const current = await env.DB.prepare(
-    "SELECT allow_root, root_requirements, trusted_identity_servers FROM instance_config WHERE id = 1"
-  ).first<InstanceConfigRow>();
-  const allowRoot = overrides.allow_root ?? Boolean(current!.allow_root);
-  const rootRequirements = overrides.root_requirements ?? (JSON.parse(current!.root_requirements) as string[]);
-  const trustedServers =
-    overrides.trusted_identity_servers ?? (JSON.parse(current!.trusted_identity_servers) as string[]);
-  await env.DB.prepare(
-    "UPDATE instance_config SET allow_root = ?, root_requirements = ?, trusted_identity_servers = ? WHERE id = 1"
-  )
-    .bind(allowRoot ? 1 : 0, JSON.stringify(rootRequirements), JSON.stringify(trustedServers))
-    .run();
+}): void {
+  if (overrides.allow_root !== undefined) env.ALLOW_ROOT = overrides.allow_root ? "1" : "0";
+  if (overrides.root_requirements) env.ROOT_REQUIREMENTS = overrides.root_requirements.join(",");
+  if (overrides.trusted_identity_servers) env.TRUSTED_IDENTITY_SERVERS = overrides.trusted_identity_servers.join(",");
 }
 
-// Registers a fresh user and force-grants is_admin, independent of whichever user
-// this worker instance's natural "first registration" bootstrap already promoted -
-// keeps the invite-code tests decoupled from admin-bootstrap test ordering.
+// Registers a fresh user and force-grants server_role=admin via D1, independent
+// of whichever user this worker instance's natural "first registration"
+// bootstrap already promoted to owner - keeps the invite-code tests decoupled
+// from owner-bootstrap test ordering. Re-logs-in since server_role rides in the
+// session token claim (§7.10) and the token minted at registration predates
+// this promotion.
 async function makeAdminToken(username: string): Promise<string> {
-  await setInstanceConfig({ allow_root: true, root_requirements: [] });
+  setInstanceEnv({ allow_root: true, root_requirements: [] });
   const { status, json } = await registerUser({ username, password: "password123", ...OWNERSHIP });
   expect(status).toBe(200);
-  await env.DB.prepare("UPDATE users SET is_admin = 1 WHERE localpart = ?").bind(username).run();
-  return json.token as string;
+  await env.DB.prepare("UPDATE users SET server_role = 'admin' WHERE localpart = ?").bind(username).run();
+  const loginRes = await apiRequest("/api/login", { method: "POST", body: JSON.stringify({ username, password: "password123" }) });
+  return ((await loginRes.json()) as { token: string }).token;
 }
 
 beforeAll(async () => {
   await ensureMigrated();
 });
 
-describe("admin bootstrap", () => {
-  it("makes only the first successfully registered user an admin", async () => {
+describe("owner bootstrap", () => {
+  it("makes only the first successfully registered user server_role=owner", async () => {
     // Defensive clean slate: this suite runs first in the file, but don't depend on
-    // that - guarantee no pre-existing admin regardless of execution/storage order.
+    // that - guarantee no pre-existing owner regardless of execution/storage order.
     await env.DB.prepare("DELETE FROM users").run();
-    await setInstanceConfig({ allow_root: true, root_requirements: [] });
+    setInstanceEnv({ allow_root: true, root_requirements: [] });
 
-    const first = await registerUser({ username: "bootadmin1", password: "password123", ...OWNERSHIP });
+    const first = await registerUser({ username: "bootowner1", password: "password123", ...OWNERSHIP });
     expect(first.status).toBe(200);
-    expect((first.json.user as Record<string, unknown>).is_admin).toBe(true);
+    const firstUser = first.json.user as Record<string, unknown>;
+    expect(firstUser.server_role).toBe("owner");
+    expect(firstUser.is_admin).toBe(true); // compat field
 
-    const second = await registerUser({ username: "bootadmin2", password: "password123", ...OWNERSHIP });
+    const second = await registerUser({ username: "bootowner2", password: "password123", ...OWNERSHIP });
     expect(second.status).toBe(200);
-    expect((second.json.user as Record<string, unknown>).is_admin).toBe(false);
+    const secondUser = second.json.user as Record<string, unknown>;
+    expect(secondUser.server_role).toBe("user");
+    expect(secondUser.is_admin).toBe(false);
   });
 });
 
 describe("registration gate (allow_root)", () => {
   it("rejects registration with REGISTRATION_DISABLED when allow_root is off", async () => {
-    await setInstanceConfig({ allow_root: false, root_requirements: [] });
+    setInstanceEnv({ allow_root: false, root_requirements: [] });
     const { status, json } = await registerUser({ username: "gatetest1", password: "password123", ...OWNERSHIP });
     expect(status).toBe(403);
     expect(json).toEqual({ error: "REGISTRATION_DISABLED" });
+    setInstanceEnv({ allow_root: true });
   });
 
   it("allows registration and issues a session token once allow_root is on", async () => {
-    await setInstanceConfig({ allow_root: true, root_requirements: [] });
+    setInstanceEnv({ allow_root: true, root_requirements: [] });
     const { status, json } = await registerUser({ username: "gatetest2", password: "password123", ...OWNERSHIP });
     expect(status).toBe(200);
     expect(json.token).toBeTypeOf("string");
@@ -82,16 +79,16 @@ describe("registration gate (allow_root)", () => {
   });
 
   it("rejects a malformed username with USERNAME_INVALID", async () => {
-    await setInstanceConfig({ allow_root: true, root_requirements: [] });
+    setInstanceEnv({ allow_root: true, root_requirements: [] });
     const { status, json } = await registerUser({ username: "a!", password: "password123", ...OWNERSHIP });
     expect(status).toBe(400);
     expect(json).toEqual({ error: "USERNAME_INVALID" });
   });
 });
 
-describe("invite-code gated registration (root_requirements: [code])", () => {
+describe("invite-code gated registration (root_requirements: code)", () => {
   it("rejects registration without a valid invite code", async () => {
-    await setInstanceConfig({ allow_root: true, root_requirements: ["code"] });
+    setInstanceEnv({ allow_root: true, root_requirements: ["code"] });
     const { status, json } = await registerUser({
       username: "codetest1",
       password: "password123",
@@ -104,7 +101,7 @@ describe("invite-code gated registration (root_requirements: [code])", () => {
 
   it("mints a code as admin, consumes it once end-to-end, then refuses reuse", async () => {
     const adminToken = await makeAdminToken("codeadmin1");
-    await setInstanceConfig({ allow_root: true, root_requirements: ["code"] });
+    setInstanceEnv({ allow_root: true, root_requirements: ["code"] });
 
     const mintRes = await apiRequest("/api/admin/invite-codes", {
       method: "POST",
@@ -130,7 +127,7 @@ describe("invite-code gated registration (root_requirements: [code])", () => {
   });
 
   it("rejects invite-code minting and listing from a non-admin session", async () => {
-    await setInstanceConfig({ allow_root: true, root_requirements: [] });
+    setInstanceEnv({ allow_root: true, root_requirements: [] });
     const { json } = await registerUser({ username: "notadmin1", password: "password123", ...OWNERSHIP });
     const res = await apiRequest("/api/admin/invite-codes", {
       method: "POST",
@@ -144,7 +141,7 @@ describe("invite-code gated registration (root_requirements: [code])", () => {
 
 describe("login", () => {
   it("returns identical AUTH_FAILED for a wrong password and a nonexistent user", async () => {
-    await setInstanceConfig({ allow_root: true, root_requirements: [] });
+    setInstanceEnv({ allow_root: true, root_requirements: [] });
     const username = "logintest1";
     const reg = await registerUser({ username, password: "correct-password", ...OWNERSHIP });
     expect(reg.status).toBe(200);
@@ -180,7 +177,7 @@ describe("login", () => {
 
 describe("federation session trust list", () => {
   it("rejects an iss domain not on the trusted list", async () => {
-    await setInstanceConfig({ trusted_identity_servers: ["allowed.example"] });
+    setInstanceEnv({ trusted_identity_servers: ["allowed.example"] });
     const res = await apiRequest("/federation/session", {
       method: "POST",
       body: JSON.stringify({ iss: "untrusted.example" }),
@@ -190,7 +187,7 @@ describe("federation session trust list", () => {
   });
 
   it("accepts an exact match and falls through to the M6 placeholder", async () => {
-    await setInstanceConfig({ trusted_identity_servers: ["allowed.example"] });
+    setInstanceEnv({ trusted_identity_servers: ["allowed.example"] });
     const res = await apiRequest("/federation/session", {
       method: "POST",
       body: JSON.stringify({ iss: "allowed.example" }),
@@ -199,7 +196,7 @@ describe("federation session trust list", () => {
   });
 
   it("accepts any origin when the trusted list is a wildcard", async () => {
-    await setInstanceConfig({ trusted_identity_servers: ["*"] });
+    setInstanceEnv({ trusted_identity_servers: ["*"] });
     const res = await apiRequest("/federation/session", {
       method: "POST",
       body: JSON.stringify({ iss: "anything.example" }),

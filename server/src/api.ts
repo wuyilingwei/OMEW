@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { dummyPasswordFields, hashPassword, newJti, signToken, verifyPassword, verifyToken } from "./auth";
+import { getInstanceConfig } from "./config";
 import { handleInbox } from "./inbox";
 import type { ConfigRow, MemberRow } from "./stronghold-do";
 import {
@@ -8,21 +9,15 @@ import {
   type Role,
   type RoomTokenClaims,
   type RoomType,
+  type ServerRole,
   type SessionTokenClaims,
   type StrongholdTokenClaims,
 } from "./types";
 import {
   domainOfActor,
   generateInviteCode,
-  getInstanceConfig,
   isOriginTrusted,
-  isValidActorList,
-  isValidDomainList,
   isValidEmail,
-  isValidPositiveInt,
-  isValidRootRequirements,
-  isValidStrongholdCreationPolicy,
-  isValidTrustedServers,
   isValidUsername,
   localpartOfActor,
   normalizeUsername,
@@ -35,6 +30,7 @@ export { StrongholdDO } from "./stronghold-do";
 const SESSION_TOKEN_TTL_S = 24 * 60 * 60; // m0-protocol S7.2: session token lifetime MUST <= 24h.
 const ROOM_TOKEN_TTL_S = 300; // m0-protocol S7.3: room/stronghold WS token exp MUST <= 300s.
 const MAX_BODY_BYTES = 64 * 1024;
+const USERS_PAGE_SIZE = 50;
 
 const RES_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
@@ -78,32 +74,50 @@ async function readJsonBody(request: Request): Promise<Record<string, unknown> |
   }
 }
 
-async function requireActor(request: Request, env: Env): Promise<string | null> {
+// Full session claims - used wherever the server-role overlay (m0-protocol
+// §7.10) matters. server_role rides in the token itself (types.ts) rather than
+// a per-request DB read, so a role change only takes effect for a session's
+// holder once that session's own TTL expires - same tradeoff v1 already makes
+// for every other session claim (see /api/me/password's note).
+async function requireSession(request: Request, env: Env): Promise<SessionTokenClaims | Response> {
   const header = request.headers.get("Authorization");
-  if (!header?.startsWith("Bearer ")) return null;
+  if (!header?.startsWith("Bearer ")) return apiError(401, "AUTH_REQUIRED");
   const claims = await verifyToken<SessionTokenClaims>(header.slice(7), env.DEV_TOKEN_SECRET);
-  if (!claims || claims.typ !== "session") return null;
-  return claims.actor;
+  if (!claims || claims.typ !== "session") return apiError(401, "AUTH_REQUIRED");
+  return claims;
 }
 
-// is_admin isn't carried in the session token claims (it can change after a token is
-// issued), so admin routes re-check it against the users row on every request.
-async function requireAdmin(request: Request, env: Env): Promise<{ actor: string } | Response> {
-  const actor = await requireActor(request, env);
-  if (!actor) return apiError(401, "AUTH_REQUIRED");
-  if (!(await isActorAdmin(env, actor))) return apiError(403, "ADMIN_REQUIRED");
-  return { actor };
+// Thin actor-only wrapper over requireSession for the many routes that don't
+// need server_role.
+async function requireActor(request: Request, env: Env): Promise<string | null> {
+  const session = await requireSession(request, env);
+  return session instanceof Response ? null : session.actor;
 }
 
-// Same is_admin lookup as requireAdmin, but for an actor already known from
-// elsewhere (m0-protocol §7.9 policy gate) rather than off the request's bearer
-// token. Guest actors (foreign domain) are never local admins.
-async function isActorAdmin(env: Env, actor: string): Promise<boolean> {
-  if (domainOfActor(actor) !== instanceDomain(env)) return false;
-  const row = await env.DB.prepare("SELECT is_admin FROM users WHERE localpart = ?")
-    .bind(localpartOfActor(actor))
-    .first<{ is_admin: number }>();
-  return Boolean(row?.is_admin);
+// Server-level admin gate (m0-protocol §7.10): server_owner or server_admin.
+// Replaces the old is_admin-column requireAdmin - "admin" here means "at least
+// server_admin", owner always passes too.
+async function requireServerRole(
+  request: Request,
+  env: Env,
+  min: "admin" | "owner"
+): Promise<{ actor: string; serverRole: ServerRole } | Response> {
+  const session = await requireSession(request, env);
+  if (session instanceof Response) return session;
+  const ok = min === "owner" ? session.server_role === "owner" : session.server_role === "owner" || session.server_role === "admin";
+  if (!ok) return apiError(403, "ADMIN_REQUIRED");
+  return { actor: session.actor, serverRole: session.server_role };
+}
+
+// m0-protocol §7.10: server_owner/server_admin get owner-equivalent permissions
+// in every stronghold, independent of actual membership - except ownership
+// transfer, which stays gated on real ownership or server_owner specifically
+// (handled at the transfer endpoint, not here). null means no access at all:
+// no real membership (and no overlay), or banned with no overlay.
+function overlayRole(serverRole: ServerRole, member: MemberRow | null): Role | null {
+  if (serverRole === "owner" || serverRole === "admin") return "owner";
+  if (!member || member.banned_at) return null;
+  return member.role;
 }
 
 function match(pattern: string, path: string): Record<string, string> | null {
@@ -224,7 +238,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
     const statements = [
       env.DB.prepare(
-        "INSERT INTO users (localpart, display_name, status, created_at, pw_hash, pw_salt, email, email_verified, is_admin, ownership_pubkey, ownership_ciphertext) VALUES (?, ?, 'active', ?, ?, ?, ?, 0, 0, ?, ?)"
+        "INSERT INTO users (localpart, display_name, status, created_at, pw_hash, pw_salt, email, email_verified, ownership_pubkey, ownership_ciphertext) VALUES (?, ?, 'active', ?, ?, ?, ?, 0, ?, ?)"
       ).bind(username, username, now, hash, salt, email, ownershipPubkey, ownershipCiphertext),
     ];
     const codeConsumeIndex = requiresCode ? statements.length : -1;
@@ -234,12 +248,14 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
           .bind(username, now, code)
       );
     }
-    // Atomic first-mover claim: only the registration that observes zero existing
-    // admins gets to set is_admin=1, so concurrent first registrations can't both win.
-    const adminBootstrapIndex = statements.length;
+    // m0-protocol §7.10: server_owner is unique, defaults to the first local
+    // registration. Atomic first-mover claim: only the registration that
+    // observes zero existing owners gets to set server_role='owner', so
+    // concurrent first registrations can't both win.
+    const ownerBootstrapIndex = statements.length;
     statements.push(
       env.DB.prepare(
-        "UPDATE users SET is_admin = 1 WHERE localpart = ? AND (SELECT COUNT(*) FROM users WHERE is_admin = 1) = 0"
+        "UPDATE users SET server_role = 'owner' WHERE localpart = ? AND (SELECT COUNT(*) FROM users WHERE server_role = 'owner') = 0"
       ).bind(username)
     );
 
@@ -256,10 +272,10 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
       await env.DB.prepare("DELETE FROM users WHERE localpart = ?").bind(username).run();
       return apiError(400, "INVITE_INVALID");
     }
-    const isAdmin = results[adminBootstrapIndex]!.meta.changes === 1;
+    const serverRole: ServerRole = results[ownerBootstrapIndex]!.meta.changes === 1 ? "owner" : "user";
 
-    const token = await issueSessionToken(actor, env);
-    const user = toPublicUser({ localpart: username, is_admin: isAdmin ? 1 : 0, email, email_verified: 0 }, actor);
+    const token = await issueSessionToken(actor, serverRole, env);
+    const user = toPublicUser({ localpart: username, server_role: serverRole, email, email_verified: 0 }, actor);
     return json({ token, user });
   }
 
@@ -270,7 +286,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const password = String(body.password ?? "");
 
     const user = await env.DB.prepare(
-      "SELECT localpart, pw_hash, pw_salt, status, is_admin, email, email_verified FROM users WHERE localpart = ?"
+      "SELECT localpart, pw_hash, pw_salt, status, server_role, email, email_verified FROM users WHERE localpart = ?"
     )
       .bind(username)
       .first<{
@@ -278,7 +294,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
         pw_hash: string | null;
         pw_salt: string | null;
         status: string;
-        is_admin: number;
+        server_role: ServerRole;
         email: string | null;
         email_verified: number;
       }>();
@@ -293,7 +309,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     }
 
     const actor = `@${username}:${instanceDomain(env)}`;
-    const token = await issueSessionToken(actor, env);
+    const token = await issueSessionToken(actor, user.server_role, env);
     return json({ token, user: toPublicUser(user, actor) });
   }
 
@@ -330,74 +346,24 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   }
 
   // ---- instance admin --------------------------------------------------------------
+  // Policy fields (m0-protocol §7.9) are deployment env config as of task 035 -
+  // GET reflects the env-derived values read-only, PATCH always 409s. The
+  // instance_config D1 table/columns are left in place unread (archival).
 
   if (method === "GET" && path === "/api/admin/instance/config") {
-    const gate = await requireAdmin(request, env);
+    const gate = await requireServerRole(request, env, "admin");
     if (gate instanceof Response) return gate;
-    return json(await getInstanceConfig(env));
+    return json({ ...getInstanceConfig(env), source: "env" });
   }
 
   if (method === "PATCH" && path === "/api/admin/instance/config") {
-    const gate = await requireAdmin(request, env);
+    const gate = await requireServerRole(request, env, "admin");
     if (gate instanceof Response) return gate;
-    const body = await readJsonBody(request);
-    if (!body) return apiError(413, "PAYLOAD_INVALID");
-
-    const current = await getInstanceConfig(env);
-    const allowRoot = "allow_root" in body ? body.allow_root : current.allow_root;
-    if (typeof allowRoot !== "boolean") return apiError(400, "CONFIG_INVALID");
-    const rootRequirements = "root_requirements" in body ? body.root_requirements : current.root_requirements;
-    if (!isValidRootRequirements(rootRequirements)) return apiError(400, "CONFIG_INVALID");
-    const trustedServers = "trusted_identity_servers" in body ? body.trusted_identity_servers : current.trusted_identity_servers;
-    if (!isValidTrustedServers(trustedServers)) return apiError(400, "CONFIG_INVALID");
-    const maxFileBytes = "max_file_bytes" in body ? body.max_file_bytes : current.max_file_bytes;
-    if (!isValidPositiveInt(maxFileBytes)) return apiError(400, "CONFIG_INVALID");
-    const userStorageQuotaBytes = "user_storage_quota_bytes" in body ? body.user_storage_quota_bytes : current.user_storage_quota_bytes;
-    if (!isValidPositiveInt(userStorageQuotaBytes)) return apiError(400, "CONFIG_INVALID");
-    // federation_peers: outbound content-federation allowlist. Subscribe/backfill
-    // wiring lands in M5/M6 and MUST target only this list (m0-protocol §7.9).
-    const federationPeers = "federation_peers" in body ? body.federation_peers : current.federation_peers;
-    if (!isValidDomainList(federationPeers)) return apiError(400, "CONFIG_INVALID");
-    const strongholdCreationPolicy =
-      "stronghold_creation_policy" in body ? body.stronghold_creation_policy : current.stronghold_creation_policy;
-    if (!isValidStrongholdCreationPolicy(strongholdCreationPolicy)) return apiError(400, "CONFIG_INVALID");
-    const strongholdCreators = "stronghold_creators" in body ? body.stronghold_creators : current.stronghold_creators;
-    if (!isValidActorList(strongholdCreators)) return apiError(400, "CONFIG_INVALID");
-    const allowGuestBrowsing = "allow_guest_browsing" in body ? body.allow_guest_browsing : current.allow_guest_browsing;
-    if (typeof allowGuestBrowsing !== "boolean") return apiError(400, "CONFIG_INVALID");
-
-    await env.DB.prepare(
-      "UPDATE instance_config SET allow_root = ?, root_requirements = ?, trusted_identity_servers = ?, max_file_bytes = ?, " +
-        "user_storage_quota_bytes = ?, federation_peers = ?, stronghold_creation_policy = ?, stronghold_creators = ?, " +
-        "allow_guest_browsing = ? WHERE id = 1"
-    )
-      .bind(
-        allowRoot ? 1 : 0,
-        JSON.stringify(rootRequirements),
-        JSON.stringify(trustedServers),
-        maxFileBytes,
-        userStorageQuotaBytes,
-        JSON.stringify(federationPeers),
-        strongholdCreationPolicy,
-        JSON.stringify(strongholdCreators),
-        allowGuestBrowsing ? 1 : 0
-      )
-      .run();
-    return json({
-      allow_root: allowRoot,
-      root_requirements: rootRequirements,
-      trusted_identity_servers: trustedServers,
-      max_file_bytes: maxFileBytes,
-      user_storage_quota_bytes: userStorageQuotaBytes,
-      federation_peers: federationPeers,
-      stronghold_creation_policy: strongholdCreationPolicy,
-      stronghold_creators: strongholdCreators,
-      allow_guest_browsing: allowGuestBrowsing,
-    });
+    return apiError(409, "POLICY_IS_ENV");
   }
 
   if (method === "POST" && path === "/api/admin/invite-codes") {
-    const gate = await requireAdmin(request, env);
+    const gate = await requireServerRole(request, env, "admin");
     if (gate instanceof Response) return gate;
     const body = await readJsonBody(request);
     if (!body) return apiError(413, "PAYLOAD_INVALID");
@@ -419,12 +385,47 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   }
 
   if (method === "GET" && path === "/api/admin/invite-codes") {
-    const gate = await requireAdmin(request, env);
+    const gate = await requireServerRole(request, env, "admin");
     if (gate instanceof Response) return gate;
     const { results } = await env.DB.prepare(
       "SELECT code, created_by, created_at, used_by, used_at FROM invite_codes ORDER BY created_at DESC"
     ).all();
     return json({ codes: results });
+  }
+
+  // ---- server-level role appointment (m0-protocol §7.10, server_owner only) -------
+
+  if (method === "GET" && path === "/api/admin/users") {
+    const gate = await requireServerRole(request, env, "owner");
+    if (gate instanceof Response) return gate;
+    const after = url.searchParams.get("after");
+    const { results } = await env.DB.prepare(
+      "SELECT localpart, server_role, created_at FROM users WHERE localpart > ? ORDER BY localpart LIMIT ?"
+    )
+      .bind(after ?? "", USERS_PAGE_SIZE + 1)
+      .all<{ localpart: string; server_role: ServerRole; created_at: number }>();
+    const hasMore = results.length > USERS_PAGE_SIZE;
+    const page = hasMore ? results.slice(0, USERS_PAGE_SIZE) : results;
+    return json({ users: page, next_cursor: hasMore ? page[page.length - 1]!.localpart : null });
+  }
+
+  const userRoleMatch = match("/api/admin/users/:localpart", path);
+  if (userRoleMatch && method === "PATCH") {
+    const gate = await requireServerRole(request, env, "owner");
+    if (gate instanceof Response) return gate;
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    if (body.server_role !== "admin" && body.server_role !== "user") return apiError(400, "ROLE_INVALID");
+    // server_owner is unique and non-transferable through this endpoint - can't
+    // touch its own row (the only row that could be "owner"), and can't create
+    // a second one.
+    if (userRoleMatch.localpart === localpartOfActor(gate.actor)) return apiError(400, "ROLE_INVALID");
+
+    const result = await env.DB.prepare("UPDATE users SET server_role = ? WHERE localpart = ? AND server_role != 'owner'")
+      .bind(body.server_role, userRoleMatch.localpart!)
+      .run();
+    if (result.meta.changes === 0) return apiError(404, "NOT_FOUND");
+    return json({ localpart: userRoleMatch.localpart, server_role: body.server_role });
   }
 
   // ---- media upload, retrieval, deletion and storage quota ------------------------
@@ -454,18 +455,14 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
   const mediaDeleteMatch = match("/api/media/:id", path);
   if (mediaDeleteMatch && method === "DELETE") {
-    const actor = await requireActor(request, env);
-    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
     const row = await env.DB.prepare("SELECT owner_actor, r2_key, size FROM media WHERE id = ?")
       .bind(mediaDeleteMatch.id!)
       .first<{ owner_actor: string; r2_key: string; size: number }>();
     if (!row) return apiError(404, "NOT_FOUND");
-    if (row.owner_actor !== actor) {
-      const userRow = await env.DB.prepare("SELECT is_admin FROM users WHERE localpart = ?")
-        .bind(localpartOfActor(actor))
-        .first<{ is_admin: number }>();
-      if (!userRow || !userRow.is_admin) return apiError(403, "FORBIDDEN");
-    }
+    const isElevated = session.server_role === "owner" || session.server_role === "admin";
+    if (row.owner_actor !== session.actor && !isElevated) return apiError(403, "FORBIDDEN");
     await env.MEDIA.delete(row.r2_key);
     await env.DB.prepare("DELETE FROM media WHERE id = ?").bind(mediaDeleteMatch.id!).run();
     return new Response(null, { status: 204, headers: cors() });
@@ -490,7 +487,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   }
 
   if (method === "POST" && path === "/api/admin/emote-packs") {
-    const gate = await requireAdmin(request, env);
+    const gate = await requireServerRole(request, env, "admin");
     if (gate instanceof Response) return gate;
     const body = await readJsonBody(request);
     if (!body) return apiError(413, "PAYLOAD_INVALID");
@@ -511,7 +508,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
   const emotePackDeleteMatch = match("/api/admin/emote-packs/:id", path);
   if (emotePackDeleteMatch && method === "DELETE") {
-    const gate = await requireAdmin(request, env);
+    const gate = await requireServerRole(request, env, "admin");
     if (gate instanceof Response) return gate;
     const pack = await env.DB.prepare("SELECT id FROM emote_packs WHERE id = ?").bind(emotePackDeleteMatch.id!).first();
     if (!pack) return apiError(404, "NOT_FOUND");
@@ -526,7 +523,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
   const emoteCreateMatch = match("/api/admin/emote-packs/:id/emotes", path);
   if (emoteCreateMatch && method === "POST") {
-    const gate = await requireAdmin(request, env);
+    const gate = await requireServerRole(request, env, "admin");
     if (gate instanceof Response) return gate;
     const pack = await env.DB.prepare("SELECT id FROM emote_packs WHERE id = ?").bind(emoteCreateMatch.id!).first();
     if (!pack) return apiError(404, "NOT_FOUND");
@@ -552,7 +549,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
   const emoteDeleteMatch = match("/api/admin/emotes/:id", path);
   if (emoteDeleteMatch && method === "DELETE") {
-    const gate = await requireAdmin(request, env);
+    const gate = await requireServerRole(request, env, "admin");
     if (gate instanceof Response) return gate;
     const result = await env.DB.prepare("DELETE FROM emotes WHERE id = ?").bind(emoteDeleteMatch.id!).run();
     if (result.meta.changes === 0) return apiError(404, "NOT_FOUND");
@@ -561,7 +558,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
   const emoteExportMatch = match("/api/admin/emote-packs/:id/export", path);
   if (emoteExportMatch && method === "GET") {
-    const gate = await requireAdmin(request, env);
+    const gate = await requireServerRole(request, env, "admin");
     if (gate instanceof Response) return gate;
     const pack = await env.DB.prepare("SELECT id, name FROM emote_packs WHERE id = ?")
       .bind(emoteExportMatch.id!)
@@ -579,7 +576,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   }
 
   if (method === "POST" && path === "/api/admin/emote-packs/import") {
-    const gate = await requireAdmin(request, env);
+    const gate = await requireServerRole(request, env, "admin");
     if (gate instanceof Response) return gate;
     const body = await readJsonBody(request);
     if (!body) return apiError(413, "PAYLOAD_INVALID");
@@ -773,8 +770,9 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   // without inventing a slug.
 
   if (method === "POST" && path === "/api/strongholds") {
-    const actor = await requireActor(request, env);
-    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
+    const actor = session.actor;
     const body = await readJsonBody(request);
     if (!body) return apiError(413, "PAYLOAD_INVALID");
     const name = typeof body.name === "string" ? body.name.trim() : "";
@@ -782,14 +780,15 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const visibility = body.visibility === "private" ? "private" : "public";
     const description = asOptionalString(body.description);
 
-    // m0-protocol §7.9: creation policy gate. Admins always take the direct path,
-    // regardless of policy - they don't file applications against themselves.
+    // m0-protocol §7.9: creation policy gate. server_owner/server_admin always
+    // take the direct path, regardless of policy - they don't file applications
+    // against themselves (§7.10 owner-equivalent standing).
     const config = await getInstanceConfig(env);
-    const isAdmin = await isActorAdmin(env, actor);
-    if (!isAdmin && config.stronghold_creation_policy === "restricted" && !config.stronghold_creators.includes(actor)) {
+    const isElevated = session.server_role === "owner" || session.server_role === "admin";
+    if (!isElevated && config.stronghold_creation_policy === "restricted" && !config.stronghold_creators.includes(actor)) {
       return apiError(403, "CREATION_RESTRICTED");
     }
-    if (!isAdmin && config.stronghold_creation_policy === "application") {
+    if (!isElevated && config.stronghold_creation_policy === "application") {
       const applicationId = crypto.randomUUID();
       const now = Date.now();
       await env.DB.prepare(
@@ -817,7 +816,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   }
 
   if (method === "GET" && path === "/api/admin/stronghold-applications") {
-    const gate = await requireAdmin(request, env);
+    const gate = await requireServerRole(request, env, "admin");
     if (gate instanceof Response) return gate;
     const state = url.searchParams.get("state");
     if (state && state !== "pending" && state !== "approved" && state !== "rejected") return apiError(400, "STATE_INVALID");
@@ -837,7 +836,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
   const applicationDecideMatch = match("/api/admin/stronghold-applications/:id", path);
   if (applicationDecideMatch && method === "PATCH") {
-    const gate = await requireAdmin(request, env);
+    const gate = await requireServerRole(request, env, "admin");
     if (gate instanceof Response) return gate;
     const body = await readJsonBody(request);
     if (!body) return apiError(413, "PAYLOAD_INVALID");
@@ -875,12 +874,12 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
   m = match("/api/stronghold/:id/rooms", path);
   if (m && method === "POST") {
-    const actor = await requireActor(request, env);
-    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
     const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    const requester = await stub.getMember(actor);
-    if (!requester || requester.banned_at) return apiError(403, "FORBIDDEN");
-    if (requester.role !== "owner" && requester.role !== "mod") return apiError(403, "FORBIDDEN");
+    const requester = await stub.getMember(session.actor);
+    const requesterRole = overlayRole(session.server_role, requester);
+    if (!requesterRole || (requesterRole !== "owner" && requesterRole !== "mod")) return apiError(403, "FORBIDDEN");
 
     const body = await readJsonBody(request);
     if (!body) return apiError(413, "PAYLOAD_INVALID");
@@ -974,16 +973,16 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     return json(toApiConfig(gate.config));
   }
   if (m && method === "PATCH") {
-    const actor = await requireActor(request, env);
-    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
     const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    const member = await stub.getMember(actor);
-    if (!member || member.banned_at) return apiError(403, "FORBIDDEN");
-    if (member.role !== "owner" && member.role !== "mod") return apiError(403, "FORBIDDEN");
+    const member = await stub.getMember(session.actor);
+    const role = overlayRole(session.server_role, member);
+    if (!role || (role !== "owner" && role !== "mod")) return apiError(403, "FORBIDDEN");
     const body = await readJsonBody(request);
     if (!body) return apiError(413, "PAYLOAD_INVALID");
     // §9 / proposal: visibility is owner-only, every other config field is owner/mod.
-    if ("visibility" in body && member.role !== "owner") return apiError(403, "FORBIDDEN");
+    if ("visibility" in body && role !== "owner") return apiError(403, "FORBIDDEN");
 
     const patch: Partial<
       Pick<ConfigRow, "description" | "visibility" | "cover" | "allow_message_edit" | "allow_message_retract" | "edit_window_secs">
@@ -1022,11 +1021,11 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
   m = match("/api/stronghold/:id/members", path);
   if (m && method === "GET") {
-    const actor = await requireActor(request, env);
-    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
     const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    const requester = await stub.getMember(actor);
-    if (!requester || requester.banned_at) return apiError(403, "FORBIDDEN");
+    const requester = await stub.getMember(session.actor);
+    if (!overlayRole(session.server_role, requester)) return apiError(403, "FORBIDDEN");
 
     const tab = url.searchParams.get("tab") ?? "all";
     if (tab !== "all" && tab !== "restricted" && tab !== "banned") return apiError(400, "TAB_INVALID");
@@ -1048,12 +1047,12 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
   m = match("/api/stronghold/:id/members/:actor", path);
   if (m && method === "PATCH") {
-    const actor = await requireActor(request, env);
-    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
     const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    const requester = await stub.getMember(actor);
-    if (!requester || requester.banned_at) return apiError(403, "FORBIDDEN");
-    if (requester.role !== "owner" && requester.role !== "mod") return apiError(403, "FORBIDDEN");
+    const requester = await stub.getMember(session.actor);
+    const requesterRole = overlayRole(session.server_role, requester);
+    if (!requesterRole || (requesterRole !== "owner" && requesterRole !== "mod")) return apiError(403, "FORBIDDEN");
 
     const body = await readJsonBody(request);
     if (!body) return apiError(413, "PAYLOAD_INVALID");
@@ -1065,7 +1064,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     let role: "mod" | "member" | undefined;
     if ("role" in body) {
       // §9: appointing/dismissing a mod is owner-only.
-      if (requester.role !== "owner") return apiError(403, "FORBIDDEN");
+      if (requesterRole !== "owner") return apiError(403, "FORBIDDEN");
       if (body.role !== "mod" && body.role !== "member") return apiError(400, "ROLE_INVALID");
       role = body.role;
     }
@@ -1086,17 +1085,17 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     return json(toMemberEntry(updated, profiles.get(updated.actor)));
   }
   if (m && method === "DELETE") {
-    const actor = await requireActor(request, env);
-    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
     const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    const requester = await stub.getMember(actor);
-    if (!requester || requester.banned_at) return apiError(403, "FORBIDDEN");
-    if (requester.role !== "owner" && requester.role !== "mod") return apiError(403, "FORBIDDEN");
+    const requester = await stub.getMember(session.actor);
+    const requesterRole = overlayRole(session.server_role, requester);
+    if (!requesterRole || (requesterRole !== "owner" && requesterRole !== "mod")) return apiError(403, "FORBIDDEN");
 
     const target = await stub.getMember(m.actor!);
     if (!target) return apiError(404, "NOT_FOUND");
     if (target.role === "owner") return apiError(403, "FORBIDDEN");
-    if (target.role === "mod" && requester.role !== "owner") return apiError(403, "FORBIDDEN");
+    if (target.role === "mod" && requesterRole !== "owner") return apiError(403, "FORBIDDEN");
 
     await stub.removeMember(m.actor!);
     return new Response(null, { status: 204, headers: cors() });
@@ -1104,41 +1103,41 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
   m = match("/api/stronghold/:id/bans", path);
   if (m && method === "GET") {
-    const actor = await requireActor(request, env);
-    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
     const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    const requester = await stub.getMember(actor);
-    if (!requester || requester.banned_at) return apiError(403, "FORBIDDEN");
-    if (requester.role !== "owner" && requester.role !== "mod") return apiError(403, "FORBIDDEN");
+    const requester = await stub.getMember(session.actor);
+    const role = overlayRole(session.server_role, requester);
+    if (!role || (role !== "owner" && role !== "mod")) return apiError(403, "FORBIDDEN");
     const entries = await stub.listBans();
     return json({ entries });
   }
 
   m = match("/api/stronghold/:id/bans/:actor", path);
   if (m && method === "PUT") {
-    const actor = await requireActor(request, env);
-    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
     const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    const requester = await stub.getMember(actor);
-    if (!requester || requester.banned_at) return apiError(403, "FORBIDDEN");
-    if (requester.role !== "owner" && requester.role !== "mod") return apiError(403, "FORBIDDEN");
+    const requester = await stub.getMember(session.actor);
+    const requesterRole = overlayRole(session.server_role, requester);
+    if (!requesterRole || (requesterRole !== "owner" && requesterRole !== "mod")) return apiError(403, "FORBIDDEN");
 
     const target = await stub.getMember(m.actor!);
     if (!target) return apiError(404, "NOT_FOUND");
     if (target.role === "owner") return apiError(403, "FORBIDDEN");
-    if (target.role === "mod" && requester.role !== "owner") return apiError(403, "FORBIDDEN");
+    if (target.role === "mod" && requesterRole !== "owner") return apiError(403, "FORBIDDEN");
 
-    const banned = await stub.banMember(m.actor!, actor);
+    const banned = await stub.banMember(m.actor!, session.actor);
     if (!banned) return apiError(404, "NOT_FOUND");
-    return json({ actor: banned.actor, operator: actor, banned_at: banned.banned_at });
+    return json({ actor: banned.actor, operator: session.actor, banned_at: banned.banned_at });
   }
   if (m && method === "DELETE") {
-    const actor = await requireActor(request, env);
-    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
     const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    const requester = await stub.getMember(actor);
-    if (!requester || requester.banned_at) return apiError(403, "FORBIDDEN");
-    if (requester.role !== "owner" && requester.role !== "mod") return apiError(403, "FORBIDDEN");
+    const requester = await stub.getMember(session.actor);
+    const role = overlayRole(session.server_role, requester);
+    if (!role || (role !== "owner" && role !== "mod")) return apiError(403, "FORBIDDEN");
 
     await stub.unbanMember(m.actor!);
     return new Response(null, { status: 204, headers: cors() });
@@ -1146,19 +1145,24 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
   m = match("/api/stronghold/:id/transfer", path);
   if (m && method === "POST") {
-    const actor = await requireActor(request, env);
-    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    // m0-protocol §7.10: the one permission gate the server_owner/server_admin
+    // overlay does NOT extend to - only the real stronghold owner or the actual
+    // server_owner (not server_admin) may transfer ownership.
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
     const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    const requester = await stub.getMember(actor);
-    if (!requester || requester.banned_at) return apiError(403, "FORBIDDEN");
-    if (requester.role !== "owner") return apiError(403, "FORBIDDEN");
+    const requester = await stub.getMember(session.actor);
+    const isRealOwner = requester != null && !requester.banned_at && requester.role === "owner";
+    if (!isRealOwner && session.server_role !== "owner") return apiError(403, "FORBIDDEN");
 
     const body = await readJsonBody(request);
     if (!body) return apiError(413, "PAYLOAD_INVALID");
     const to = typeof body.to === "string" ? body.to : "";
     if (!to) return apiError(400, "MALFORMED");
 
-    const updated = await stub.transferOwnership(actor, to);
+    const config = await stub.getConfig();
+    if (!config) return apiError(404, "NOT_FOUND");
+    const updated = await stub.transferOwnership(config.owner_actor, to);
     if (!updated) return apiError(400, "TARGET_NOT_MEMBER");
     return json(toApiConfig(updated));
   }
@@ -1168,11 +1172,14 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
   m = match("/api/stronghold/:id/rooms/:resId/items/:seq", path);
   if (m && method === "PATCH") {
-    const actor = await requireActor(request, env);
-    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
     const strongholdStub = env.STRONGHOLD_DO.getByName(m.id!);
-    const member = await strongholdStub.getMember(actor);
-    if (!member || member.banned_at) return apiError(403, "FORBIDDEN");
+    const member = await strongholdStub.getMember(session.actor);
+    // Editing someone else's item is author-only regardless of role (room-do.ts) -
+    // the server-role overlay only needs to clear this membership/ban gate, not
+    // grant any extra edit rights.
+    if (!overlayRole(session.server_role, member)) return apiError(403, "FORBIDDEN");
     const room = await strongholdStub.getRoom(m.resId!);
     if (!room) return apiError(404, "NOT_FOUND");
     const seq = Number(m.seq);
@@ -1182,16 +1189,17 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
     const roomRef = `${m.id!}/${typeToKind(room.type)}/${m.resId!}`;
     const roomStub = env.ROOM_DO.getByName(roomRef);
-    const result = await roomStub.editItem(actor, roomRef, seq, body.content);
+    const result = await roomStub.editItem(session.actor, roomRef, seq, body.content);
     if (!result.ok) return apiError(roomErrorStatus(result.code), result.code);
     return json({ seq: result.seq, target_seq: seq });
   }
   if (m && method === "DELETE") {
-    const actor = await requireActor(request, env);
-    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
     const strongholdStub = env.STRONGHOLD_DO.getByName(m.id!);
-    const member = await strongholdStub.getMember(actor);
-    if (!member || member.banned_at) return apiError(403, "FORBIDDEN");
+    const member = await strongholdStub.getMember(session.actor);
+    const role = overlayRole(session.server_role, member);
+    if (!role) return apiError(403, "FORBIDDEN");
     const room = await strongholdStub.getRoom(m.resId!);
     if (!room) return apiError(404, "NOT_FOUND");
     const seq = Number(m.seq);
@@ -1199,7 +1207,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
     const roomRef = `${m.id!}/${typeToKind(room.type)}/${m.resId!}`;
     const roomStub = env.ROOM_DO.getByName(roomRef);
-    const result = await roomStub.retractItem(actor, member.role, roomRef, seq);
+    const result = await roomStub.retractItem(session.actor, role, roomRef, seq);
     if (!result.ok) return apiError(roomErrorStatus(result.code), result.code);
     return json({ seq: result.seq, target_seq: seq });
   }
@@ -1241,17 +1249,18 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
   m = match("/stronghold/:id/rooms/:resId/token", path);
   if (m && method === "POST") {
-    const actor = await requireActor(request, env);
-    if (!actor) return errorResponse(401, "OMEW_SESSION_INVALID", "auth required");
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return errorResponse(401, "OMEW_SESSION_INVALID", "auth required");
     const strongholdStub = env.STRONGHOLD_DO.getByName(m.id!);
-    const member = await strongholdStub.getMember(actor);
-    if (!member || member.banned_at) return errorResponse(403, "OMEW_BANNED", "not a member or banned");
+    const member = await strongholdStub.getMember(session.actor);
+    const role = overlayRole(session.server_role, member);
+    if (!role) return errorResponse(403, "OMEW_BANNED", "not a member or banned");
     const room = await strongholdStub.getRoom(m.resId!);
     if (!room) return errorResponse(404, "OMEW_ROOM_NOT_FOUND", "room not found");
     const roomRef = `${m.id!}/${typeToKind(room.type)}/${m.resId!}`;
-    const deny = member.role === "owner" || member.role === "mod" ? 0 : member.deny;
+    const deny = role === "owner" || role === "mod" ? 0 : (member?.deny ?? 0);
     const claims: RoomTokenClaims = {
-      v: 1, typ: "room", actor, room: roomRef, role: member.role, deny,
+      v: 1, typ: "room", actor: session.actor, room: roomRef, role, deny,
       exp: nowS() + ROOM_TOKEN_TTL_S, jti: newJti(),
     };
     const token = await signToken(claims, env.DEV_TOKEN_SECRET);
@@ -1260,13 +1269,13 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
   m = match("/stronghold/:id/tips-token", path);
   if (m && method === "POST") {
-    const actor = await requireActor(request, env);
-    if (!actor) return errorResponse(401, "OMEW_SESSION_INVALID", "auth required");
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return errorResponse(401, "OMEW_SESSION_INVALID", "auth required");
     const strongholdStub = env.STRONGHOLD_DO.getByName(m.id!);
-    const member = await strongholdStub.getMember(actor);
-    if (!member || member.banned_at) return errorResponse(403, "OMEW_BANNED", "not a member or banned");
+    const member = await strongholdStub.getMember(session.actor);
+    if (!overlayRole(session.server_role, member)) return errorResponse(403, "OMEW_BANNED", "not a member or banned");
     const claims: StrongholdTokenClaims = {
-      v: 1, typ: "stronghold", actor, stronghold: m.id!, exp: nowS() + ROOM_TOKEN_TTL_S, jti: newJti(),
+      v: 1, typ: "stronghold", actor: session.actor, stronghold: m.id!, exp: nowS() + ROOM_TOKEN_TTL_S, jti: newJti(),
     };
     const token = await signToken(claims, env.DEV_TOKEN_SECRET);
     return json({ token, stronghold: m.id!, exp: claims.exp });
@@ -1308,11 +1317,11 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const config = await strongholdStub.getConfig();
     if (!config) return errorResponse(404, "OMEW_NOT_FOUND", "stronghold not found");
 
-    const actor = await requireActor(request, env);
+    const session = await requireSession(request, env);
     let isGuest = false;
-    if (actor) {
-      const member = await strongholdStub.getMember(actor);
-      if (!member || member.banned_at) return errorResponse(403, "OMEW_BANNED", "not a member or banned");
+    if (!(session instanceof Response)) {
+      const member = await strongholdStub.getMember(session.actor);
+      if (!overlayRole(session.server_role, member)) return errorResponse(403, "OMEW_BANNED", "not a member or banned");
     } else {
       const policy = await getInstanceConfig(env);
       if (!(policy.allow_guest_browsing && config.visibility === "public")) {
@@ -1723,30 +1732,33 @@ function paginateMembers(members: MemberRow[], afterCursor: string | null): { pa
   return { page, next_cursor: hasMore && last ? last.actor : null };
 }
 
-async function issueSessionToken(actor: string, env: Env): Promise<string> {
-  const claims: SessionTokenClaims = { v: 1, typ: "session", actor, exp: nowS() + SESSION_TOKEN_TTL_S, jti: newJti() };
+async function issueSessionToken(actor: string, serverRole: ServerRole, env: Env): Promise<string> {
+  const claims: SessionTokenClaims = {
+    v: 1, typ: "session", actor, server_role: serverRole, exp: nowS() + SESSION_TOKEN_TTL_S, jti: newJti(),
+  };
   return signToken(claims, env.DEV_TOKEN_SECRET);
 }
 
 async function requireMembership(request: Request, env: Env, strongholdId: string): Promise<Response | null> {
-  const actor = await requireActor(request, env);
-  if (!actor) return errorResponse(401, "OMEW_SESSION_INVALID", "auth required");
+  const session = await requireSession(request, env);
+  if (session instanceof Response) return errorResponse(401, "OMEW_SESSION_INVALID", "auth required");
   const stub = env.STRONGHOLD_DO.getByName(strongholdId);
-  const member = await stub.getMember(actor);
-  if (!member || member.banned_at) return errorResponse(403, "OMEW_BANNED", "not a member or banned");
+  const member = await stub.getMember(session.actor);
+  if (!overlayRole(session.server_role, member)) return errorResponse(403, "OMEW_BANNED", "not a member or banned");
   return null;
 }
 
 // S9: read paths carry the same role check as write paths - GET endpoints MUST
 // also be clipped by role, not just POST/PATCH/DELETE.
 async function requireRole(request: Request, env: Env, strongholdId: string, roles: Role[]): Promise<Response | { actor: string; role: Role }> {
-  const actor = await requireActor(request, env);
-  if (!actor) return errorResponse(401, "OMEW_SESSION_INVALID", "auth required");
+  const session = await requireSession(request, env);
+  if (session instanceof Response) return errorResponse(401, "OMEW_SESSION_INVALID", "auth required");
   const stub = env.STRONGHOLD_DO.getByName(strongholdId);
-  const member = await stub.getMember(actor);
-  if (!member || member.banned_at) return errorResponse(403, "OMEW_BANNED", "not a member or banned");
-  if (!roles.includes(member.role)) return errorResponse(403, "OMEW_FORBIDDEN", "insufficient role");
-  return { actor, role: member.role };
+  const member = await stub.getMember(session.actor);
+  const role = overlayRole(session.server_role, member);
+  if (!role) return errorResponse(403, "OMEW_BANNED", "not a member or banned");
+  if (!roles.includes(role)) return errorResponse(403, "OMEW_FORBIDDEN", "insufficient role");
+  return { actor: session.actor, role };
 }
 
 // ---- guest read gate (task 034 / m0-protocol §8.2) -------------------------------
@@ -1756,14 +1768,15 @@ async function requireRole(request: Request, env: Env, strongholdId: string, rol
 // private stronghold as before - guest fallback only ever applies when no actor
 // could be resolved from the request, and only to GET/read routes). No
 // distinction is made between a missing Authorization header and an invalid one -
-// both already collapse to "no actor" in requireActor, same as every other route
-// in this file.
+// both already collapse to "no session" here, same as every other route in this
+// file. A server_owner/server_admin actor always resolves to "member" (§7.10),
+// even without a real membership row.
 async function resolveGuestOrMember(
   request: Request,
   env: Env,
   strongholdId: string
 ): Promise<
-  | { kind: "member"; actor: string; member: MemberRow; config: ConfigRow }
+  | { kind: "member"; actor: string; member: MemberRow | null; role: Role; config: ConfigRow }
   | { kind: "guest"; config: ConfigRow }
   | Response
 > {
@@ -1771,11 +1784,12 @@ async function resolveGuestOrMember(
   const config = await stub.getConfig();
   if (!config) return apiError(404, "NOT_FOUND");
 
-  const actor = await requireActor(request, env);
-  if (actor) {
-    const member = await stub.getMember(actor);
-    if (!member || member.banned_at) return apiError(403, "FORBIDDEN");
-    return { kind: "member", actor, member, config };
+  const session = await requireSession(request, env);
+  if (!(session instanceof Response)) {
+    const member = await stub.getMember(session.actor);
+    const role = overlayRole(session.server_role, member);
+    if (!role) return apiError(403, "FORBIDDEN");
+    return { kind: "member", actor: session.actor, member, role, config };
   }
 
   const policy = await getInstanceConfig(env);

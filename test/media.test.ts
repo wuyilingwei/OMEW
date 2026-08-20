@@ -1,10 +1,11 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
-import { apiRequest, ensureMigrated, mediaUploadRequest, registerUser, streamOf } from "./helpers";
+import { apiRequest, ensureMigrated, loginAs, mediaUploadRequest, registerUser, streamOf } from "./helpers";
 
 // Media upload pipeline: Worker-proxied streaming write into R2, with size/MIME/
 // quota enforced synchronously in the upload path (no presigned direct-to-R2
-// upload - see agents/017 task notes for the architecture call).
+// upload - see agents/017 task notes for the architecture call). max_file_bytes
+// / user_storage_quota_bytes are env config as of task 035 (server/src/config.ts).
 
 const OWNERSHIP = { ownership_pubkey: "test-pubkey", ownership_ciphertext: "test-ciphertext-blob" };
 
@@ -23,19 +24,13 @@ async function makeAdminToken(): Promise<string> {
   const username = `mediaadmin${userCounter}`;
   const { status, json } = await registerUser({ username, password: "password123", ...OWNERSHIP });
   expect(status).toBe(200);
-  await env.DB.prepare("UPDATE users SET is_admin = 1 WHERE localpart = ?").bind(username).run();
-  return json.token as string;
+  await env.DB.prepare("UPDATE users SET server_role = 'admin' WHERE localpart = ?").bind(username).run();
+  return loginAs(username);
 }
 
-async function setMediaLimits(overrides: { max_file_bytes?: number; user_storage_quota_bytes?: number }): Promise<void> {
-  const current = await env.DB.prepare(
-    "SELECT max_file_bytes, user_storage_quota_bytes FROM instance_config WHERE id = 1"
-  ).first<{ max_file_bytes: number; user_storage_quota_bytes: number }>();
-  const maxFileBytes = overrides.max_file_bytes ?? current!.max_file_bytes;
-  const quota = overrides.user_storage_quota_bytes ?? current!.user_storage_quota_bytes;
-  await env.DB.prepare("UPDATE instance_config SET max_file_bytes = ?, user_storage_quota_bytes = ? WHERE id = 1")
-    .bind(maxFileBytes, quota)
-    .run();
+function setMediaLimits(overrides: { max_file_bytes?: number; user_storage_quota_bytes?: number }): void {
+  if (overrides.max_file_bytes !== undefined) env.MAX_FILE_BYTES = String(overrides.max_file_bytes);
+  if (overrides.user_storage_quota_bytes !== undefined) env.USER_STORAGE_QUOTA_BYTES = String(overrides.user_storage_quota_bytes);
 }
 
 function pngBytes(totalLen: number): Uint8Array {
@@ -230,33 +225,26 @@ describe("GET /api/me/storage", () => {
   });
 });
 
-describe("admin instance config: media limits", () => {
-  it("round-trips max_file_bytes and user_storage_quota_bytes through GET/PATCH", async () => {
+describe("admin instance config: media limits are env, not runtime-writable", () => {
+  it("GET reflects the env-derived max_file_bytes and user_storage_quota_bytes", async () => {
     const adminToken = await makeAdminToken();
-    const patchRes = await apiRequest("/api/admin/instance/config", {
-      method: "PATCH",
-      headers: { Authorization: `Bearer ${adminToken}` },
-      body: JSON.stringify({ max_file_bytes: 5_000_000, user_storage_quota_bytes: 100_000_000 }),
-    });
-    expect(patchRes.status).toBe(200);
-    const patched = (await patchRes.json()) as Record<string, unknown>;
-    expect(patched.max_file_bytes).toBe(5_000_000);
-    expect(patched.user_storage_quota_bytes).toBe(100_000_000);
+    setMediaLimits({ max_file_bytes: 5_000_000, user_storage_quota_bytes: 100_000_000 });
 
     const getRes = await apiRequest("/api/admin/instance/config", { headers: { Authorization: `Bearer ${adminToken}` } });
     const fetched = (await getRes.json()) as Record<string, unknown>;
     expect(fetched.max_file_bytes).toBe(5_000_000);
     expect(fetched.user_storage_quota_bytes).toBe(100_000_000);
+    expect(fetched.source).toBe("env");
   });
 
-  it("rejects non-positive values with 400 CONFIG_INVALID", async () => {
+  it("PATCH 409s with POLICY_IS_ENV instead of writing the limits", async () => {
     const adminToken = await makeAdminToken();
     const res = await apiRequest("/api/admin/instance/config", {
       method: "PATCH",
       headers: { Authorization: `Bearer ${adminToken}` },
-      body: JSON.stringify({ max_file_bytes: 0 }),
+      body: JSON.stringify({ max_file_bytes: 5_000_000 }),
     });
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: "CONFIG_INVALID" });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "POLICY_IS_ENV" });
   });
 });

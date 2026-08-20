@@ -1,12 +1,12 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
-import { apiRequest, ensureMigrated, mediaUploadRequest, registerUser } from "./helpers";
+import { apiRequest, ensureMigrated, loginAs, mediaUploadRequest, registerUser } from "./helpers";
 
 // Emote packs/emotes: v1 is instance-level and admin-managed (see agents/018 task
 // notes). Reads (GET /api/emotes) only require login; every write and the export/
-// import surface sits under /api/admin/* and requires is_admin. :pack:name:
-// rendering in message/post bodies is a web-side concern - this API stores and
-// serves the catalog only.
+// import surface sits under /api/admin/* and requires server_role admin or owner
+// (§7.10). :pack:name: rendering in message/post bodies is a web-side concern -
+// this API stores and serves the catalog only.
 
 const OWNERSHIP = { ownership_pubkey: "test-pubkey", ownership_ciphertext: "test-ciphertext-blob" };
 
@@ -25,8 +25,8 @@ async function makeAdminToken(): Promise<string> {
   const username = `emoteadmin${userCounter}`;
   const { status, json } = await registerUser({ username, password: "password123", ...OWNERSHIP });
   expect(status).toBe(200);
-  await env.DB.prepare("UPDATE users SET is_admin = 1 WHERE localpart = ?").bind(username).run();
-  return json.token as string;
+  await env.DB.prepare("UPDATE users SET server_role = 'admin' WHERE localpart = ?").bind(username).run();
+  return loginAs(username);
 }
 
 function pngBytes(totalLen: number): Uint8Array {

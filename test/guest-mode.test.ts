@@ -1,11 +1,12 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
-import { apiRequest, connectRoom, ensureMigrated, nextMessage, postCreateFrame, registerUser } from "./helpers";
+import { apiRequest, connectRoom, ensureMigrated, loginAs, nextMessage, postCreateFrame, registerUser } from "./helpers";
 
 // Task 034: unauthenticated guest reads on public strongholds, gated by the
-// allow_guest_browsing instance policy (migration 0007) - and the public
-// directory endpoint the same policy gates. Write paths are untouched and stay
-// login-only regardless of the policy.
+// allow_guest_browsing instance policy - env config as of task 035 (see
+// server/src/config.ts), no longer the instance_config D1 column - and the
+// public directory endpoint the same policy gates. Write paths are untouched
+// and stay login-only regardless of the policy.
 
 let strongholdSeq = 0;
 async function freshStronghold(
@@ -20,8 +21,8 @@ async function freshStronghold(
   return { id, sectionResId: "posts", channelResId: "lobby" };
 }
 
-async function setGuestBrowsing(allow: boolean): Promise<void> {
-  await env.DB.prepare("UPDATE instance_config SET allow_guest_browsing = ? WHERE id = 1").bind(allow ? 1 : 0).run();
+function setGuestBrowsing(allow: boolean): void {
+  env.ALLOW_GUEST_BROWSING = allow ? "1" : "0";
 }
 
 beforeAll(async () => {
@@ -152,8 +153,8 @@ describe("GET /api/directory", () => {
   });
 });
 
-describe("admin instance config: allow_guest_browsing", () => {
-  it("round-trips through admin GET/PATCH and appears in the public GET /api/instance/config subset", async () => {
+describe("admin instance config: allow_guest_browsing is env, not runtime-writable", () => {
+  it("GET reflects the env value; it also appears in the public GET /api/instance/config subset", async () => {
     await env.DB.prepare("DELETE FROM users WHERE localpart = ?").bind("guestadmin1").run();
     const reg = await registerUser({
       username: "guestadmin1",
@@ -162,27 +163,20 @@ describe("admin instance config: allow_guest_browsing", () => {
       ownership_ciphertext: "test-ciphertext-blob",
     });
     expect(reg.status).toBe(200);
-    await env.DB.prepare("UPDATE users SET is_admin = 1 WHERE localpart = ?").bind("guestadmin1").run();
-    const token = reg.json.token as string;
+    await env.DB.prepare("UPDATE users SET server_role = 'admin' WHERE localpart = ?").bind("guestadmin1").run();
+    const token = await loginAs("guestadmin1");
 
-    const patchRes = await apiRequest("/api/admin/instance/config", {
-      method: "PATCH",
-      headers: { Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ allow_guest_browsing: false }),
-    });
-    expect(patchRes.status).toBe(200);
-    expect((await patchRes.json() as Record<string, unknown>).allow_guest_browsing).toBe(false);
-
+    setGuestBrowsing(false);
     const getRes = await apiRequest("/api/admin/instance/config", { headers: { Authorization: `Bearer ${token}` } });
     expect((await getRes.json() as Record<string, unknown>).allow_guest_browsing).toBe(false);
 
     const publicRes = await apiRequest("/api/instance/config");
     expect((await publicRes.json() as Record<string, unknown>).allow_guest_browsing).toBe(false);
 
-    await setGuestBrowsing(true);
+    setGuestBrowsing(true);
   });
 
-  it("rejects a non-boolean allow_guest_browsing with 400 CONFIG_INVALID", async () => {
+  it("PATCH 409s with POLICY_IS_ENV instead of writing allow_guest_browsing", async () => {
     await env.DB.prepare("DELETE FROM users WHERE localpart = ?").bind("guestadmin2").run();
     const reg = await registerUser({
       username: "guestadmin2",
@@ -190,15 +184,15 @@ describe("admin instance config: allow_guest_browsing", () => {
       ownership_pubkey: "test-pubkey",
       ownership_ciphertext: "test-ciphertext-blob",
     });
-    await env.DB.prepare("UPDATE users SET is_admin = 1 WHERE localpart = ?").bind("guestadmin2").run();
-    const token = reg.json.token as string;
+    await env.DB.prepare("UPDATE users SET server_role = 'admin' WHERE localpart = ?").bind("guestadmin2").run();
+    const token = await loginAs("guestadmin2");
 
     const res = await apiRequest("/api/admin/instance/config", {
       method: "PATCH",
       headers: { Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ allow_guest_browsing: "yes" }),
+      body: JSON.stringify({ allow_guest_browsing: false }),
     });
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: "CONFIG_INVALID" });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "POLICY_IS_ENV" });
   });
 });

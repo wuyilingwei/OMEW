@@ -1,1 +1,14 @@
 DEV_TOKEN_SECRET=change-me-to-a-random-value
+
+# Instance policy (m0-protocol §7.9) - deployed defaults live in wrangler.jsonc
+# `vars`; uncomment any of these here to override locally without touching that
+# file. Not secrets, just env config - parsing lives in server/src/config.ts.
+# ALLOW_ROOT=1
+# ROOT_REQUIREMENTS=
+# TRUSTED_IDENTITY_SERVERS=*
+# FEDERATION_PEERS=
+# STRONGHOLD_CREATION=open
+# STRONGHOLD_CREATORS=
+# ALLOW_GUEST_BROWSING=1
+# MAX_FILE_BYTES=10485760
+# USER_STORAGE_QUOTA_BYTES=209715200
