@@ -187,7 +187,7 @@ watch(
         :key="entry.message.key"
         :message="entry.message"
         :grouped="entry.grouped"
-        :editing="editingSeq === entry.message.seq"
+        :editing="entry.message.seq !== null && editingSeq === entry.message.seq"
         v-model:editing-text="editingText"
         @edit="startEdit(entry.message)"
         @cancel-edit="cancelEdit"
