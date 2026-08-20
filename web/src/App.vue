@@ -9,9 +9,9 @@ import MobileNavBar from './components/MobileNavBar.vue'
 import NodeRail from './components/NodeRail.vue'
 import PostModal from './components/PostModal.vue'
 import RightColumn from './components/RightColumn.vue'
-import ServerAdminPanel from './components/ServerAdminPanel.vue'
+import ServerAdminModal from './components/ServerAdminModal.vue'
+import StrongholdAdminModal from './components/StrongholdAdminModal.vue'
 import StrongholdOnboarding from './components/StrongholdOnboarding.vue'
-import StrongholdPanel from './components/StrongholdPanel.vue'
 import { useAuth } from './composables/useAuth'
 import { LEFT_WIDTH_DEFAULT, LEFT_WIDTH_KEY, RIGHT_WIDTH_DEFAULT, RIGHT_WIDTH_KEY } from './composables/useColumnResize'
 import { useDocumentTitle } from './composables/useDocumentTitle'
@@ -20,11 +20,13 @@ import { useShellView } from './composables/useShellView'
 import { useStronghold } from './composables/useStronghold'
 
 const auth = useAuth()
-// 'server-admin' (ServerAdminPanel) and 'stronghold-panel' (StrongholdPanel)
-// are two independent full-screen overlays with separate entry points (task
-// 039 split) - never share navigation state beyond this top-level view key.
-const view = ref<'app' | 'server-admin' | 'stronghold-panel'>('app')
-const strongholdPanelTab = ref<'members' | 'groups' | 'settings'>('members')
+// ServerAdminModal and StrongholdAdminModal are two independent
+// PostModal-style floating overlays with separate entry points (task 039
+// split, task 048 modal-ized) - the shell underneath keeps rendering while
+// either is open, they never share state beyond these two booleans.
+const serverAdminOpen = ref(false)
+const strongholdAdminOpen = ref(false)
+const strongholdAdminTab = ref<'members' | 'settings'>('members')
 const { activeView } = useShellView()
 const { config: instanceConfig } = useInstanceConfig()
 const { nodes, loading: strongholdsLoading } = useStronghold()
@@ -37,13 +39,16 @@ useDocumentTitle()
 // directly in its read-only guest state (useStronghold's isGuestMode).
 const showAuthGate = computed(() => !auth.isAuthenticated.value && !instanceConfig.value?.allow_guest_browsing)
 
-function openStrongholdPanel(tab: 'members' | 'groups' | 'settings') {
-  strongholdPanelTab.value = tab
-  view.value = 'stronghold-panel'
+function openStrongholdAdmin(tab: 'members' | 'settings') {
+  strongholdAdminTab.value = tab
+  strongholdAdminOpen.value = true
 }
 
 watch(auth.isAuthenticated, (authenticated) => {
-  if (!authenticated) view.value = 'app'
+  if (!authenticated) {
+    serverAdminOpen.value = false
+    strongholdAdminOpen.value = false
+  }
 })
 </script>
 
@@ -57,14 +62,6 @@ watch(auth.isAuthenticated, (authenticated) => {
 
     <StrongholdOnboarding v-else-if="auth.isAuthenticated.value && !hasStrongholds" />
 
-    <ServerAdminPanel v-else-if="view === 'server-admin'" @close="view = 'app'" />
-
-    <StrongholdPanel
-      v-else-if="view === 'stronghold-panel'"
-      :initial-tab="strongholdPanelTab"
-      @close="view = 'app'"
-    />
-
     <template v-else>
       <div class="shell__body" :data-view="activeView">
         <NodeRail />
@@ -77,12 +74,15 @@ watch(auth.isAuthenticated, (authenticated) => {
           :default-percent="RIGHT_WIDTH_DEFAULT"
           invert
         />
-        <RightColumn @open-server-admin="view = 'server-admin'" @open-panel="openStrongholdPanel" />
+        <RightColumn @open-server-admin="serverAdminOpen = true" @open-panel="openStrongholdAdmin" />
       </div>
       <MobileNavBar />
       <PostModal />
       <AuthModal />
     </template>
+
+    <ServerAdminModal :open="serverAdminOpen" @close="serverAdminOpen = false" />
+    <StrongholdAdminModal :open="strongholdAdminOpen" :initial-tab="strongholdAdminTab" @close="strongholdAdminOpen = false" />
   </div>
 </template>
 

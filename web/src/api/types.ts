@@ -105,8 +105,10 @@ export interface StrongholdConfigPatch {
   edit_window_secs?: number
 }
 
-// task 037: a member's custom-group badge, as embedded in a member list entry
-// (server's toMemberEntry) - deliberately thin, just enough to render a badge.
+// task 048: a member's server-level group badge, as returned by the batch
+// read-only lookup (GET /api/server-groups/members) - deliberately thin,
+// just enough to render a badge. Read-only on the stronghold side; group
+// definition and assignment both live at the server level now.
 export interface MemberGroupRef {
   id: string
   name: string
@@ -127,38 +129,40 @@ export interface StrongholdMember {
   groups: MemberGroupRef[]
 }
 
-// tri-state permission value used by custom groups: -1 deny / 0 inherit / 1 allow.
+// tri-state permission value used by server groups: -1 deny / 0 inherit / 1 allow.
 export type GroupPermValue = -1 | 0 | 1
 
-// task 037: a stronghold-local custom group (server's GroupRow / toApiGroup).
-// position is ascending synthesis order and doubles as display/sort order.
-export interface Group {
+// task 048: a server-level user group (m0-protocol §7.10a, server's
+// ServerGroup / D1 server_groups) - replaces task 037's stronghold-local
+// groups. position is ascending synthesis order and doubles as display order.
+export interface ServerGroup {
   id: string
   name: string
   color: string | null
   position: number
-  perm_speak: GroupPermValue
-  perm_post: GroupPermValue
-  perm_reply: GroupPermValue
+  allow_speak: GroupPermValue
+  allow_post: GroupPermValue
+  allow_reply: GroupPermValue
   is_moderator: boolean
 }
 
-export interface GroupCreatePayload {
+export interface ServerGroupCreatePayload {
   name: string
   color?: string | null
-  perm_speak?: GroupPermValue
-  perm_post?: GroupPermValue
-  perm_reply?: GroupPermValue
+  allow_speak?: GroupPermValue
+  allow_post?: GroupPermValue
+  allow_reply?: GroupPermValue
   is_moderator?: boolean
+  position?: number
 }
 
-export interface GroupPatch {
+export interface ServerGroupPatch {
   name?: string
   color?: string | null
   position?: number
-  perm_speak?: GroupPermValue
-  perm_post?: GroupPermValue
-  perm_reply?: GroupPermValue
+  allow_speak?: GroupPermValue
+  allow_post?: GroupPermValue
+  allow_reply?: GroupPermValue
   is_moderator?: boolean
 }
 

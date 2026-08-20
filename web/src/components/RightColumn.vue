@@ -11,7 +11,7 @@ import { WinButton, WinDropDownButton } from '../vendor/winui'
 import AvatarBadge from './AvatarBadge.vue'
 import ChangePasswordModal from './ChangePasswordModal.vue'
 
-const emit = defineEmits<{ 'open-server-admin': []; 'open-panel': ['members' | 'groups' | 'settings'] }>()
+const emit = defineEmits<{ 'open-server-admin': []; 'open-panel': ['members' | 'settings'] }>()
 
 const { mode, cycleTheme } = useTheme()
 const auth = useAuth()
@@ -32,7 +32,7 @@ const modeLabel: Record<string, string> = {
 
 // m0-protocol §7.10: a server owner/admin manages every stronghold with
 // owner-equivalent permission even without a membership row - same overlay
-// StrongholdPanel applies to its own canManage.
+// StrongholdAdminModal applies to its own canManage.
 const canManage = computed(() => myRole.value === 'owner' || myRole.value === 'mod' || auth.isAdmin.value)
 
 const showChangePassword = ref(false)
@@ -81,14 +81,6 @@ function onUserMenuSelect(item: { Value: string }) {
       <template v-if="!isGuestMode">
         <WinButton Style="DefaultButtonStyle" class="right-column__action" @Click="emit('open-panel', 'members')">
           成员列表
-        </WinButton>
-        <WinButton
-          v-if="canManage"
-          Style="DefaultButtonStyle"
-          class="right-column__action"
-          @Click="emit('open-panel', 'groups')"
-        >
-          用户组
         </WinButton>
         <WinButton
           v-if="canManage"

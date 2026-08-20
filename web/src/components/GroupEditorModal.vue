@@ -1,18 +1,18 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { api } from '../api'
-import type { Group, GroupPermValue } from '../api/types'
+import type { GroupPermValue, ServerGroup } from '../api/types'
 import { GROUP_COLOR_SWATCHES } from '../constants/groupColors'
 import { useAuth } from '../composables/useAuth'
-import { useStronghold } from '../composables/useStronghold'
 import { requiredMaxLengthError } from '../utils/validate'
 import { WinButton, WinInfoBar, WinSelectorBar, WinToggleSwitch } from '../vendor/winui'
 
-const props = defineProps<{ open: boolean; group: Group | null }>()
+// task 048: server-level group editor (definition only - member assignment
+// lives in ServerAdminModal's member rows, not here).
+const props = defineProps<{ open: boolean; group: ServerGroup | null }>()
 const emit = defineEmits<{ close: []; saved: [] }>()
 
 const auth = useAuth()
-const { selectedNodeId } = useStronghold()
 
 const PERM_OPTIONS: { Text: string; value: GroupPermValue }[] = [
   { Text: '继承', value: 0 },
@@ -23,9 +23,9 @@ const PERM_OPTIONS: { Text: string; value: GroupPermValue }[] = [
 const form = reactive({
   name: '',
   color: null as string | null,
-  perm_speak: 0 as GroupPermValue,
-  perm_post: 0 as GroupPermValue,
-  perm_reply: 0 as GroupPermValue,
+  allow_speak: 0 as GroupPermValue,
+  allow_post: 0 as GroupPermValue,
+  allow_reply: 0 as GroupPermValue,
   is_moderator: false,
 })
 
@@ -38,9 +38,9 @@ function resetForm() {
   const g = props.group
   form.name = g?.name ?? ''
   form.color = g?.color ?? null
-  form.perm_speak = g?.perm_speak ?? 0
-  form.perm_post = g?.perm_post ?? 0
-  form.perm_reply = g?.perm_reply ?? 0
+  form.allow_speak = g?.allow_speak ?? 0
+  form.allow_post = g?.allow_post ?? 0
+  form.allow_reply = g?.allow_reply ?? 0
   form.is_moderator = g?.is_moderator ?? false
   error.value = ''
 }
@@ -53,18 +53,18 @@ watch(
   { immediate: true },
 )
 
-const speakSelected = computed(() => PERM_OPTIONS.find((o) => o.value === form.perm_speak))
-const postSelected = computed(() => PERM_OPTIONS.find((o) => o.value === form.perm_post))
-const replySelected = computed(() => PERM_OPTIONS.find((o) => o.value === form.perm_reply))
+const speakSelected = computed(() => PERM_OPTIONS.find((o) => o.value === form.allow_speak))
+const postSelected = computed(() => PERM_OPTIONS.find((o) => o.value === form.allow_post))
+const replySelected = computed(() => PERM_OPTIONS.find((o) => o.value === form.allow_reply))
 
 function onSpeakSelect(item: { value: GroupPermValue }) {
-  form.perm_speak = item.value
+  form.allow_speak = item.value
 }
 function onPostSelect(item: { value: GroupPermValue }) {
-  form.perm_post = item.value
+  form.allow_post = item.value
 }
 function onReplySelect(item: { value: GroupPermValue }) {
-  form.perm_reply = item.value
+  form.allow_reply = item.value
 }
 
 function isSwatchSelected(hex: string): boolean {
@@ -79,15 +79,15 @@ async function save() {
     const payload = {
       name: form.name,
       color: form.color,
-      perm_speak: form.perm_speak,
-      perm_post: form.perm_post,
-      perm_reply: form.perm_reply,
+      allow_speak: form.allow_speak,
+      allow_post: form.allow_post,
+      allow_reply: form.allow_reply,
       is_moderator: form.is_moderator,
     }
     if (isEdit.value && props.group) {
-      await api.updateGroup(auth.token.value, selectedNodeId.value, props.group.id, payload)
+      await api.updateServerGroup(auth.token.value, props.group.id, payload)
     } else {
-      await api.createGroup(auth.token.value, selectedNodeId.value, payload)
+      await api.createServerGroup(auth.token.value, payload)
     }
     emit('saved')
     emit('close')
