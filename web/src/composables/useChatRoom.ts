@@ -17,6 +17,7 @@ export interface PendingSend {
 
 const HISTORY_PAGE_SIZE = 50
 const ACK_TIMEOUT_MS = 8000
+const GUEST_POLL_MS = 15000
 
 const items = ref<RoomItem[]>([])
 const pending = ref<PendingSend[]>([])
@@ -27,6 +28,7 @@ const hasMoreHistory = ref(true)
 let transport: RoomTransport | null = null
 let roomKey = ''
 let ackTimers = new Map<string, ReturnType<typeof setTimeout>>()
+let guestPollTimer: ReturnType<typeof setInterval> | null = null
 
 function upsertItem(item: RoomItem) {
   const idx = items.value.findIndex((i) => i.seq === item.seq)
@@ -45,12 +47,41 @@ function clearAckTimer(clientId: string) {
   }
 }
 
+function stopGuestPolling() {
+  if (guestPollTimer) {
+    clearInterval(guestPollTimer)
+    guestPollTimer = null
+  }
+}
+
+// guest (no session): merge the latest page back in by seq - picks up both
+// new items and edits/retracts that landed on already-known ones, since
+// there's no WS to push them. Read-only, so no ack/pending bookkeeping needed.
+async function pollLatest(nodeId: string, resId: string, key: string) {
+  if (roomKey !== key) return
+  try {
+    const page = await api.getRoomHistory(null, nodeId, resId, null, HISTORY_PAGE_SIZE)
+    if (roomKey !== key) return
+    const merged = [...items.value, ...page]
+    const dedup = new Map(merged.map((i) => [i.seq, i]))
+    items.value = [...dedup.values()].sort((a, b) => a.seq - b.seq)
+  } catch {
+    // transient network blip - next tick retries
+  }
+}
+
+function startGuestPolling(nodeId: string, resId: string, key: string) {
+  stopGuestPolling()
+  guestPollTimer = setInterval(() => void pollLatest(nodeId, resId, key), GUEST_POLL_MS)
+}
+
 async function connectRoom(nodeId: string, room: RoomSummary) {
   const key = `${nodeId}/${room.id}`
   if (key === roomKey) return
   roomKey = key
   transport?.close()
   transport = null
+  stopGuestPolling()
   items.value = []
   pending.value = []
   hasMoreHistory.value = true
@@ -59,10 +90,15 @@ async function connectRoom(nodeId: string, room: RoomSummary) {
   ackTimers = new Map()
 
   const auth = useAuth()
-  if (!auth.token.value) return
 
   await loadHistory(nodeId, room.id, null)
   if (roomKey !== key) return // superseded by another switch while awaiting history
+
+  if (!auth.token.value) {
+    // guest: read-only, no room WS - light polling stands in for live updates
+    startGuestPolling(nodeId, room.id, key)
+    return
+  }
 
   transport = createRoomTransport({
     nodeId,
@@ -100,7 +136,6 @@ async function connectRoom(nodeId: string, room: RoomSummary) {
 
 async function loadHistory(nodeId: string, resId: string, before: number | null) {
   const auth = useAuth()
-  if (!auth.token.value) return
   historyLoading.value = true
   try {
     const page = await api.getRoomHistory(auth.token.value, nodeId, resId, before, HISTORY_PAGE_SIZE)
@@ -127,6 +162,7 @@ export function useChatRoom() {
       else {
         transport?.close()
         transport = null
+        stopGuestPolling()
         roomKey = ''
         items.value = []
         pending.value = []

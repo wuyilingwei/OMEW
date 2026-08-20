@@ -630,8 +630,8 @@ export const mockApi = {
     return delay({ token: `mock-room-token-${resId}`, room: `${nodeId}/mock/${resId}`, exp: Math.floor(Date.now() / 1000) + 300 })
   },
 
-  async getRoomHistory(token: string, nodeId: string, resId: string, before?: number | null, limit = 50): Promise<RoomItem[]> {
-    requireUser(token)
+  async getRoomHistory(token: string | null, nodeId: string, resId: string, before?: number | null, limit = 50): Promise<RoomItem[]> {
+    requireUserOrGuest(token, nodeId)
     const room = requireRoom(nodeId, resId)
     const visible = room.items.filter((i) => !room.tombstoned.has(i.seq))
     const filtered = before == null ? visible : visible.filter((i) => i.seq < before)

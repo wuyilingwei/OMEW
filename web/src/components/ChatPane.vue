@@ -2,6 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { EMPTY_STATE } from '../assets/mew'
 import { useAuth } from '../composables/useAuth'
+import { useAuthModal } from '../composables/useAuthModal'
 import { useChatRoom } from '../composables/useChatRoom'
 import { useImageAttachments } from '../composables/useImageAttachments'
 import { useStrongholdConfig } from '../composables/useStrongholdConfig'
@@ -13,6 +14,7 @@ import EmptyState from './EmptyState.vue'
 import MessageBubble, { type MessageVM } from './MessageBubble.vue'
 
 const auth = useAuth()
+const { openAuthModal } = useAuthModal()
 const { config } = useStrongholdConfig()
 const { members } = useStrongholdMembers()
 const { items, pending, historyLoading, hasMoreHistory, loadOlder, sendText, resend, editMessage, retractMessage } = useChatRoom()
@@ -193,7 +195,7 @@ watch(
         @resend="onResend(entry.message)"
       />
     </div>
-    <div class="chat-pane__compose-wrap" @dragover.prevent @drop="onDrop">
+    <div v-if="auth.isAuthenticated.value" class="chat-pane__compose-wrap" @dragover.prevent @drop="onDrop">
       <WinInfoBar
         v-if="attachments.error.value"
         :IsOpen="true"
@@ -236,6 +238,10 @@ watch(
         <WinButton Style="AccentButtonStyle" class="chat-pane__send" @Click="submit">发送</WinButton>
       </div>
     </div>
+    <div v-else class="chat-pane__compose-wrap chat-pane__compose-wrap--guest">
+      <p class="chat-pane__guest-text">登录后参与聊天</p>
+      <WinButton Style="AccentButtonStyle" @Click="openAuthModal">登录 / 注册</WinButton>
+    </div>
   </section>
 </template>
 
@@ -270,6 +276,21 @@ watch(
   backdrop-filter: blur(24px) saturate(160%);
   -webkit-backdrop-filter: blur(24px) saturate(160%);
   border-top: 1px solid var(--stroke-divider);
+}
+
+.chat-pane__compose-wrap--guest {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+}
+
+.chat-pane__guest-text {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-tertiary);
 }
 
 .chat-pane__attach-error {

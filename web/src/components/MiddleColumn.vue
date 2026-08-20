@@ -1,13 +1,8 @@
 <script setup lang="ts">
-import { useAuth } from '../composables/useAuth'
-import { useAuthModal } from '../composables/useAuthModal'
 import { useShellView } from '../composables/useShellView'
-import { WinButton } from '../vendor/winui'
 import ChannelSwitcher from './ChannelSwitcher.vue'
 import ChatPane from './ChatPane.vue'
 
-const auth = useAuth()
-const { openAuthModal } = useAuthModal()
 const { setView } = useShellView()
 </script>
 
@@ -22,12 +17,7 @@ const { setView } = useShellView()
       <div class="middle-column__header-spacer" />
       <ChannelSwitcher />
     </div>
-    <ChatPane v-if="auth.isAuthenticated.value" />
-    <!-- guest: no room WS is ever established here, only a login prompt -->
-    <div v-else class="middle-column__guest">
-      <p class="middle-column__guest-text">登录后参与聊天</p>
-      <WinButton Style="AccentButtonStyle" @Click="openAuthModal">登录 / 注册</WinButton>
-    </div>
+    <ChatPane />
   </main>
 </template>
 
@@ -76,22 +66,6 @@ const { setView } = useShellView()
 
 .middle-column__back:active {
   background: var(--ctrl-fill-secondary);
-}
-
-.middle-column__guest {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.9rem;
-}
-
-.middle-column__guest-text {
-  margin: 0;
-  font-size: 0.85rem;
-  color: var(--text-tertiary);
 }
 
 @media (max-width: 768px) {
