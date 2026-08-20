@@ -10,6 +10,7 @@ export interface InstanceConfig {
   allow_root: boolean
   root_requirements: RootRequirement[]
   stronghold_creation: StrongholdCreationPolicy
+  allow_guest_browsing: boolean
 }
 
 // /api/admin/instance/config - mirrors the server's internal InstanceConfig
@@ -24,6 +25,7 @@ export interface AdminInstanceConfig {
   federation_peers: string[]
   stronghold_creation_policy: StrongholdCreationPolicy
   stronghold_creators: string[]
+  allow_guest_browsing: boolean
 }
 
 export interface AuthUser {
@@ -140,6 +142,17 @@ export interface StrongholdSummary {
   name: string
   cover: string | null
   rooms: RoomSummary[]
+}
+
+// public directory entry (task 034, GET /api/directory) - unauthenticated
+// discovery listing, distinct from StrongholdSummary which carries rooms and
+// is only ever returned to an authenticated member.
+export interface DirectoryEntry {
+  id: string
+  name: string
+  description: string | null
+  cover: string | null
+  member_count: number
 }
 
 export interface CreateStrongholdPayload {

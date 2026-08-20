@@ -11,6 +11,7 @@ import type {
   BanEntry,
   CreateRoomPayload,
   CreateStrongholdPayload,
+  DirectoryEntry,
   EditRetractResult,
   Emote,
   EmotePack,
@@ -51,6 +52,7 @@ let config: AdminInstanceConfig = {
   user_storage_quota_bytes: 100 * 1024 * 1024,
   stronghold_creation_policy: 'open',
   stronghold_creators: [],
+  allow_guest_browsing: true,
 }
 
 // demo emote pack seeded from the same bundled mascot images the seed
@@ -120,6 +122,18 @@ function requireUser(token: string): MockUser {
   const user = users.find((candidate) => candidate.actor === actor)
   if (!user) throw new ApiRequestError('AUTH_FAILED', 401)
   return user
+}
+
+// task 034 guest read gate, mirrors server's resolveGuestOrMember: a token
+// still requires a valid session, but no token at all falls through to a
+// guest read as long as the instance allows it and the stronghold is public.
+function requireUserOrGuest(token: string | null, nodeId: string): MockUser | null {
+  if (token) return requireUser(token)
+  const state = strongholds.get(nodeId)
+  if (!state || !(config.allow_guest_browsing && state.visibility === 'public')) {
+    throw new ApiRequestError('AUTH_REQUIRED', 401)
+  }
+  return null
 }
 
 // ---- strongholds / rooms / room items --------------------------------------
@@ -395,7 +409,32 @@ export const mockApi = {
       allow_root: config.allow_root,
       root_requirements: config.root_requirements,
       stronghold_creation: config.stronghold_creation_policy,
+      allow_guest_browsing: config.allow_guest_browsing,
     })
+  },
+
+  async getDirectory(): Promise<DirectoryEntry[]> {
+    if (!config.allow_guest_browsing) throw new ApiRequestError('NOT_FOUND', 404)
+    const entries = [...strongholds.values()]
+      .filter((s) => s.visibility === 'public')
+      .map(
+        (s): DirectoryEntry => ({
+          id: s.id,
+          name: s.name,
+          description: s.description || null,
+          cover: s.cover || null,
+          member_count: strongholdMembers.get(s.id)?.length ?? 0,
+        }),
+      )
+    return delay(entries)
+  },
+
+  async changePassword(token: string, payload: { old_password: string; new_password: string }): Promise<void> {
+    const user = requireUser(token)
+    if (payload.old_password !== user.password) throw new ApiRequestError('AUTH_FAILED', 401)
+    if (payload.new_password.length < 8) throw new ApiRequestError('PASSWORD_INVALID', 400)
+    user.password = payload.new_password
+    return delay(undefined, 150)
   },
 
   async register(payload: RegisterPayload): Promise<AuthResponse> {
@@ -560,10 +599,17 @@ export const mockApi = {
     return delay({ id: room.res_id, name: room.name, type: room.type })
   },
 
-  async getStrongholdConfig(token: string, nodeId: string): Promise<StrongholdConfig> {
-    requireUser(token)
+  async getStrongholdRooms(token: string | null, nodeId: string): Promise<RoomSummary[]> {
     const state = strongholds.get(nodeId)
     if (!state) throw new ApiRequestError('NOT_FOUND', 404)
+    requireUserOrGuest(token, nodeId)
+    return delay([...state.rooms.values()].map((r) => ({ id: r.res_id, name: r.name, type: r.type })))
+  },
+
+  async getStrongholdConfig(token: string | null, nodeId: string): Promise<StrongholdConfig> {
+    const state = strongholds.get(nodeId)
+    if (!state) throw new ApiRequestError('NOT_FOUND', 404)
+    requireUserOrGuest(token, nodeId)
     return delay(toStrongholdConfig(state))
   },
 
@@ -617,8 +663,8 @@ export const mockApi = {
 
   // ---- posts ------------------------------------------------------------------
 
-  async listPosts(token: string, nodeId: string, resId: string, after?: string | null, limit = 20): Promise<PostPage> {
-    requireUser(token)
+  async listPosts(token: string | null, nodeId: string, resId: string, after?: string | null, limit = 20): Promise<PostPage> {
+    requireUserOrGuest(token, nodeId)
     const room = requireRoom(nodeId, resId)
     const posts = room.items
       .filter((i) => i.parent_seq == null && !room.tombstoned.has(i.seq))
@@ -638,8 +684,8 @@ export const mockApi = {
     return delay({ posts: page, next_cursor: hasMore && last ? `${last.bumped_at}:${last.post_seq}` : null })
   },
 
-  async getPost(token: string, nodeId: string, resId: string, seq: number, before?: number | null, limit = 50): Promise<PostThread> {
-    requireUser(token)
+  async getPost(token: string | null, nodeId: string, resId: string, seq: number, before?: number | null, limit = 50): Promise<PostThread> {
+    requireUserOrGuest(token, nodeId)
     const room = requireRoom(nodeId, resId)
     const postItem = room.items.find((i) => i.seq === seq && i.parent_seq == null)
     if (!postItem || room.tombstoned.has(seq)) throw new ApiRequestError('NOT_FOUND', 404)

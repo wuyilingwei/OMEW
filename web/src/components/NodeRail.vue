@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import { useStronghold } from '../composables/useStronghold'
 import CreateStrongholdCard from './CreateStrongholdCard.vue'
 
-const { nodes, selectedNodeId, selectNode } = useStronghold()
+const { nodes, selectedNodeId, selectNode, isGuestMode } = useStronghold()
 const showCreate = ref(false)
 
 function onCreated() {
@@ -26,7 +26,7 @@ function onCreated() {
           {{ node.name.slice(0, 1) }}
         </button>
       </li>
-      <li>
+      <li v-if="!isGuestMode">
         <button class="node-rail__item node-rail__item--add" type="button" title="创建据点" @click="showCreate = true">
           +
         </button>

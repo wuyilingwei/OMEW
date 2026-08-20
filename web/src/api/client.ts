@@ -5,6 +5,7 @@ import type {
   BanEntry,
   CreateRoomPayload,
   CreateStrongholdPayload,
+  DirectoryEntry,
   EditRetractResult,
   EmotePack,
   InstanceConfig,
@@ -120,14 +121,28 @@ function authHeaders(token: string): HeadersInit {
   return { Authorization: `Bearer ${token}` }
 }
 
+// several stronghold-scoped reads (config/rooms/posts) are open to an
+// unauthenticated guest on a public stronghold when the instance policy
+// allows it (task 034, server's resolveGuestOrMember) - a null token just
+// means "send the request without an Authorization header" and the server
+// sorts out member vs. guest from there.
+function optionalAuthHeaders(token: string | null): HeadersInit | undefined {
+  return token ? authHeaders(token) : undefined
+}
+
 export const realApi = {
   getInstanceConfig: () => request<InstanceConfig>('/api/instance/config'),
+
+  getDirectory: () => request<{ strongholds: DirectoryEntry[] }>('/api/directory').then((r) => r.strongholds),
 
   register: (payload: RegisterPayload) =>
     request<AuthResponse>('/api/register', { method: 'POST', body: JSON.stringify(payload) }),
 
   login: (payload: LoginPayload) =>
     request<AuthResponse>('/api/login', { method: 'POST', body: JSON.stringify(payload) }),
+
+  changePassword: (token: string, payload: { old_password: string; new_password: string }) =>
+    request<void>('/api/me/password', { method: 'POST', headers: authHeaders(token), body: JSON.stringify(payload) }),
 
   getAdminConfig: (token: string) =>
     request<AdminInstanceConfig>('/api/admin/instance/config', { headers: authHeaders(token) }),
@@ -174,8 +189,14 @@ export const realApi = {
       body: JSON.stringify(payload),
     }),
 
-  getStrongholdConfig: (token: string, nodeId: string) =>
-    request<StrongholdConfig>(`/api/stronghold/${nodeId}/config`, { headers: authHeaders(token) }),
+  // guest-readable on a public stronghold when the instance allows it - a
+  // member (token set) sees every room, a guest only the non-restricted ones
+  // (server-side filter, not duplicated here).
+  getStrongholdRooms: (token: string | null, nodeId: string) =>
+    request<RoomSummary[]>(`/api/stronghold/${nodeId}/rooms`, { headers: optionalAuthHeaders(token) }),
+
+  getStrongholdConfig: (token: string | null, nodeId: string) =>
+    request<StrongholdConfig>(`/api/stronghold/${nodeId}/config`, { headers: optionalAuthHeaders(token) }),
 
   patchStrongholdConfig: (token: string, nodeId: string, patch: StrongholdConfigPatch) =>
     request<StrongholdConfig>(`/api/stronghold/${nodeId}/config`, {
@@ -220,23 +241,23 @@ export const realApi = {
 
   // ---- posts (section rooms, read-only; writes go over the room WS) -----------
 
-  listPosts: (token: string, nodeId: string, resId: string, after?: string | null, limit?: number) => {
+  listPosts: (token: string | null, nodeId: string, resId: string, after?: string | null, limit?: number) => {
     const params = new URLSearchParams()
     if (after) params.set('after', after)
     if (limit != null) params.set('limit', String(limit))
     const qs = params.toString()
     return request<PostPage>(`/api/stronghold/${nodeId}/rooms/${resId}/posts${qs ? `?${qs}` : ''}`, {
-      headers: authHeaders(token),
+      headers: optionalAuthHeaders(token),
     })
   },
 
-  getPost: (token: string, nodeId: string, resId: string, seq: number, before?: number | null, limit?: number) => {
+  getPost: (token: string | null, nodeId: string, resId: string, seq: number, before?: number | null, limit?: number) => {
     const params = new URLSearchParams()
     if (before != null) params.set('before', String(before))
     if (limit != null) params.set('limit', String(limit))
     const qs = params.toString()
     return request<PostThread>(`/api/stronghold/${nodeId}/rooms/${resId}/posts/${seq}${qs ? `?${qs}` : ''}`, {
-      headers: authHeaders(token),
+      headers: optionalAuthHeaders(token),
     })
   },
 

@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import AdminSettings from './components/AdminSettings.vue'
 import AuthGate from './components/AuthGate.vue'
+import AuthModal from './components/AuthModal.vue'
 import ColumnResizer from './components/ColumnResizer.vue'
 import LeftColumn from './components/LeftColumn.vue'
 import MiddleColumn from './components/MiddleColumn.vue'
@@ -13,6 +14,7 @@ import StrongholdOnboarding from './components/StrongholdOnboarding.vue'
 import StrongholdPanel from './components/StrongholdPanel.vue'
 import { useAuth } from './composables/useAuth'
 import { LEFT_WIDTH_DEFAULT, LEFT_WIDTH_KEY, RIGHT_WIDTH_DEFAULT, RIGHT_WIDTH_KEY } from './composables/useColumnResize'
+import { useInstanceConfig } from './composables/useInstanceConfig'
 import { useShellView } from './composables/useShellView'
 import { useStronghold } from './composables/useStronghold'
 
@@ -20,8 +22,15 @@ const auth = useAuth()
 const view = ref<'app' | 'admin' | 'stronghold-panel'>('app')
 const strongholdPanelTab = ref<'members' | 'settings'>('members')
 const { activeView } = useShellView()
+const { config: instanceConfig } = useInstanceConfig()
 const { nodes, loading: strongholdsLoading } = useStronghold()
 const hasStrongholds = computed(() => nodes.value.length > 0)
+
+// task 034: an unauthenticated visitor only hits the full-screen gate when
+// the instance doesn't allow guest browsing (or its config hasn't loaded
+// yet, same fallback as before) - otherwise the four-column shell renders
+// directly in its read-only guest state (useStronghold's isGuestMode).
+const showAuthGate = computed(() => !auth.isAuthenticated.value && !instanceConfig.value?.allow_guest_browsing)
 
 function openStrongholdPanel(tab: 'members' | 'settings') {
   strongholdPanelTab.value = tab
@@ -35,11 +44,13 @@ watch(auth.isAuthenticated, (authenticated) => {
 
 <template>
   <div class="shell">
-    <AuthGate v-if="!auth.isAuthenticated.value" />
+    <AuthGate v-if="showAuthGate" />
 
-    <div v-else-if="strongholdsLoading && !hasStrongholds" class="shell__loading">正在加载据点…</div>
+    <div v-else-if="auth.isAuthenticated.value && strongholdsLoading && !hasStrongholds" class="shell__loading">
+      正在加载据点…
+    </div>
 
-    <StrongholdOnboarding v-else-if="!hasStrongholds" />
+    <StrongholdOnboarding v-else-if="auth.isAuthenticated.value && !hasStrongholds" />
 
     <AdminSettings v-else-if="view === 'admin'" @close="view = 'app'" />
 
@@ -65,6 +76,7 @@ watch(auth.isAuthenticated, (authenticated) => {
       </div>
       <MobileNavBar />
       <PostModal />
+      <AuthModal />
     </template>
   </div>
 </template>

@@ -1,21 +1,24 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { DEFAULT_NODE_PAGE_BG } from '../assets/mew'
 import { useAuth } from '../composables/useAuth'
+import { useAuthModal } from '../composables/useAuthModal'
 import { useStronghold } from '../composables/useStronghold'
 import { useStrongholdConfig } from '../composables/useStrongholdConfig'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
 import { useTheme } from '../composables/useTheme'
 import { WinButton, WinDropDownButton } from '../vendor/winui'
 import AvatarBadge from './AvatarBadge.vue'
+import ChangePasswordModal from './ChangePasswordModal.vue'
 
 const emit = defineEmits<{ 'open-admin-settings': []; 'open-panel': ['members' | 'settings'] }>()
 
 const { mode, cycleTheme } = useTheme()
 const auth = useAuth()
-const { currentNode } = useStronghold()
+const { currentNode, isGuestMode } = useStronghold()
 const { config } = useStrongholdConfig()
 const { myRole } = useStrongholdMembers()
+const { openAuthModal } = useAuthModal()
 
 const strongholdName = computed(() => config.value?.name ?? currentNode.value?.name ?? '')
 const strongholdDescription = computed(() => config.value?.description ?? '')
@@ -29,15 +32,19 @@ const modeLabel: Record<string, string> = {
 
 const canManage = computed(() => myRole.value === 'owner' || myRole.value === 'mod')
 
+const showChangePassword = ref(false)
+
 const userMenu = computed(() => ({
   Items: [
     ...(auth.isAdmin.value ? [{ Text: '节点设置', Value: 'settings' }] : []),
+    { Text: '修改密码', Value: 'change-password' },
     { Text: '登出', Value: 'logout' },
   ],
 }))
 
 function onUserMenuSelect(item: { Value: string }) {
   if (item.Value === 'settings') emit('open-admin-settings')
+  else if (item.Value === 'change-password') showChangePassword.value = true
   else if (item.Value === 'logout') auth.logout()
 }
 </script>
@@ -54,6 +61,9 @@ function onUserMenuSelect(item: { Value: string }) {
           <span class="right-column__username">{{ auth.user.value?.username }}</span>
         </span>
       </WinDropDownButton>
+      <WinButton v-else Style="AccentButtonStyle" class="right-column__login-btn" @Click="openAuthModal">
+        登录 / 注册
+      </WinButton>
     </div>
 
     <div class="right-column__stronghold">
@@ -65,18 +75,25 @@ function onUserMenuSelect(item: { Value: string }) {
     </div>
 
     <div class="right-column__actions">
-      <WinButton Style="DefaultButtonStyle" class="right-column__action" @Click="emit('open-panel', 'members')">
-        成员列表
-      </WinButton>
-      <WinButton
-        v-if="canManage"
-        Style="DefaultButtonStyle"
-        class="right-column__action"
-        @Click="emit('open-panel', 'settings')"
-      >
-        据点设置
+      <template v-if="!isGuestMode">
+        <WinButton Style="DefaultButtonStyle" class="right-column__action" @Click="emit('open-panel', 'members')">
+          成员列表
+        </WinButton>
+        <WinButton
+          v-if="canManage"
+          Style="DefaultButtonStyle"
+          class="right-column__action"
+          @Click="emit('open-panel', 'settings')"
+        >
+          据点设置
+        </WinButton>
+      </template>
+      <WinButton v-else Style="AccentButtonStyle" class="right-column__action" @Click="openAuthModal">
+        登录以加入据点
       </WinButton>
     </div>
+
+    <ChangePasswordModal :open="showChangePassword" @close="showChangePassword = false" />
   </aside>
 </template>
 
@@ -102,7 +119,8 @@ function onUserMenuSelect(item: { Value: string }) {
   gap: 0.5rem;
 }
 
-.right-column__theme-btn {
+.right-column__theme-btn,
+.right-column__login-btn {
   font-size: 0.8rem;
 }
 
