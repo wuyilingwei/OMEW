@@ -333,7 +333,19 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     }
     const serverRole: ServerRole = results[ownerBootstrapIndex]!.meta.changes === 1 ? "owner" : "user";
 
-    const token = await issueSessionToken(actor, serverRole, env);
+    let token: string;
+    try {
+      token = await issueSessionToken(actor, serverRole, env);
+    } catch (err) {
+      // Signing failed after the user row was committed - roll the registration
+      // back (and release any consumed invite code) so a retry can succeed
+      // instead of hitting USERNAME_TAKEN on a half-created account.
+      await env.DB.prepare("DELETE FROM users WHERE localpart = ?").bind(username).run();
+      if (requiresCode) {
+        await env.DB.prepare("UPDATE invite_codes SET used_by = NULL, used_at = NULL WHERE used_by = ?").bind(username).run();
+      }
+      throw err;
+    }
     const user = toPublicUser({ localpart: username, server_role: serverRole, email, email_verified: 0 }, actor);
     return json({ token, user });
   }

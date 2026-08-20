@@ -53,6 +53,7 @@ const loginError = ref('')
 const loginBusy = ref(false)
 
 async function submitLogin() {
+  if (loginBusy.value) return
   loginError.value = ''
   loginBusy.value = true
   try {
@@ -108,6 +109,7 @@ function registerErrorMessage(err: unknown): string {
 }
 
 async function submitRegister() {
+  if (registerBusy.value) return
   const errors = [
     usernameError(registerForm.username),
     passwordError(registerForm.password),
