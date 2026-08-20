@@ -122,6 +122,20 @@ export async function connectRoom(
   return { ws, stub };
 }
 
+export function nextClose(ws: WebSocket): Promise<{ code: number; reason: string }> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timed out waiting for close")), 5000);
+    ws.addEventListener(
+      "close",
+      (event) => {
+        clearTimeout(timer);
+        resolve({ code: event.code, reason: event.reason });
+      },
+      { once: true }
+    );
+  });
+}
+
 export function nextMessage(ws: WebSocket): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("timed out waiting for message")), 5000);

@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { verifyToken } from "./auth";
-import type { EditConfigSnapshot } from "./stronghold-do";
+import type { EditConfigSnapshot, MemberRevokePayload } from "./stronghold-do";
 import {
   DENY_CHANNEL_SPEAK,
   DENY_SECTION_POST,
@@ -165,6 +165,32 @@ export class RoomDO extends DurableObject<Env> {
   // DO-to-DO push target, called by StrongholdDO.updateConfig.
   async setEditConfig(cfg: EditConfigSnapshot): Promise<void> {
     this.persistEditConfig(cfg);
+  }
+
+  // ---- revocation propagation (m0-protocol §7.3) --------------------------------
+  // DO-to-DO push target, called by StrongholdDO on ban/kick/role-deny/group
+  // mutations. Local-only (no seq, no dedupe table, never federated). Scans every
+  // live connection rather than tracking actor->ws separately - Hibernation WS
+  // sets are already the source of truth and this only runs on a revoke, not per
+  // message.
+  async revokeMember(payload: MemberRevokePayload): Promise<void> {
+    for (const ws of this.ctx.getWebSockets()) {
+      const attachment = ws.deserializeAttachment() as Attachment | null;
+      if (!attachment || attachment.actor !== payload.actor) continue;
+
+      if (payload.effect === "close") {
+        try {
+          ws.close(1008, "OMEW_SESSION_INVALID");
+        } catch {
+          // socket already gone.
+        }
+        continue;
+      }
+
+      attachment.role = payload.role ?? attachment.role;
+      attachment.deny = payload.deny ?? attachment.deny;
+      ws.serializeAttachment(attachment);
+    }
   }
 
   private async ensureEditConfig(strongholdId: string): Promise<EditConfigSnapshot> {
