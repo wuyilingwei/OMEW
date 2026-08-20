@@ -823,7 +823,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
     const credentialId = response.id;
     const row = await env.DB.prepare(
-      "SELECT w.credential_id, w.public_key, w.counter, w.transports, w.localpart, u.status, u.server_role, u.email, u.email_verified FROM webauthn_credentials w JOIN users u ON u.localpart = w.localpart WHERE w.credential_id = ?"
+      "SELECT w.credential_id, w.public_key, w.counter, w.transports, w.localpart, u.status, u.server_role, u.email, u.email_verified, u.totp_enabled FROM webauthn_credentials w JOIN users u ON u.localpart = w.localpart WHERE w.credential_id = ?"
     )
       .bind(credentialId)
       .first<{
@@ -836,6 +836,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
         server_role: ServerRole;
         email: string | null;
         email_verified: number;
+        totp_enabled: number;
       }>();
     if (!row || row.status !== "active") return apiError(401, "AUTH_FAILED");
 

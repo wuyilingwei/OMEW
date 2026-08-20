@@ -138,4 +138,5 @@ export interface PublicUser {
   is_admin: boolean;
   email: string | null;
   email_verified: boolean;
+  totp_enabled: boolean;
 }
