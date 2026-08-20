@@ -86,8 +86,16 @@ async function loadUsers(reset = true) {
     const page = await api.getAdminUsers(auth.token.value, reset ? undefined : (usersCursor.value ?? undefined))
     users.value = reset ? page.users : [...users.value, ...page.users]
     usersCursor.value = page.next_cursor
-    const localparts = users.value.map((u) => u.localpart)
-    if (localparts.length) userGroups.value = await api.getGroupsForMembers(auth.token.value, localparts)
+    // scoped to this page only (USERS_PAGE_SIZE=50, well under the 100-localpart
+    // lookup cap) - looking up the whole accumulated list would trip that cap
+    // once enough pages load
+    const pageLocalparts = page.users.map((u) => u.localpart)
+    if (pageLocalparts.length) {
+      const pageGroups = await api.getGroupsForMembers(auth.token.value, pageLocalparts)
+      userGroups.value = reset ? pageGroups : { ...userGroups.value, ...pageGroups }
+    } else if (reset) {
+      userGroups.value = {}
+    }
   } catch {
     usersError.value = '无法加载用户列表'
   } finally {

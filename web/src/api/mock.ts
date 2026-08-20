@@ -1126,12 +1126,6 @@ export const mockApi = {
     return delay([...serverGroups])
   },
 
-  async getServerGroupMembers(token: string, groupId: string): Promise<string[]> {
-    requireAdmin(token)
-    if (!serverGroups.some((g) => g.id === groupId)) throw new ApiRequestError('NOT_FOUND', 404)
-    return delay([...userGroupIds.entries()].filter(([, ids]) => ids.has(groupId)).map(([localpart]) => localpart))
-  },
-
   async assignServerGroupMember(token: string, groupId: string, localpart: string): Promise<void> {
     requireAdmin(token)
     if (!serverGroups.some((g) => g.id === groupId)) throw new ApiRequestError('NOT_FOUND', 404)

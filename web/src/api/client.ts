@@ -388,11 +388,6 @@ export const realApi = {
       body: JSON.stringify({ positions }),
     }).then((r) => r.groups),
 
-  getServerGroupMembers: (token: string, groupId: string) =>
-    request<{ localparts: string[] }>(`/api/admin/server-groups/${encodeURIComponent(groupId)}/members`, {
-      headers: authHeaders(token),
-    }).then((r) => r.localparts),
-
   assignServerGroupMember: (token: string, groupId: string, localpart: string) =>
     request<void>(`/api/admin/server-groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(localpart)}`, {
       method: 'PUT',
