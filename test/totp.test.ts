@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as OTPAuth from "otpauth";
 import { generateTotpSecret, totpOtpauthUrl, verifyTotpCode } from "../server/src/totp";
 
@@ -66,4 +66,34 @@ describe("verifyTotpCode", () => {
     expect(verifyTotpCode(RFC_SEED_BASE32, "000000")).toBeNull();
     expect(verifyTotpCode(RFC_SEED_BASE32, "not-a-code")).toBeNull();
   });
+});
+
+// RFC 6238 Appendix B publishes its test vectors as 8-digit SHA1 HOTP codes
+// (T0=0, X=30s, same "12345678901234567890" seed as RFC_SEED_BASE32 above).
+// HOTP's dynamic truncation reduces mod 10^Digits, and 10^6 divides 10^8, so
+// this implementation's 6-digit code is independently derivable as the
+// published 8-digit value mod 1e6 - not a round-trip through this file's own
+// generate()/validate() pair, unlike the otpauth-only tests above.
+describe("verifyTotpCode against RFC 6238 Appendix B vectors (SHA1, truncated to 6 digits)", () => {
+  const VECTORS: Array<{ t: number; code8: number }> = [
+    { t: 59, code8: 94287082 },
+    { t: 1111111109, code8: 7081804 },
+    { t: 1234567890, code8: 89005924 },
+  ];
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  for (const { t, code8 } of VECTORS) {
+    it(`matches the published vector at T=${t}`, () => {
+      vi.setSystemTime(t * 1000);
+      const code6 = String(code8 % 1_000_000).padStart(6, "0");
+      const step = verifyTotpCode(RFC_SEED_BASE32, code6);
+      expect(step).toBe(Math.floor(t / 30));
+    });
+  }
 });

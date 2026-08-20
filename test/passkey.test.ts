@@ -299,4 +299,29 @@ describe("passkey login", () => {
     const third = await apiRequest("/api/login/passkey", { method: "POST", body: JSON.stringify({ challenge_token: ct3, response: { id: "cred-login-2" } }) });
     expect(third.status).toBe(200);
   });
+
+  it("rejects replaying the same (challenge_token, response) pair a second time", async () => {
+    const token = await register("pkeylogin3");
+    await addPasskey(token, "cred-login-3");
+
+    const opts = await apiRequest("/api/login/passkey/options", { method: "POST" });
+    const { challenge_token } = (await opts.json()) as { challenge_token: string };
+    vi.mocked(verifyAuthenticationResponse).mockResolvedValue({
+      verified: true,
+      authenticationInfo: { newCounter: 1 },
+    } as unknown as Awaited<ReturnType<typeof verifyAuthenticationResponse>>);
+
+    const first = await apiRequest("/api/login/passkey", {
+      method: "POST",
+      body: JSON.stringify({ challenge_token, response: { id: "cred-login-3" } }),
+    });
+    expect(first.status).toBe(200);
+
+    const replay = await apiRequest("/api/login/passkey", {
+      method: "POST",
+      body: JSON.stringify({ challenge_token, response: { id: "cred-login-3" } }),
+    });
+    expect(replay.status).toBe(401);
+    expect(await replay.json()).toEqual({ error: "AUTH_FAILED" });
+  });
 });

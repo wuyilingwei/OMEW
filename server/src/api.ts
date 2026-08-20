@@ -52,6 +52,55 @@ const USERS_PAGE_SIZE = 50;
 const MAX_OWNERSHIP_CIPHERTEXT_BYTES = 8 * 1024; // m0-protocol §7.9a: custody ciphertext size cap
 const TOTP_PENDING_TTL_S = 300; // m0-protocol §7.2a
 const WEBAUTHN_CHALLENGE_TTL_S = 300;
+const TOTP_MAX_ATTEMPTS = 8; // per-account, independent of how many pending tokens get minted
+const TOTP_LOCKOUT_S = 15 * 60;
+
+// Claims a signed challenge/pending jti for one-time use. Returns false if it
+// was already consumed (replay of a captured request). used_challenges rows
+// past their exp are never read again, so no reaper is needed here.
+async function consumeChallengeOnce(env: Env, jti: string, exp: number): Promise<boolean> {
+  try {
+    await env.DB.prepare("INSERT INTO used_challenges (jti, exp) VALUES (?, ?)").bind(jti, exp).run();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Per-account TOTP guess throttle: a fixed number of wrong codes locks further
+// attempts out for TOTP_LOCKOUT_S, regardless of how many fresh pending/session
+// tokens the caller can obtain in the meantime.
+async function totpRateLimited(env: Env, localpart: string): Promise<boolean> {
+  const row = await env.DB.prepare("SELECT locked_until FROM totp_attempts WHERE localpart = ?")
+    .bind(localpart)
+    .first<{ locked_until: number }>();
+  return !!row && row.locked_until > nowS();
+}
+
+async function recordTotpFailure(env: Env, localpart: string): Promise<void> {
+  const now = nowS();
+  const row = await env.DB.prepare("SELECT fail_count, locked_until FROM totp_attempts WHERE localpart = ?")
+    .bind(localpart)
+    .first<{ fail_count: number; locked_until: number }>();
+  const staleLock = !row || (row.locked_until > 0 && row.locked_until <= now);
+  const count = staleLock ? 1 : row.fail_count + 1;
+  const lockedUntil = count >= TOTP_MAX_ATTEMPTS ? now + TOTP_LOCKOUT_S : row?.locked_until ?? 0;
+  await env.DB.prepare(
+    "INSERT INTO totp_attempts (localpart, fail_count, locked_until) VALUES (?, ?, ?) " +
+      "ON CONFLICT(localpart) DO UPDATE SET fail_count = excluded.fail_count, locked_until = excluded.locked_until"
+  )
+    .bind(localpart, count, lockedUntil)
+    .run();
+}
+
+async function recordTotpSuccess(env: Env, localpart: string): Promise<void> {
+  await env.DB.prepare(
+    "INSERT INTO totp_attempts (localpart, fail_count, locked_until) VALUES (?, 0, 0) " +
+      "ON CONFLICT(localpart) DO UPDATE SET fail_count = 0, locked_until = 0"
+  )
+    .bind(localpart)
+    .run();
+}
 
 // m0-protocol §7.2a: WebAuthn RP ID / origin pair. Production targets the
 // instance's own https domain; local/dev (INSTANCE_DOMAIN unset, falls back
@@ -438,8 +487,10 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (!claims || claims.typ !== "totp_pending") return apiError(401, "AUTH_FAILED");
 
     const localpart = localpartOfActor(claims.actor);
+    if (await totpRateLimited(env, localpart)) return apiError(429, "TOTP_RATE_LIMITED");
+
     const user = await env.DB.prepare(
-      "SELECT localpart, status, server_role, email, email_verified, totp_secret, totp_enabled, last_totp_step FROM users WHERE localpart = ?"
+      "SELECT localpart, status, server_role, email, email_verified, totp_secret, totp_enabled FROM users WHERE localpart = ?"
     )
       .bind(localpart)
       .first<{
@@ -450,16 +501,28 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
         email_verified: number;
         totp_secret: string | null;
         totp_enabled: number;
-        last_totp_step: number;
       }>();
     if (!user || user.status !== "active" || user.totp_enabled !== 1 || !user.totp_secret) {
       return apiError(401, "AUTH_FAILED");
     }
 
     const step = verifyTotpCode(user.totp_secret, code);
-    if (step === null || step === user.last_totp_step) return apiError(401, "TOTP_INVALID");
+    if (step === null) {
+      await recordTotpFailure(env, localpart);
+      return apiError(401, "TOTP_INVALID");
+    }
 
-    await env.DB.prepare("UPDATE users SET last_totp_step = ? WHERE localpart = ?").bind(step, localpart).run();
+    // Atomic compare-and-set: a concurrent request that raced this one to the
+    // same last_totp_step value loses here instead of both succeeding (TOCTOU).
+    const consumed = await env.DB.prepare("UPDATE users SET last_totp_step = ? WHERE localpart = ? AND last_totp_step != ?")
+      .bind(step, localpart, step)
+      .run();
+    if (consumed.meta.changes === 0) {
+      await recordTotpFailure(env, localpart);
+      return apiError(401, "TOTP_INVALID");
+    }
+
+    await recordTotpSuccess(env, localpart);
     const token = await issueSessionToken(claims.actor, user.server_role, env);
     return json({ token, user: toPublicUser(user, claims.actor) });
   }
@@ -556,18 +619,31 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (!code) return apiError(400, "PAYLOAD_INVALID");
 
     const localpart = localpartOfActor(actor);
-    const user = await env.DB.prepare("SELECT totp_secret, last_totp_step FROM users WHERE localpart = ?")
+    if (await totpRateLimited(env, localpart)) return apiError(429, "TOTP_RATE_LIMITED");
+
+    const user = await env.DB.prepare("SELECT totp_secret FROM users WHERE localpart = ?")
       .bind(localpart)
-      .first<{ totp_secret: string | null; last_totp_step: number }>();
+      .first<{ totp_secret: string | null }>();
     if (!user?.totp_secret) return apiError(409, "TOTP_NOT_PENDING");
 
     const step = verifyTotpCode(user.totp_secret, code);
-    if (step === null) return apiError(401, "TOTP_INVALID");
-    if (step === user.last_totp_step) return apiError(409, "TOTP_CODE_REUSED");
+    if (step === null) {
+      await recordTotpFailure(env, localpart);
+      return apiError(401, "TOTP_INVALID");
+    }
 
-    await env.DB.prepare("UPDATE users SET totp_enabled = 1, last_totp_step = ? WHERE localpart = ?")
-      .bind(step, localpart)
+    // Atomic compare-and-set closes the same TOCTOU as the login endpoint.
+    const consumed = await env.DB.prepare(
+      "UPDATE users SET totp_enabled = 1, last_totp_step = ? WHERE localpart = ? AND last_totp_step != ?"
+    )
+      .bind(step, localpart, step)
       .run();
+    if (consumed.meta.changes === 0) {
+      await recordTotpFailure(env, localpart);
+      return apiError(409, "TOTP_CODE_REUSED");
+    }
+
+    await recordTotpSuccess(env, localpart);
     return json({ ok: true });
   }
 
@@ -581,20 +657,34 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (!password || !code) return apiError(400, "PAYLOAD_INVALID");
 
     const localpart = localpartOfActor(actor);
-    const user = await env.DB.prepare("SELECT pw_hash, pw_salt, totp_secret, last_totp_step FROM users WHERE localpart = ?")
+    if (await totpRateLimited(env, localpart)) return apiError(429, "TOTP_RATE_LIMITED");
+
+    const user = await env.DB.prepare("SELECT pw_hash, pw_salt, totp_secret FROM users WHERE localpart = ?")
       .bind(localpart)
-      .first<{ pw_hash: string | null; pw_salt: string | null; totp_secret: string | null; last_totp_step: number }>();
+      .first<{ pw_hash: string | null; pw_salt: string | null; totp_secret: string | null }>();
     const dummy = dummyPasswordFields();
     const validPassword = await verifyPassword(password, user?.pw_hash ?? dummy.hash, user?.pw_salt ?? dummy.salt);
     if (!user || !validPassword) return apiError(401, "AUTH_FAILED");
     if (!user.totp_secret) return apiError(409, "TOTP_NOT_PENDING");
 
     const step = verifyTotpCode(user.totp_secret, code);
-    if (step === null || step === user.last_totp_step) return apiError(401, "TOTP_INVALID");
+    if (step === null) {
+      await recordTotpFailure(env, localpart);
+      return apiError(401, "TOTP_INVALID");
+    }
 
-    await env.DB.prepare("UPDATE users SET totp_secret = NULL, totp_enabled = 0, last_totp_step = 0 WHERE localpart = ?")
-      .bind(localpart)
+    // Atomic compare-and-set closes the same TOCTOU as the login endpoint.
+    const consumed = await env.DB.prepare(
+      "UPDATE users SET totp_secret = NULL, totp_enabled = 0, last_totp_step = 0 WHERE localpart = ? AND last_totp_step != ?"
+    )
+      .bind(localpart, step)
       .run();
+    if (consumed.meta.changes === 0) {
+      await recordTotpFailure(env, localpart);
+      return apiError(401, "TOTP_INVALID");
+    }
+
+    await recordTotpSuccess(env, localpart);
     return json({ ok: true });
   }
 
@@ -626,6 +716,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
       userName: localpart,
       userID: new TextEncoder().encode(localpart) as Uint8Array<ArrayBuffer>,
       attestationType: "none",
+      authenticatorSelection: { residentKey: "required" },
       excludeCredentials: existing.map((r) => ({
         id: r.credential_id,
         transports: r.transports ? (JSON.parse(r.transports) as AuthenticatorTransportFuture[]) : undefined,
@@ -651,6 +742,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
     const claims = await verifyToken<WebauthnRegChallengeClaims>(challengeToken, env.DEV_TOKEN_SECRET);
     if (!claims || claims.typ !== "webauthn_reg" || claims.actor !== actor) return apiError(401, "AUTH_REQUIRED");
+    if (!(await consumeChallengeOnce(env, claims.jti, claims.exp))) return apiError(401, "AUTH_REQUIRED");
 
     let verification: Awaited<ReturnType<typeof verifyRegistrationResponse>>;
     try {
@@ -725,6 +817,9 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
     const claims = await verifyToken<WebauthnAuthChallengeClaims>(challengeToken, env.DEV_TOKEN_SECRET);
     if (!claims || claims.typ !== "webauthn_auth") return apiError(401, "AUTH_FAILED");
+    // Single-use: a captured (challenge_token, response) pair must not mint a
+    // second session once the first attempt has consumed this challenge.
+    if (!(await consumeChallengeOnce(env, claims.jti, claims.exp))) return apiError(401, "AUTH_FAILED");
 
     const credentialId = response.id;
     const row = await env.DB.prepare(

@@ -177,6 +177,32 @@ describe("two-step TOTP login", () => {
     expect(await second.json()).toEqual({ error: "TOTP_INVALID" });
   });
 
+  it("locks the account out after repeated wrong codes (429 TOTP_RATE_LIMITED), even for a fresh pending token with the right code", async () => {
+    const username = "totplogin7";
+    const secret = await setupAndActivate(username);
+
+    async function pendingFor(): Promise<string> {
+      const loginRes = await apiRequest("/api/login", { method: "POST", body: JSON.stringify({ username, password: "password123" }) });
+      const { pending } = (await loginRes.json()) as { pending: string };
+      return pending;
+    }
+
+    for (let i = 0; i < 8; i++) {
+      const res = await apiRequest("/api/login/totp", {
+        method: "POST",
+        body: JSON.stringify({ pending: await pendingFor(), code: "000000" }),
+      });
+      expect(res.status).toBe(401);
+    }
+
+    const locked = await apiRequest("/api/login/totp", {
+      method: "POST",
+      body: JSON.stringify({ pending: await pendingFor(), code: codeFor(secret, 1) }),
+    });
+    expect(locked.status).toBe(429);
+    expect(await locked.json()).toEqual({ error: "TOTP_RATE_LIMITED" });
+  });
+
   it("rejects a garbage pending token with 401 AUTH_FAILED", async () => {
     const res = await apiRequest("/api/login/totp", { method: "POST", body: JSON.stringify({ pending: "not-a-token", code: "123456" }) });
     expect(res.status).toBe(401);
