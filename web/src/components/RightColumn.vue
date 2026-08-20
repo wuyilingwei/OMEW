@@ -10,6 +10,7 @@ import { useTheme } from '../composables/useTheme'
 import { WinButton, WinDropDownButton } from '../vendor/winui'
 import AvatarBadge from './AvatarBadge.vue'
 import ChangePasswordModal from './ChangePasswordModal.vue'
+import SecuritySettingsModal from './SecuritySettingsModal.vue'
 
 const emit = defineEmits<{ 'open-server-admin': []; 'open-panel': ['members' | 'settings'] }>()
 
@@ -36,10 +37,12 @@ const modeLabel: Record<string, string> = {
 const canManage = computed(() => myRole.value === 'owner' || myRole.value === 'mod' || auth.isAdmin.value)
 
 const showChangePassword = ref(false)
+const showSecuritySettings = ref(false)
 
 const userMenu = computed(() => ({
   Items: [
     ...(auth.isAdmin.value ? [{ Text: '服务器管理', Value: 'server-admin' }] : []),
+    { Text: '安全', Value: 'security' },
     { Text: '修改密码', Value: 'change-password' },
     { Text: '登出', Value: 'logout' },
   ],
@@ -47,6 +50,7 @@ const userMenu = computed(() => ({
 
 function onUserMenuSelect(item: { Value: string }) {
   if (item.Value === 'server-admin') emit('open-server-admin')
+  else if (item.Value === 'security') showSecuritySettings.value = true
   else if (item.Value === 'change-password') showChangePassword.value = true
   else if (item.Value === 'logout') auth.logout()
 }
@@ -97,6 +101,7 @@ function onUserMenuSelect(item: { Value: string }) {
     </div>
 
     <ChangePasswordModal :open="showChangePassword" @close="showChangePassword = false" />
+    <SecuritySettingsModal :open="showSecuritySettings" @close="showSecuritySettings = false" />
   </aside>
 </template>
 

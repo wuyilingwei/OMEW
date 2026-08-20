@@ -10,11 +10,14 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
-    "vue": "^3.5.41",
     "@noble/curves": "^2.3.0",
-    "@noble/hashes": "^2.3.0"
+    "@noble/hashes": "^2.3.0",
+    "@simplewebauthn/browser": "^13.3.0",
+    "qrcode": "^1.5.4",
+    "vue": "^3.5.41"
   },
   "devDependencies": {
+    "@types/qrcode": "^1.5.6",
     "@vitejs/plugin-vue": "^6.0.8",
     "typescript": "^5.7.3",
     "vite": "^8.2.1",
