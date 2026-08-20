@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { verifyToken } from "./auth";
+import { synthesizeEffectivePermissions, type EffectivePermissions } from "./permissions";
 import { typeToKind, type Role, type RoomType, type StrongholdTokenClaims } from "./types";
 
 // proposal S4.1/S4.4: stronghold config + capability rules + authoritative member
@@ -48,6 +49,20 @@ export type BanRow = {
   actor: string;
   operator: string;
   banned_at: number;
+};
+
+// task 037: custom groups. perm_* are tri-state (-1 deny / 0 inherit / 1 allow),
+// synthesized against a member's baseline by permissions.ts. position is the
+// synthesis order (ascending) and doubles as UI sort order.
+export type GroupRow = {
+  id: string;
+  name: string;
+  color: string | null;
+  position: number;
+  perm_speak: number;
+  perm_post: number;
+  perm_reply: number;
+  is_moderator: number;
 };
 
 interface TipAttachment {
@@ -108,6 +123,14 @@ export class StrongholdDO extends DurableObject<Env> {
       );
       CREATE TABLE IF NOT EXISTS ban (
         actor TEXT PRIMARY KEY, operator TEXT NOT NULL, banned_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS groups (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, color TEXT, position INTEGER NOT NULL,
+        perm_speak INTEGER NOT NULL DEFAULT 0, perm_post INTEGER NOT NULL DEFAULT 0,
+        perm_reply INTEGER NOT NULL DEFAULT 0, is_moderator INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS member_groups (
+        actor TEXT NOT NULL, group_id TEXT NOT NULL, PRIMARY KEY (actor, group_id)
       );
     `);
     // Stronghold-level settings added after the config table already existed in
@@ -334,6 +357,129 @@ export class StrongholdDO extends DurableObject<Env> {
 
   async listBans(): Promise<BanRow[]> {
     return this.ctx.storage.sql.exec<BanRow>("SELECT * FROM ban ORDER BY banned_at DESC").toArray();
+  }
+
+  // ---- custom groups (task 037) ----------------------------------------------------
+  // Stronghold-local; a member can hold several. position sets synthesis order
+  // (permissions.ts) and doubles as display order. Built-in owner/mod and the
+  // server_role owner/admin overlay (api.ts) never touch this table - groups
+  // only ever affect a plain "member".
+
+  async createGroup(
+    name: string,
+    color: string | null,
+    permSpeak: number,
+    permPost: number,
+    permReply: number,
+    isModerator: boolean
+  ): Promise<GroupRow> {
+    const id = crypto.randomUUID();
+    const maxPos = this.ctx.storage.sql.exec<{ maxPos: number | null }>("SELECT MAX(position) AS maxPos FROM groups").toArray()[0];
+    const position = (maxPos?.maxPos ?? -1) + 1;
+    this.ctx.storage.sql.exec(
+      "INSERT INTO groups (id, name, color, position, perm_speak, perm_post, perm_reply, is_moderator) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      id, name, color, position, permSpeak, permPost, permReply, isModerator ? 1 : 0
+    );
+    return { id, name, color, position, perm_speak: permSpeak, perm_post: permPost, perm_reply: permReply, is_moderator: isModerator ? 1 : 0 };
+  }
+
+  async listGroups(): Promise<GroupRow[]> {
+    return this.ctx.storage.sql.exec<GroupRow>("SELECT * FROM groups ORDER BY position ASC").toArray();
+  }
+
+  async getGroup(id: string): Promise<GroupRow | null> {
+    const rows = this.ctx.storage.sql.exec<GroupRow>("SELECT * FROM groups WHERE id = ?", id).toArray();
+    return rows[0] ?? null;
+  }
+
+  async updateGroup(
+    id: string,
+    patch: Partial<Pick<GroupRow, "name" | "color" | "position" | "perm_speak" | "perm_post" | "perm_reply" | "is_moderator">>
+  ): Promise<GroupRow | null> {
+    const current = await this.getGroup(id);
+    if (!current) return null;
+    const next = { ...current, ...patch };
+    this.ctx.storage.sql.exec(
+      "UPDATE groups SET name = ?, color = ?, position = ?, perm_speak = ?, perm_post = ?, perm_reply = ?, is_moderator = ? WHERE id = ?",
+      next.name, next.color, next.position, next.perm_speak, next.perm_post, next.perm_reply, next.is_moderator, id
+    );
+    return next;
+  }
+
+  // Cascades member_groups rows for this group - a deleted group can't leave
+  // dangling assignments behind.
+  async deleteGroup(id: string): Promise<boolean> {
+    const current = await this.getGroup(id);
+    if (!current) return false;
+    this.ctx.storage.sql.exec("DELETE FROM member_groups WHERE group_id = ?", id);
+    this.ctx.storage.sql.exec("DELETE FROM groups WHERE id = ?", id);
+    return true;
+  }
+
+  async reorderGroups(positions: { id: string; position: number }[]): Promise<GroupRow[]> {
+    for (const p of positions) {
+      this.ctx.storage.sql.exec("UPDATE groups SET position = ? WHERE id = ?", p.position, p.id);
+    }
+    return this.listGroups();
+  }
+
+  // ---- member <-> group assignment --------------------------------------------------
+
+  async addMemberToGroup(actor: string, groupId: string): Promise<boolean> {
+    const member = await this.getMember(actor);
+    const group = await this.getGroup(groupId);
+    if (!member || !group) return false;
+    this.ctx.storage.sql.exec(
+      "INSERT INTO member_groups (actor, group_id) VALUES (?, ?) ON CONFLICT(actor, group_id) DO NOTHING",
+      actor, groupId
+    );
+    return true;
+  }
+
+  async removeMemberFromGroup(actor: string, groupId: string): Promise<void> {
+    this.ctx.storage.sql.exec("DELETE FROM member_groups WHERE actor = ? AND group_id = ?", actor, groupId);
+  }
+
+  async listMemberGroups(actor: string): Promise<GroupRow[]> {
+    return this.ctx.storage.sql.exec<GroupRow>(
+      "SELECT g.* FROM groups g JOIN member_groups mg ON mg.group_id = g.id WHERE mg.actor = ? ORDER BY g.position ASC",
+      actor
+    ).toArray();
+  }
+
+  // Batch variant for the members list endpoint (api.ts) - one query instead of
+  // one per row. Every requested actor gets an entry, empty array if group-less.
+  async listGroupsForMembers(actors: string[]): Promise<Record<string, GroupRow[]>> {
+    const result: Record<string, GroupRow[]> = {};
+    for (const actor of actors) result[actor] = [];
+    if (actors.length === 0) return result;
+    const placeholders = actors.map(() => "?").join(",");
+    const rows = this.ctx.storage.sql
+      .exec<GroupRow & { actor: string }>(
+        `SELECT mg.actor AS actor, g.id, g.name, g.color, g.position, g.perm_speak, g.perm_post, g.perm_reply, g.is_moderator ` +
+          `FROM member_groups mg JOIN groups g ON g.id = mg.group_id WHERE mg.actor IN (${placeholders}) ORDER BY g.position ASC`,
+        ...actors
+      )
+      .toArray();
+    for (const row of rows) {
+      const { actor, ...group } = row;
+      result[actor]!.push(group);
+    }
+    return result;
+  }
+
+  // ---- effective permission synthesis (task 037) ------------------------------------
+  // Single source of truth shared by the HTTP permission gate and WS room-token
+  // mint (both in api.ts) - see permissions.ts. null means no access at all (no
+  // membership, or banned); server_role owner/admin overlay is applied by the
+  // caller before ever reaching here (see api.ts's effectiveRole).
+
+  async getEffective(actor: string): Promise<EffectivePermissions | null> {
+    const member = await this.getMember(actor);
+    if (!member || member.banned_at) return null;
+    if (member.role !== "member") return { role: member.role, deny: 0 };
+    const groups = await this.listMemberGroups(actor);
+    return synthesizeEffectivePermissions("member", member.deny, groups);
   }
 
   // ---- tips (S3.3 / S4.4) -----------------------------------------------------------
