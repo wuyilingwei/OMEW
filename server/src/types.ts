@@ -73,6 +73,35 @@ export interface SessionTokenClaims {
   jti: string;
 }
 
+// m0-protocol §7.2a: TOTP second factor and WebAuthn passkey short-lived
+// tokens, same signed-compact-token mechanism as SessionTokenClaims - the
+// `typ` discriminant is what makes requireSession's `claims.typ !== "session"`
+// check reject all three by construction, no extra guard code needed.
+export interface TotpPendingTokenClaims {
+  v: 1;
+  typ: "totp_pending";
+  actor: string;
+  exp: number;
+  jti: string;
+}
+
+export interface WebauthnRegChallengeClaims {
+  v: 1;
+  typ: "webauthn_reg";
+  actor: string;
+  challenge: string;
+  exp: number;
+  jti: string;
+}
+
+export interface WebauthnAuthChallengeClaims {
+  v: 1;
+  typ: "webauthn_auth";
+  challenge: string;
+  exp: number;
+  jti: string;
+}
+
 // Instance-level identity/governance policy (m0-protocol §7.9) - deployment env
 // config (server/src/config.ts), not runtime-writable.
 export type RootRequirement = "email" | "phone" | "code";
