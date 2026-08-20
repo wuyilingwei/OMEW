@@ -18,7 +18,8 @@ const auth = useAuth()
 const { openAuthModal } = useAuthModal()
 const { config } = useStrongholdConfig()
 const { members } = useStrongholdMembers()
-const { items, pending, historyLoading, hasMoreHistory, loadOlder, sendText, resend, editMessage, retractMessage } = useChatRoom()
+const { items, pending, historyLoading, hasMoreHistory, muted, loadOlder, sendText, resend, editMessage, retractMessage } =
+  useChatRoom()
 const attachments = useImageAttachments()
 
 const draft = ref('')
@@ -77,6 +78,7 @@ const messages = computed<MessageVM[]>(() => {
     retractable: false,
     pending: p.status === 'sending',
     failed: p.status === 'failed',
+    failReason: p.failReason,
   }))
   return [...confirmed, ...optimistic]
 })
@@ -90,7 +92,7 @@ const groupedMessages = computed(() =>
 )
 
 function submit() {
-  if (!draft.value.trim() && !attachments.items.value.length) return
+  if (muted.value || (!draft.value.trim() && !attachments.items.value.length)) return
   const text = draft.value
   const media = attachments.items.value.length ? [...attachments.items.value] : undefined
   draft.value = ''
@@ -197,6 +199,9 @@ watch(
       />
     </div>
     <div v-if="auth.isAuthenticated.value" class="chat-pane__compose-wrap" @dragover.prevent @drop="onDrop">
+      <WinInfoBar v-if="muted" :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Warning">
+        你在此据点被禁言
+      </WinInfoBar>
       <WinInfoBar
         v-if="attachments.error.value"
         :IsOpen="true"
@@ -217,7 +222,13 @@ watch(
       </div>
       <div class="chat-pane__compose">
         <EmotePicker v-if="showEmotePicker" @pick="pickEmote" @close="showEmotePicker = false" />
-        <WinButton Style="SubtleButtonStyle" class="chat-pane__emote-btn" title="表情" @Click="showEmotePicker = !showEmotePicker">
+        <WinButton
+          Style="SubtleButtonStyle"
+          class="chat-pane__emote-btn"
+          title="表情"
+          :IsEnabled="!muted"
+          @Click="showEmotePicker = !showEmotePicker"
+        >
           <AppIcon name="emote" :size="18" />
         </WinButton>
         <input ref="imageInput" class="chat-pane__image-input" type="file" accept="image/*" multiple @change="onImageInputChange" />
@@ -225,7 +236,7 @@ watch(
           Style="SubtleButtonStyle"
           class="chat-pane__image-btn"
           title="发送图片"
-          :IsEnabled="!attachments.uploading.value"
+          :IsEnabled="!attachments.uploading.value && !muted"
           @Click="pickImages"
         >
           <AppIcon name="image" :size="18" />
@@ -234,11 +245,12 @@ watch(
           v-model="draft"
           class="chat-pane__input"
           rows="1"
-          placeholder="说点什么…"
+          :placeholder="muted ? '你在此据点被禁言' : '说点什么…'"
+          :disabled="muted"
           @keydown.enter="onEnter"
           @paste="onPaste"
         ></textarea>
-        <WinButton Style="AccentButtonStyle" class="chat-pane__send" @Click="submit">发送</WinButton>
+        <WinButton Style="AccentButtonStyle" class="chat-pane__send" :IsEnabled="!muted" @Click="submit">发送</WinButton>
       </div>
     </div>
     <div v-else class="chat-pane__compose-wrap chat-pane__compose-wrap--guest">

@@ -594,6 +594,7 @@ watch(
     height: 100%;
     max-height: none;
     border-radius: 0;
+    background: var(--dialog-background);
   }
 }
 </style>

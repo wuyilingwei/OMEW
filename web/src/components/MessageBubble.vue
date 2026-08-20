@@ -20,6 +20,7 @@ export interface MessageVM {
   retractable: boolean
   pending: boolean
   failed: boolean
+  failReason?: 'denied' | 'network'
 }
 
 const props = defineProps<{ message: MessageVM; grouped?: boolean; editing?: boolean }>()
@@ -69,6 +70,7 @@ const pureEmote = computed(() => pureEmoteToken(segments.value))
         <MediaGrid v-if="message.media?.length" :media="message.media" />
         <div class="message-bubble__meta">
           <span v-if="message.pending">发送中…</span>
+          <span v-else-if="message.failed && message.failReason === 'denied'">发送失败：你没有发言权限</span>
           <span v-else-if="message.failed">
             发送失败
             <button type="button" class="message-bubble__link" @click="$emit('resend')">重试</button>

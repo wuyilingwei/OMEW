@@ -61,7 +61,10 @@ const totpCode = ref('')
 
 async function submitLogin() {
   if (loginBusy.value) return
-  loginError.value = ''
+  loginError.value = [requiredError(loginForm.username, '用户名'), requiredError(loginForm.password, '密码')]
+    .filter(Boolean)
+    .join('；')
+  if (loginError.value) return
   loginBusy.value = true
   try {
     const result = await auth.login({ username: loginForm.username, password: loginForm.password })
@@ -79,7 +82,8 @@ async function submitLogin() {
 
 async function submitTotpLogin() {
   if (loginBusy.value || !totpPending.value) return
-  loginError.value = ''
+  loginError.value = requiredError(totpCode.value, '验证码')
+  if (loginError.value) return
   loginBusy.value = true
   try {
     await auth.loginTotp(totpPending.value, totpCode.value.trim())
@@ -237,14 +241,14 @@ function finishRegistration() {
     />
 
     <template v-if="tab === 'login'">
-      <form v-if="!totpPending" class="auth-form" @submit.prevent="submitLogin">
+      <form v-if="!totpPending" class="auth-form" novalidate @submit.prevent="submitLogin">
         <div class="field">
           <label class="field__label" for="login-username">用户名</label>
-          <input id="login-username" v-model.trim="loginForm.username" type="text" autocomplete="username" required />
+          <input id="login-username" v-model.trim="loginForm.username" type="text" autocomplete="username" />
         </div>
         <div class="field">
           <label class="field__label" for="login-password">密码</label>
-          <input id="login-password" v-model="loginForm.password" type="password" autocomplete="current-password" required />
+          <input id="login-password" v-model="loginForm.password" type="password" autocomplete="current-password" />
         </div>
         <p v-if="loginError" class="field__error">{{ loginError }}</p>
         <WinButton Style="AccentButtonStyle" class="auth-form__submit" type="submit" :IsEnabled="!loginBusy">
@@ -266,7 +270,7 @@ function finishRegistration() {
         </template>
       </form>
 
-      <form v-else class="auth-form" @submit.prevent="submitTotpLogin">
+      <form v-else class="auth-form" novalidate @submit.prevent="submitTotpLogin">
         <p class="field__hint">该账号已启用两步验证，请输入验证器 App 当前显示的 6 位验证码。</p>
         <div class="field">
           <label class="field__label" for="login-totp-code">验证码</label>
@@ -275,11 +279,9 @@ function finishRegistration() {
             v-model="totpCode"
             type="text"
             inputmode="numeric"
-            pattern="[0-9]{6}"
             maxlength="6"
             autocomplete="one-time-code"
             autofocus
-            required
           />
         </div>
         <p v-if="loginError" class="field__error">{{ loginError }}</p>
@@ -301,41 +303,26 @@ function finishRegistration() {
         </WinButton>
       </div>
 
-      <form v-else class="auth-form" @submit.prevent="submitRegister">
+      <form v-else class="auth-form" novalidate @submit.prevent="submitRegister">
         <div class="field">
           <label class="field__label" for="register-username">用户名</label>
-          <input
-            id="register-username"
-            v-model.trim="registerForm.username"
-            type="text"
-            autocomplete="username"
-            pattern="[a-z0-9_\-]{2,32}"
-            maxlength="32"
-            required
-          />
+          <input id="register-username" v-model.trim="registerForm.username" type="text" autocomplete="username" maxlength="32" />
           <p v-if="liveUsernameError" class="field__error">{{ liveUsernameError }}</p>
         </div>
         <div class="field">
           <label class="field__label" for="register-password">密码</label>
-          <input
-            id="register-password"
-            v-model="registerForm.password"
-            type="password"
-            autocomplete="new-password"
-            minlength="10"
-            required
-          />
+          <input id="register-password" v-model="registerForm.password" type="password" autocomplete="new-password" />
         </div>
         <div v-if="needs('email')" class="field">
           <label class="field__label" for="register-email">邮箱</label>
-          <input id="register-email" v-model.trim="registerForm.email" type="email" autocomplete="email" required />
+          <input id="register-email" v-model.trim="registerForm.email" type="email" autocomplete="email" />
         </div>
         <WinInfoBar v-if="needs('phone')" :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Warning">
           本实例暂不支持手机注册
         </WinInfoBar>
         <div v-if="needs('code')" class="field">
           <label class="field__label" for="register-code">邀请码</label>
-          <input id="register-code" v-model.trim="registerForm.code" type="text" required />
+          <input id="register-code" v-model.trim="registerForm.code" type="text" />
         </div>
 
         <div class="auth-form__advanced-toggle">
@@ -362,14 +349,7 @@ function finishRegistration() {
           </p>
           <div class="field">
             <label class="field__label" for="register-ownership">所有权口令</label>
-            <input
-              id="register-ownership"
-              v-model="registerForm.ownershipPassphrase"
-              type="password"
-              autocomplete="new-password"
-              minlength="10"
-              required
-            />
+            <input id="register-ownership" v-model="registerForm.ownershipPassphrase" type="password" autocomplete="new-password" />
           </div>
           <div class="field">
             <label class="field__label" for="register-ownership-confirm">确认所有权口令</label>
@@ -378,8 +358,6 @@ function finishRegistration() {
               v-model="registerForm.ownershipPassphraseConfirm"
               type="password"
               autocomplete="new-password"
-              minlength="10"
-              required
             />
           </div>
         </fieldset>

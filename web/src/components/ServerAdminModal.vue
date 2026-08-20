@@ -163,10 +163,14 @@ async function loadGroups() {
   }
 }
 
+// members tab also renders each user's group checkboxes (see user-row__groups
+// below) - it needs the group list loaded just as much as the groups tab
+// itself does, or a cold open straight into members shows an empty list
+// until the user happens to also visit the groups tab (F7).
 watch(
   [tab, () => props.open],
   ([t, open]) => {
-    if (open && t === 'groups') void loadGroups()
+    if (open && (t === 'groups' || t === 'members')) void loadGroups()
   },
   { immediate: true },
 )
@@ -1132,6 +1136,7 @@ watch(
     height: 100%;
     max-height: none;
     border-radius: 0;
+    background: var(--dialog-background);
   }
 }
 </style>
