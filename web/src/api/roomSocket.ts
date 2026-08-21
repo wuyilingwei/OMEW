@@ -1,5 +1,5 @@
 import { API_BASE } from './client'
-import type { RoomItem } from './types'
+import type { ReactionEntry, RoomItem } from './types'
 
 // mirrors API_BASE (client.ts) but as a ws(s):// origin - empty means "same
 // origin as the page", matching the http fetch default.
@@ -44,6 +44,23 @@ export interface BumpFrame {
 export interface ErrorFrame {
   code: string
   message: string
+  // reaction-specific rejections (m0-protocol §3.2a) carry these so the
+  // client can roll back the exact optimistic toggle instead of guessing.
+  target_seq?: number
+  name?: string
+}
+
+// m0-protocol §3.2a broadcast shape: an absolute count snapshot, never a
+// delta - `actor`/`name`/`op` identify who just toggled which reaction in
+// what direction (any connection of the same account can maintain its own
+// `mine` from them); the per-name counts in `entries` are the full picture
+// for this target_seq.
+export interface ReactionFrame {
+  target_seq: number
+  entries: ReactionEntry[]
+  actor: string
+  name: string
+  op: 'add' | 'remove'
 }
 
 export interface RoomTokenClaims {
@@ -59,6 +76,7 @@ export interface RoomSocketHandlers {
   onUpdate?(u: UpdateFrame): void
   onDelete?(d: DeleteFrame): void
   onBump?(b: BumpFrame): void
+  onReaction?(r: ReactionFrame): void
   onError?(e: ErrorFrame): void
   onResyncGap?(): void
   // F6: the room token is a base64url JSON payload (server's auth.ts
@@ -99,6 +117,7 @@ export interface RoomTransport {
   connect(): void
   close(): void
   createItem(clientId: string, kind: 'post' | 'reply', body: Record<string, unknown>, parentSeq?: number | null): boolean
+  toggleReaction(targetSeq: number, name: string, op: 'add' | 'remove'): boolean
 }
 
 const RECONNECT_DELAY_MS = 1500
@@ -194,6 +213,10 @@ export class RoomSocket implements RoomTransport {
     return this.sendRaw({ type: 'item.delete', target_seq: targetSeq, reason })
   }
 
+  toggleReaction(targetSeq: number, name: string, op: 'add' | 'remove'): boolean {
+    return this.sendRaw({ type: 'item.reaction', target_seq: targetSeq, name, op })
+  }
+
   private sendRaw(frame: Record<string, unknown>): boolean {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false
     this.ws.send(JSON.stringify(frame))
@@ -225,6 +248,12 @@ export class RoomSocket implements RoomTransport {
       }
       case 'item.bump':
         this.handlers.onBump?.(frame as unknown as BumpFrame)
+        return
+      // m0-protocol §3.2a: the actor who just toggled a reaction gets the
+      // absolute snapshot pushed straight back, outside any batch - other
+      // connections see the same frame shape but nested in a 'batch' below.
+      case 'item.reaction':
+        this.handlers.onReaction?.(frame as unknown as ReactionFrame)
         return
       case 'resync_gap':
         this.handlers.onResyncGap?.()
@@ -258,6 +287,9 @@ export class RoomSocket implements RoomTransport {
         return
       case 'item.delete':
         this.handlers.onDelete?.(raw as unknown as DeleteFrame)
+        return
+      case 'item.reaction':
+        this.handlers.onReaction?.(raw as unknown as ReactionFrame)
         return
       default:
         return

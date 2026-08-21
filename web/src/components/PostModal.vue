@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import type { PostReply } from '../api/types'
 import { useAuth } from '../composables/useAuth'
 import { useAuthModal } from '../composables/useAuthModal'
+import { useContextMenuGesture } from '../composables/useContextMenuGesture'
+import { useItemPermissions } from '../composables/useItemPermissions'
 import { usePostModal } from '../composables/usePostModal'
 import { useSectionRoom } from '../composables/useSectionRoom'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
@@ -9,19 +12,35 @@ import { useTopics } from '../composables/useTopics'
 import { actorLocalpart } from '../utils/actor'
 import { WinButton } from '../vendor/winui'
 import AvatarBadge from './AvatarBadge.vue'
+import ItemContextMenu from './ItemContextMenu.vue'
 import MediaGrid from './MediaGrid.vue'
+import ReactionChips from './ReactionChips.vue'
 import TopicChips from './TopicChips.vue'
 
 const auth = useAuth()
 const { openAuthModal } = useAuthModal()
 const { openPostSeq, close } = usePostModal()
-const { thread, threadLoading, threadRepliesLoading, threadHasMore, openThread, closeThread, loadMoreReplies, createReply } =
-  useSectionRoom()
+const {
+  thread,
+  threadLoading,
+  threadRepliesLoading,
+  threadHasMore,
+  openThread,
+  closeThread,
+  loadMoreReplies,
+  createReply,
+  toggleReaction,
+  editItem,
+  retractItem,
+} = useSectionRoom()
 const { members } = useStrongholdMembers()
 const { topics } = useTopics()
+const { canEdit, canRetract } = useItemPermissions()
 
 const replyDraft = ref('')
 const replyError = ref('')
+const editingSeq = ref<number | null>(null)
+const editingText = ref('')
 
 function displayName(actor: string): string {
   return members.value.find((m) => m.actor === actor)?.display_name ?? actorLocalpart(actor)
@@ -32,6 +51,7 @@ function formatTime(ts: number): string {
 }
 
 watch(openPostSeq, (seq) => {
+  editingSeq.value = null
   if (seq != null) void openThread(seq)
   else closeThread()
 })
@@ -53,6 +73,144 @@ function onKeydown(event: KeyboardEvent) {
 
 onMounted(() => window.addEventListener('keydown', onKeydown))
 onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
+
+// ---- post body + reply context menu / reactions --------------------------
+
+// original text of whatever's currently in editingSeq, to detect an
+// unsaved change before switching to editing a different item.
+function originalTextFor(seq: number): string | undefined {
+  if (thread.value?.post.post_seq === seq) return thread.value.post.text
+  return thread.value?.replies.find((r) => r.seq === seq)?.body.text
+}
+
+function startEdit(seq: number, text: string) {
+  if (editingSeq.value != null && editingSeq.value !== seq) {
+    const original = originalTextFor(editingSeq.value)
+    const dirty = original != null && editingText.value !== original
+    if (dirty && !confirm('放弃这条未保存的编辑？')) return
+  }
+  editingSeq.value = seq
+  editingText.value = text
+}
+
+function cancelEdit() {
+  editingSeq.value = null
+  editingText.value = ''
+}
+
+async function submitEdit() {
+  if (editingSeq.value == null) return
+  const ok = await editItem(editingSeq.value, editingText.value)
+  if (ok) cancelEdit()
+}
+
+async function onRetract(seq: number) {
+  if (!confirm('撤回这条内容？')) return
+  await retractItem(seq)
+}
+
+const postMenuRef = ref<InstanceType<typeof ItemContextMenu> | null>(null)
+const postGesture = useContextMenuGesture(
+  (x, y) => postMenuRef.value?.openAt(x, y),
+  () => !!thread.value && (auth.isAuthenticated.value || canEdit(thread.value.post.actor, thread.value.post.created_at) || canRetract(thread.value.post.actor, thread.value.post.created_at)),
+)
+
+// guards mirror MessageBubble's: the in-place edit textarea keeps its own
+// native right-click menu instead of opening the custom one.
+function onPostContextMenu(event: MouseEvent) {
+  if (thread.value && editingSeq.value !== thread.value.post.post_seq) postGesture.onContextMenu(event)
+}
+function onPostTouchStart(event: TouchEvent) {
+  if (thread.value && editingSeq.value !== thread.value.post.post_seq) postGesture.onTouchStart(event)
+}
+
+// One shared flyout for every reply row (rather than one instance per reply)
+// - `activeReply` tracks which row's right-click/long-press opened it, so
+// canEdit/canRetract/mine below reflect that specific reply.
+const replyMenuRef = ref<InstanceType<typeof ItemContextMenu> | null>(null)
+const activeReply = ref<PostReply | null>(null)
+
+let replyPressTimer: ReturnType<typeof setTimeout> | null = null
+let replyPressX = 0
+let replyPressY = 0
+
+function clearReplyPressTimer() {
+  if (replyPressTimer != null) {
+    clearTimeout(replyPressTimer)
+    replyPressTimer = null
+  }
+}
+
+function openReplyMenu(reply: PostReply, x: number, y: number) {
+  activeReply.value = reply
+  replyMenuRef.value?.openAt(x, y)
+}
+
+// mirrors useContextMenuGesture's own canOpen/text-selection gating - this
+// reply list is inline markup rather than a MessageBubble-style component,
+// so it predates and duplicates that composable instead of using it.
+function replyCanOpenMenu(reply: PostReply): boolean {
+  return auth.isAuthenticated.value || canEdit(reply.actor, reply.ts) || canRetract(reply.actor, reply.ts)
+}
+
+function hasTextSelection(): boolean {
+  const selection = window.getSelection()
+  return !!selection && !selection.isCollapsed && selection.toString().length > 0
+}
+
+function onReplyContextMenu(reply: PostReply, event: MouseEvent) {
+  if (editingSeq.value === reply.seq) return
+  if (!replyCanOpenMenu(reply) || hasTextSelection()) return
+  event.preventDefault()
+  event.stopPropagation()
+  openReplyMenu(reply, event.clientX, event.clientY)
+}
+
+function onReplyTouchStart(reply: PostReply, event: TouchEvent) {
+  if (editingSeq.value === reply.seq) return
+  event.stopPropagation()
+  clearReplyPressTimer()
+  if (window.innerWidth > 768 || event.touches.length !== 1) return
+  const touch = event.touches[0]!
+  replyPressX = touch.clientX
+  replyPressY = touch.clientY
+  replyPressTimer = setTimeout(() => {
+    replyPressTimer = null
+    openReplyMenu(reply, replyPressX, replyPressY)
+  }, 500)
+}
+
+function onReplyTouchMove(event: TouchEvent) {
+  if (replyPressTimer == null) return
+  const touch = event.touches[0]
+  if (!touch) return
+  if (Math.abs(touch.clientX - replyPressX) > 10 || Math.abs(touch.clientY - replyPressY) > 10) clearReplyPressTimer()
+}
+
+onBeforeUnmount(clearReplyPressTimer)
+
+function onReplyEdit() {
+  const reply = activeReply.value
+  if (!reply) return
+  startEdit(reply.seq, reply.body.text ?? '')
+}
+
+async function onReplyRetract() {
+  const reply = activeReply.value
+  if (!reply) return
+  await onRetract(reply.seq)
+}
+
+function onReplyToggleReaction(reply: PostReply, name: string) {
+  toggleReaction(reply.seq, name)
+}
+
+function onActiveReplyToggleReaction(name: string) {
+  if (activeReply.value) onReplyToggleReaction(activeReply.value, name)
+}
+
+const replyCanEdit = computed(() => (activeReply.value ? canEdit(activeReply.value.actor, activeReply.value.ts) : false))
+const replyCanRetract = computed(() => (activeReply.value ? canRetract(activeReply.value.actor, activeReply.value.ts) : false))
 </script>
 
 <template>
@@ -67,36 +225,102 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           <div v-else-if="thread" class="post-modal__scroll">
             <img v-if="thread.post.cover" class="post-modal__cover" :src="thread.post.cover" :alt="thread.post.title" />
             <div class="post-modal__body">
-              <h1 class="post-modal__title">{{ thread.post.title }}</h1>
-              <div class="post-modal__author-row">
-                <AvatarBadge :seed="displayName(thread.post.actor)" :size="36" />
-                <div class="post-modal__author-meta">
-                  <span class="post-modal__author-name">{{ displayName(thread.post.actor) }}</span>
-                  <span class="post-modal__time">{{ formatTime(thread.post.created_at) }}</span>
+              <div
+                class="post-modal__post-content"
+                @contextmenu="onPostContextMenu"
+                @touchstart.passive="onPostTouchStart"
+                @touchmove.passive="postGesture.onTouchMove"
+                @touchend="postGesture.onTouchEnd"
+                @touchcancel="postGesture.onTouchCancel"
+              >
+                <h1 class="post-modal__title">{{ thread.post.title }}</h1>
+                <div class="post-modal__author-row">
+                  <AvatarBadge :seed="displayName(thread.post.actor)" :size="36" />
+                  <div class="post-modal__author-meta">
+                    <span class="post-modal__author-name">{{ displayName(thread.post.actor) }}</span>
+                    <span class="post-modal__time">{{ formatTime(thread.post.created_at) }}</span>
+                  </div>
                 </div>
+                <template v-if="editingSeq === thread.post.post_seq">
+                  <textarea v-model="editingText" class="post-modal__edit-input" rows="4" @keydown.esc="cancelEdit"></textarea>
+                  <div class="post-modal__edit-actions">
+                    <WinButton Style="SubtleButtonStyle" @Click="submitEdit">保存</WinButton>
+                    <WinButton Style="SubtleButtonStyle" @Click="cancelEdit">取消</WinButton>
+                  </div>
+                </template>
+                <template v-else>
+                  <p v-for="(paragraph, index) in thread.post.text.split('\n\n')" :key="index" class="post-modal__paragraph">
+                    {{ paragraph }}
+                  </p>
+                  <MediaGrid v-if="thread.post.media?.length" :media="thread.post.media" />
+                </template>
+                <TopicChips v-if="thread.post.topics?.length" :topics="topics" :ids="thread.post.topics" />
+                <ReactionChips
+                  :reactions="thread.post.reactions"
+                  :can-toggle="auth.isAuthenticated.value"
+                  @toggle="toggleReaction(thread.post.post_seq, $event)"
+                />
+                <ItemContextMenu
+                  ref="postMenuRef"
+                  :can-react="auth.isAuthenticated.value"
+                  :can-edit="canEdit(thread.post.actor, thread.post.created_at)"
+                  :can-retract="canRetract(thread.post.actor, thread.post.created_at)"
+                  :mine="thread.post.reactions?.mine"
+                  @add-reaction="toggleReaction(thread.post.post_seq, $event)"
+                  @edit="startEdit(thread.post.post_seq, thread.post.text)"
+                  @retract="onRetract(thread.post.post_seq)"
+                />
               </div>
-              <p v-for="(paragraph, index) in thread.post.text.split('\n\n')" :key="index" class="post-modal__paragraph">
-                {{ paragraph }}
-              </p>
-              <MediaGrid v-if="thread.post.media?.length" :media="thread.post.media" />
-              <TopicChips v-if="thread.post.topics?.length" :topics="topics" :ids="thread.post.topics" />
 
               <div class="post-modal__comments">
                 <h2 class="post-modal__comments-title">评论（{{ thread.post.reply_count }}）</h2>
                 <p v-if="!thread.replies.length" class="post-modal__comments-empty">暂无评论，来说两句吧。</p>
                 <ul v-else class="post-modal__reply-list">
-                  <li v-for="reply in thread.replies" :key="reply.seq" class="post-modal__reply">
+                  <li
+                    v-for="reply in thread.replies"
+                    :key="reply.seq"
+                    class="post-modal__reply"
+                    @contextmenu="onReplyContextMenu(reply, $event)"
+                    @touchstart.passive="onReplyTouchStart(reply, $event)"
+                    @touchmove.passive="onReplyTouchMove"
+                    @touchend="clearReplyPressTimer"
+                    @touchcancel="clearReplyPressTimer"
+                  >
                     <AvatarBadge :seed="displayName(reply.actor)" :size="28" />
                     <div class="post-modal__reply-body">
                       <div class="post-modal__reply-meta">
                         <span class="post-modal__reply-author">{{ displayName(reply.actor) }}</span>
                         <span class="post-modal__time">{{ formatTime(reply.ts) }}</span>
                       </div>
-                      <p class="post-modal__reply-text">{{ reply.body.text }}</p>
-                      <MediaGrid v-if="reply.body.media?.length" :media="reply.body.media" />
+                      <template v-if="editingSeq === reply.seq">
+                        <textarea v-model="editingText" class="post-modal__edit-input" rows="2" @keydown.esc="cancelEdit"></textarea>
+                        <div class="post-modal__edit-actions">
+                          <WinButton Style="SubtleButtonStyle" @Click="submitEdit">保存</WinButton>
+                          <WinButton Style="SubtleButtonStyle" @Click="cancelEdit">取消</WinButton>
+                        </div>
+                      </template>
+                      <template v-else>
+                        <p class="post-modal__reply-text">{{ reply.body.text }}</p>
+                        <MediaGrid v-if="reply.body.media?.length" :media="reply.body.media" />
+                      </template>
+                      <ReactionChips
+                        :reactions="reply.reactions"
+                        :can-toggle="auth.isAuthenticated.value"
+                        @toggle="onReplyToggleReaction(reply, $event)"
+                      />
                     </div>
                   </li>
                 </ul>
+                <ItemContextMenu
+                  ref="replyMenuRef"
+                  :can-react="auth.isAuthenticated.value"
+                  :can-edit="replyCanEdit"
+                  :can-retract="replyCanRetract"
+                  :mine="activeReply?.reactions?.mine"
+                  @add-reaction="onActiveReplyToggleReaction"
+                  @edit="onReplyEdit"
+                  @retract="onReplyRetract"
+                />
                 <div v-if="threadHasMore" class="post-modal__more">
                   <WinButton Style="SubtleButtonStyle" :IsEnabled="!threadRepliesLoading" @Click="loadMoreReplies">
                     {{ threadRepliesLoading ? '加载中…' : '加载更多评论' }}
@@ -216,6 +440,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   padding: 1.5rem 1.75rem 2rem;
 }
 
+.post-modal__post-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
 .post-modal__title {
   margin: 0;
   padding-right: 3rem;
@@ -253,6 +483,23 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   line-height: 1.7;
   color: var(--text-secondary);
   white-space: pre-wrap;
+}
+
+.post-modal__edit-input {
+  width: 100%;
+  font: inherit;
+  padding: 0.5rem 0.7rem;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--ctrl-border);
+  background: var(--ctrl-fill-secondary);
+  color: var(--text-primary);
+  resize: vertical;
+}
+
+.post-modal__edit-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
 }
 
 .post-modal__comments {

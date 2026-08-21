@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { MediaAttachment } from '../api/types'
+import type { ItemReactions, MediaAttachment } from '../api/types'
+import { useContextMenuGesture } from '../composables/useContextMenuGesture'
 import { useEmotes } from '../composables/useEmotes'
 import { buildEmoteLookup, parseMessageText, pureEmoteToken } from '../utils/emote'
 import AvatarBadge from './AvatarBadge.vue'
 import MediaGrid from './MediaGrid.vue'
+import ReactionChips from './ReactionChips.vue'
 
 export interface MessageVM {
   key: string
@@ -21,16 +23,44 @@ export interface MessageVM {
   pending: boolean
   failed: boolean
   failReason?: 'denied' | 'network'
+  reactions?: ItemReactions
+  // gates both the reaction chips' click-to-toggle and whether the context
+  // menu opens at all - false for guests and still-optimistic (seq === null)
+  // messages, m0-protocol §3.2a requires a live room session to react.
+  canReact: boolean
 }
 
 const props = defineProps<{ message: MessageVM; grouped?: boolean; editing?: boolean }>()
 const editingText = defineModel<string>('editingText', { default: '' })
-defineEmits<{ edit: []; 'cancel-edit': []; 'submit-edit': []; retract: []; resend: [] }>()
+const emit = defineEmits<{
+  'cancel-edit': []
+  'submit-edit': []
+  resend: []
+  'toggle-reaction': [name: string]
+  'open-menu': [x: number, y: number]
+}>()
 
 const { packs } = useEmotes()
 const emoteLookup = computed(() => buildEmoteLookup(packs.value))
 const segments = computed(() => parseMessageText(props.message.content.trim(), emoteLookup.value))
 const pureEmote = computed(() => pureEmoteToken(segments.value))
+
+// the shared context menu lives once in ChatPane (see useContextMenuGesture's
+// canOpen note - one instance per message would mean one set of global
+// listeners each, linear with message count).
+const gesture = useContextMenuGesture(
+  (x, y) => emit('open-menu', x, y),
+  () => props.message.canReact || props.message.editable || props.message.retractable,
+)
+
+// the in-place edit textarea needs its own native right-click menu (cut/
+// copy/paste), so the custom menu only engages outside editing mode.
+function onContextMenu(event: MouseEvent) {
+  if (!props.editing) gesture.onContextMenu(event)
+}
+function onTouchStart(event: TouchEvent) {
+  if (!props.editing) gesture.onTouchStart(event)
+}
 </script>
 
 <template>
@@ -44,6 +74,11 @@ const pureEmote = computed(() => pureEmoteToken(segments.value))
         'message-bubble--failed': message.failed,
         'message-bubble--emote-only': !editing && pureEmote,
       }"
+      @contextmenu="onContextMenu"
+      @touchstart.passive="onTouchStart"
+      @touchmove.passive="gesture.onTouchMove"
+      @touchend="gesture.onTouchEnd"
+      @touchcancel="gesture.onTouchCancel"
     >
       <div v-if="!message.mine && !grouped" class="message-bubble__author">{{ message.displayName }}</div>
 
@@ -68,6 +103,11 @@ const pureEmote = computed(() => pureEmoteToken(segments.value))
           </template>
         </div>
         <MediaGrid v-if="message.media?.length" :media="message.media" />
+        <ReactionChips
+          :reactions="message.reactions"
+          :can-toggle="message.canReact"
+          @toggle="emit('toggle-reaction', $event)"
+        />
         <div class="message-bubble__meta">
           <span v-if="message.pending">发送中…</span>
           <span v-else-if="message.failed && message.failReason === 'denied'">发送失败：你没有发言权限</span>
@@ -78,8 +118,6 @@ const pureEmote = computed(() => pureEmoteToken(segments.value))
           <template v-else>
             <span>{{ message.timestamp }}</span>
             <span v-if="message.editedAt">（已编辑）</span>
-            <button v-if="message.editable" type="button" class="message-bubble__link" @click="$emit('edit')">编辑</button>
-            <button v-if="message.retractable" type="button" class="message-bubble__link" @click="$emit('retract')">撤回</button>
           </template>
         </div>
       </template>

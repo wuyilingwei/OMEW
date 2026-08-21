@@ -1,14 +1,19 @@
 import { ref, watch } from 'vue'
 import { api } from '../api'
 import { createRoomTransport } from '../api/transport'
-import type { MediaAttachment, PostReply, PostSummary, PostThread, RoomSummary } from '../api/types'
+import type { ItemBody, MediaAttachment, PostReply, PostSummary, PostThread, ReactionEntry, RoomSummary } from '../api/types'
 import type { RoomTransport } from '../api/roomSocket'
+import { applyReactionToggle, invertReactionOp } from '../utils/reactions'
 import { useAuth } from './useAuth'
+import { usePostModal } from './usePostModal'
 import { useSection } from './useSection'
 import { useStronghold } from './useStronghold'
 
 const POSTS_PAGE_SIZE = 20
 const REPLIES_PAGE_SIZE = 30
+// mirrors mock.ts/server's preview truncation length for a locally patched
+// post's list-view preview after an edit.
+const PREVIEW_LEN = 80
 
 const posts = ref<PostSummary[]>([])
 const postsLoading = ref(false)
@@ -45,6 +50,11 @@ interface PendingCreate {
   parentSeq?: number
 }
 const pendingCreates = new Map<string, PendingCreate>()
+
+// tracks this client's own in-flight optimistic reaction op per target seq -
+// used to roll back precisely on a transport failure or a matching error
+// frame.
+const pendingReactionOps = new Map<number, { name: string; op: 'add' | 'remove' }>()
 
 function bumpPost(update: { post_seq: number; last_reply_seq: number; reply_count: number; preview: string; ts: number }) {
   const idx = posts.value.findIndex((p) => p.post_seq === update.post_seq)
@@ -144,13 +154,141 @@ async function connectRoom(nodeId: string, room: RoomSummary, topic: string | nu
           }
         }
       },
-      onUpdate: () => {},
-      onDelete: (d) => {
-        if (thread.value) thread.value = { ...thread.value, replies: thread.value.replies.filter((r) => r.seq !== d.target_seq) }
+      onUpdate: (u) => applyItemUpdate(u.target_seq, u.body as ItemBody),
+      onDelete: (d) => applyItemDelete(d.target_seq),
+      // absolute snapshot (m0-protocol §3.2a) - actor/name/op let any
+      // connection of the same account maintain its own `mine`.
+      onReaction: (frame) => {
+        applyReactionSnapshot(frame.target_seq, frame.entries, frame.actor, frame.name, frame.op)
+      },
+      // reaction rejections carry target_seq + name so the exact optimistic
+      // toggle can be rolled back; nothing else is handled here (section
+      // rooms had no onError registered at all before this).
+      onError: (e) => {
+        if (e.target_seq != null && e.name) rollbackReaction(e.target_seq, e.name)
       },
     },
   })
   transport.connect()
+}
+
+// Shared by the room WS handlers above and editItem/retractItem below - a
+// REST edit/retract patches state the same way a WS echo of item.update /
+// item.delete would, so the UI updates whether or not this client's own
+// connection also happens to receive that echo (mock never emits it).
+function applyItemUpdate(targetSeq: number, body: ItemBody) {
+  const postIdx = posts.value.findIndex((p) => p.post_seq === targetSeq)
+  if (postIdx >= 0) {
+    const current = posts.value[postIdx]!
+    posts.value[postIdx] = {
+      ...current,
+      title: body.title ?? current.title,
+      preview: body.text != null ? body.text.slice(0, PREVIEW_LEN) : current.preview,
+    }
+  }
+  if (thread.value?.post.post_seq === targetSeq) {
+    const current = thread.value.post
+    thread.value = { ...thread.value, post: { ...current, title: body.title ?? current.title, text: body.text ?? current.text } }
+  } else if (thread.value) {
+    const replyIdx = thread.value.replies.findIndex((r) => r.seq === targetSeq)
+    if (replyIdx >= 0) {
+      const replies = [...thread.value.replies]
+      replies[replyIdx] = { ...replies[replyIdx]!, body }
+      thread.value = { ...thread.value, replies }
+    }
+  }
+}
+
+function applyItemDelete(targetSeq: number) {
+  posts.value = posts.value.filter((p) => p.post_seq !== targetSeq)
+  if (thread.value?.post.post_seq === targetSeq) {
+    thread.value = null
+    openPostSeq = null
+    usePostModal().close()
+  } else if (thread.value) {
+    thread.value = { ...thread.value, replies: thread.value.replies.filter((r) => r.seq !== targetSeq) }
+  }
+}
+
+function applyReactionSnapshot(targetSeq: number, entries: ReactionEntry[], actor: string, name: string, op: 'add' | 'remove') {
+  const auth = useAuth()
+  const isSelf = actor === auth.user.value?.actor
+  if (isSelf) pendingReactionOps.delete(targetSeq)
+  // self-authored broadcast (this tab or another session of the same
+  // account): apply the frame's name/op to `mine`; other actors' toggles
+  // leave it as-is.
+  function nextMine(prevMine: string[]): string[] {
+    if (!isSelf) return prevMine
+    const set = new Set(prevMine)
+    if (op === 'add') set.add(name)
+    else set.delete(name)
+    return [...set]
+  }
+  const postIdx = posts.value.findIndex((p) => p.post_seq === targetSeq)
+  if (postIdx >= 0) {
+    const prevMine = posts.value[postIdx]!.reactions?.mine ?? []
+    posts.value[postIdx] = { ...posts.value[postIdx]!, reactions: { entries, mine: nextMine(prevMine) } }
+  }
+  if (thread.value?.post.post_seq === targetSeq) {
+    const prevMine = thread.value.post.reactions?.mine ?? []
+    thread.value = { ...thread.value, post: { ...thread.value.post, reactions: { entries, mine: nextMine(prevMine) } } }
+  } else if (thread.value) {
+    const replyIdx = thread.value.replies.findIndex((r) => r.seq === targetSeq)
+    if (replyIdx >= 0) {
+      const replies = [...thread.value.replies]
+      const prevMine = replies[replyIdx]!.reactions?.mine ?? []
+      replies[replyIdx] = { ...replies[replyIdx]!, reactions: { entries, mine: nextMine(prevMine) } }
+      thread.value = { ...thread.value, replies }
+    }
+  }
+}
+
+function applyLocalReactionDelta(seq: number, name: string, op: 'add' | 'remove') {
+  const postIdx = posts.value.findIndex((p) => p.post_seq === seq)
+  if (postIdx >= 0) posts.value[postIdx] = { ...posts.value[postIdx]!, reactions: applyReactionToggle(posts.value[postIdx]!.reactions, name, op) }
+  if (thread.value?.post.post_seq === seq) {
+    thread.value = { ...thread.value, post: { ...thread.value.post, reactions: applyReactionToggle(thread.value.post.reactions, name, op) } }
+  } else if (thread.value) {
+    const replyIdx = thread.value.replies.findIndex((r) => r.seq === seq)
+    if (replyIdx >= 0) {
+      const replies = [...thread.value.replies]
+      replies[replyIdx] = { ...replies[replyIdx]!, reactions: applyReactionToggle(replies[replyIdx]!.reactions, name, op) }
+      thread.value = { ...thread.value, replies }
+    }
+  }
+}
+
+// inverts whatever optimistic op is still pending for (seq, name) - used both
+// when the transport can't even send the toggle and when a matching error
+// frame arrives later.
+function rollbackReaction(seq: number, name: string) {
+  const pendingOp = pendingReactionOps.get(seq)
+  pendingReactionOps.delete(seq)
+  if (pendingOp && pendingOp.name === name) applyLocalReactionDelta(seq, name, invertReactionOp(pendingOp.op))
+}
+
+// rebuilds the full body of a post/reply from currently-held state, for
+// editItem below to merge the new text into (server replaces the body
+// wholesale rather than merging, so the client must send every field back).
+function currentBody(targetSeq: number): ItemBody | null {
+  if (thread.value?.post.post_seq === targetSeq) {
+    const post = thread.value.post
+    const body: ItemBody = { text: post.text }
+    if (post.title) body.title = post.title
+    if (post.cover) body.cover = post.cover
+    if (post.media?.length) body.media = post.media
+    if (post.topics?.length) body.topics = post.topics
+    return body
+  }
+  const reply = thread.value?.replies.find((r) => r.seq === targetSeq)
+  return reply ? { ...reply.body } : null
+}
+
+function currentMine(targetSeq: number): string[] {
+  if (thread.value?.post.post_seq === targetSeq) return thread.value.post.reactions?.mine ?? []
+  const reply = thread.value?.replies.find((r) => r.seq === targetSeq)
+  if (reply) return reply.reactions?.mine ?? []
+  return posts.value.find((p) => p.post_seq === targetSeq)?.reactions?.mine ?? []
 }
 
 async function loadMorePosts(reset = false) {
@@ -283,6 +421,56 @@ export function useSectionRoom() {
     return ok
   }
 
+  // fire-and-forget: optimistic flip now, reconciled by the absolute
+  // snapshot frame whichever path it arrives on (direct or batched), or
+  // rolled back on a send failure / matching error frame (see onError above).
+  function toggleReaction(seq: number, name: string) {
+    if (!transport) return
+    const op: 'add' | 'remove' = currentMine(seq).includes(name) ? 'remove' : 'add'
+    applyLocalReactionDelta(seq, name, op)
+    pendingReactionOps.set(seq, { name, op })
+    const ok = transport.toggleReaction(seq, name, op)
+    if (!ok) rollbackReaction(seq, name)
+  }
+
+  // generic item.update/item.delete (m0-protocol §3.2) - same REST surface
+  // ChatPane's messages use, applied here to a section room's post/reply
+  // items. Patches local state directly on REST success via the same
+  // applyItemUpdate/applyItemDelete the WS echo (if any) would also call.
+  async function editItem(seq: number, text: string): Promise<boolean> {
+    const auth = useAuth()
+    const nodeId = selectedNodeId.value
+    const room = postRoom.value
+    const original = currentBody(seq)
+    if (!auth.token.value || !nodeId || !room || !original) return false
+    try {
+      const trimmed = text.trim()
+      // full-body edit (server replaces wholesale, doesn't merge) - carry the
+      // post's title/cover/media/topics (or the reply's media) along so they
+      // don't get silently dropped; preview is left out, the server recomputes it.
+      const body: ItemBody = { ...original, text: trimmed }
+      await api.editItem(auth.token.value, nodeId, room.id, seq, body)
+      applyItemUpdate(seq, body)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  async function retractItem(seq: number): Promise<boolean> {
+    const auth = useAuth()
+    const nodeId = selectedNodeId.value
+    const room = postRoom.value
+    if (!auth.token.value || !nodeId || !room) return false
+    try {
+      await api.retractItem(auth.token.value, nodeId, room.id, seq)
+      applyItemDelete(seq)
+      return true
+    } catch {
+      return false
+    }
+  }
+
   return {
     postRoom,
     posts,
@@ -299,5 +487,8 @@ export function useSectionRoom() {
     closeThread,
     loadMoreReplies,
     createReply,
+    toggleReaction,
+    editItem,
+    retractItem,
   }
 }

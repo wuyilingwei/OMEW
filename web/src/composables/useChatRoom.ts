@@ -3,6 +3,7 @@ import { api } from '../api'
 import { createRoomTransport } from '../api/transport'
 import type { MediaAttachment, RoomItem, RoomSummary } from '../api/types'
 import type { RoomTransport } from '../api/roomSocket'
+import { applyReactionToggle, invertReactionOp } from '../utils/reactions'
 // mirrors server's types.ts DENY_CHANNEL_SPEAK bit (m0-protocol S3.4 deny bitmask)
 const DENY_CHANNEL_SPEAK = 1
 import { useAuth } from './useAuth'
@@ -37,6 +38,11 @@ let roomKey = ''
 let ackTimers = new Map<string, ReturnType<typeof setTimeout>>()
 let guestPollTimer: ReturnType<typeof setInterval> | null = null
 
+// tracks this client's own in-flight optimistic reaction op per target seq -
+// used to roll back precisely on a transport failure or a matching error
+// frame.
+const pendingReactionOps = new Map<number, { name: string; op: 'add' | 'remove' }>()
+
 function upsertItem(item: RoomItem) {
   const idx = items.value.findIndex((i) => i.seq === item.seq)
   if (idx >= 0) items.value.splice(idx, 1, item)
@@ -44,6 +50,22 @@ function upsertItem(item: RoomItem) {
     items.value.push(item)
     items.value.sort((a, b) => a.seq - b.seq)
   }
+}
+
+function applyLocalReactionDelta(seq: number, name: string, op: 'add' | 'remove') {
+  const idx = items.value.findIndex((i) => i.seq === seq)
+  if (idx < 0) return
+  const current = items.value[idx]!
+  items.value[idx] = { ...current, reactions: applyReactionToggle(current.reactions, name, op) }
+}
+
+// inverts whatever optimistic op is still pending for (seq, name) - used both
+// when the transport can't even send the toggle and when a matching error
+// frame arrives later.
+function rollbackReaction(seq: number, name: string) {
+  const pendingOp = pendingReactionOps.get(seq)
+  pendingReactionOps.delete(seq)
+  if (pendingOp && pendingOp.name === name) applyLocalReactionDelta(seq, name, invertReactionOp(pendingOp.op))
 }
 
 function clearAckTimer(clientId: string) {
@@ -147,6 +169,23 @@ async function connectRoom(nodeId: string, room: RoomSummary) {
         pending.value = pending.value.filter((p) => p.clientId !== ack.client_id)
       },
       onItem: (item) => upsertItem(item),
+      // absolute snapshot (m0-protocol §3.2a): overwrite entries with the
+      // authoritative count. Frames carry actor/name/op, so any connection of
+      // the same account - this tab or another - derives `mine` directly;
+      // other actors' toggles leave `mine` untouched.
+      onReaction: (frame) => {
+        const idx = items.value.findIndex((i) => i.seq === frame.target_seq)
+        if (idx < 0) return
+        let mine = items.value[idx]!.reactions?.mine ?? []
+        if (frame.actor === auth.user.value?.actor) {
+          pendingReactionOps.delete(frame.target_seq)
+          const nextMine = new Set(mine)
+          if (frame.op === 'add') nextMine.add(frame.name)
+          else nextMine.delete(frame.name)
+          mine = [...nextMine]
+        }
+        items.value[idx] = { ...items.value[idx]!, reactions: { entries: frame.entries, mine } }
+      },
       onUpdate: (u) => {
         const idx = items.value.findIndex((i) => i.seq === u.target_seq)
         if (idx >= 0) items.value[idx] = { ...items.value[idx]!, body: u.body as RoomItem['body'], edited_at: u.edited_at }
@@ -154,11 +193,19 @@ async function connectRoom(nodeId: string, room: RoomSummary) {
       onDelete: (d) => {
         items.value = items.value.filter((i) => i.seq !== d.target_seq)
       },
+      // reaction rejections carry target_seq + name (m0-protocol §3.2a) so the
+      // exact optimistic toggle can be rolled back; other codes keep the
+      // original behavior below.
+      //
       // no client_id on a frame-level error (server's room-do.ts sendError),
       // so this can't target one exact pending entry - marking every
       // still-sending one is the closest match and self-corrects on the next
       // successful send.
       onError: (e) => {
+        if (e.target_seq != null && e.name) {
+          rollbackReaction(e.target_seq, e.name)
+          return
+        }
         if (e.code !== 'OMEW_FORBIDDEN') return
         muted.value = true
         for (const entry of pending.value) {
@@ -183,7 +230,10 @@ async function loadHistory(nodeId: string, resId: string, before: number | null)
   try {
     const page = await api.getRoomHistory(auth.token.value, nodeId, resId, before, HISTORY_PAGE_SIZE)
     if (page.length < HISTORY_PAGE_SIZE) hasMoreHistory.value = false
-    const merged = [...page, ...items.value]
+    // freshly-fetched `page` wins on overlap (authoritative reactions/body),
+    // same precedence as pollLatest below - items.value first so page's
+    // entries land later in iteration order and overwrite by seq.
+    const merged = [...items.value, ...page]
     const dedup = new Map(merged.map((i) => [i.seq, i]))
     items.value = [...dedup.values()].sort((a, b) => a.seq - b.seq)
   } catch {
@@ -283,13 +333,34 @@ export function useChatRoom() {
     const auth = useAuth()
     const nodeId = selectedNodeId.value
     const room = selectedChannel.value
-    if (!auth.token.value || !nodeId || !room) return false
+    const idx = items.value.findIndex((i) => i.seq === seq)
+    if (!auth.token.value || !nodeId || !room || idx < 0) return false
     try {
-      await api.editItem(auth.token.value, nodeId, room.id, seq, { text: text.trim() })
+      const trimmed = text.trim()
+      // full-body edit (server replaces wholesale, doesn't merge) - carry the
+      // original body's media along so it doesn't get silently dropped.
+      const body: Record<string, unknown> = { ...items.value[idx]!.body, text: trimmed }
+      await api.editItem(auth.token.value, nodeId, room.id, seq, body)
+      items.value[idx] = { ...items.value[idx]!, body: body as RoomItem['body'], edited_at: Date.now() }
       return true
     } catch {
       return false
     }
+  }
+
+  // fire-and-forget: optimistic flip now, reconciled by the absolute
+  // snapshot frame whichever path it arrives on (direct or batched), or
+  // rolled back on a send failure / matching error frame (see onError above).
+  function toggleReaction(seq: number, name: string) {
+    if (!transport) return
+    const idx = items.value.findIndex((i) => i.seq === seq)
+    if (idx < 0) return
+    const mine = items.value[idx]!.reactions?.mine ?? []
+    const op: 'add' | 'remove' = mine.includes(name) ? 'remove' : 'add'
+    applyLocalReactionDelta(seq, name, op)
+    pendingReactionOps.set(seq, { name, op })
+    const ok = transport.toggleReaction(seq, name, op)
+    if (!ok) rollbackReaction(seq, name)
   }
 
   async function retractMessage(seq: number): Promise<boolean> {
@@ -306,5 +377,18 @@ export function useChatRoom() {
     }
   }
 
-  return { items, pending, connected, muted, historyLoading, hasMoreHistory, loadOlder, sendText, resend, editMessage, retractMessage }
+  return {
+    items,
+    pending,
+    connected,
+    muted,
+    historyLoading,
+    hasMoreHistory,
+    loadOlder,
+    sendText,
+    resend,
+    editMessage,
+    retractMessage,
+    toggleReaction,
+  }
 }

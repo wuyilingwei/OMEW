@@ -314,7 +314,10 @@ export class StrongholdDO extends DurableObject<Env> {
   // ---- rooms --------------------------------------------------------------------
 
   async createRoom(resId: string, type: RoomType, name: string, capabilities: string[], restricted: boolean, position?: number): Promise<RoomRow> {
-    const caps = capabilities.includes("text") ? capabilities : ["text", ...capabilities];
+    // m0-protocol §13.3: "text" is mandatory on every room; "reactions" (§3.2a) is
+    // served for every room too, so it's forced into the registry the same way.
+    const withText = capabilities.includes("text") ? capabilities : ["text", ...capabilities];
+    const caps = withText.includes("reactions") ? withText : [...withText, "reactions"];
     const createdAt = Date.now();
     // listRooms orders by position first, so a room without one would sort ahead
     // of every explicitly ordered room - append it to the end instead.

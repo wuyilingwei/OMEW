@@ -14,7 +14,9 @@ endorsed by Microsoft.
 - Files copied verbatim, no modifications:
   - `components/WinButton.vue`
   - `components/WinDropDownButton.vue`
-  - `components/WinMenuFlyout.vue` (transitive dep of WinDropDownButton)
+  - `components/WinMenuFlyout.vue` (originally a transitive dep of
+    WinDropDownButton; also re-exported directly as of 2026-08-21 for
+    `ItemContextMenu.vue`'s right-click/long-press menu)
   - `components/WinScrollViewer.vue` (transitive dep of WinMenuFlyout)
   - `components/WinTextBlock.vue` (transitive dep of WinMenuFlyout)
   - `components/i18n/index.ts` (transitive dep of WinTextBlock)
@@ -42,9 +44,9 @@ endorsed by Microsoft.
     self-contained)
 
 `WinButton`, `WinDropDownButton`, `WinToggleSwitch`, `WinInfoBar`,
-`WinSelectorBar` and `WinComboBox` are re-exported from `index.ts` for
-consumption; the rest is internal plumbing pulled in by the dependency
-closure and is not meant to be imported directly.
+`WinSelectorBar`, `WinComboBox` and `WinMenuFlyout` are re-exported from
+`index.ts` for consumption; the rest is internal plumbing pulled in by the
+dependency closure and is not meant to be imported directly.
 
 ## Licensing compatibility
 
