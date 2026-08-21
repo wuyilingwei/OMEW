@@ -9,8 +9,7 @@ import { useStrongholdMembers } from '../composables/useStrongholdMembers'
 import { useTheme } from '../composables/useTheme'
 import { WinButton, WinDropDownButton } from '../vendor/winui'
 import AvatarBadge from './AvatarBadge.vue'
-import ChangePasswordModal from './ChangePasswordModal.vue'
-import SecuritySettingsModal from './SecuritySettingsModal.vue'
+import PersonalSettingsModal from './PersonalSettingsModal.vue'
 
 const emit = defineEmits<{ 'open-server-admin': []; 'open-panel': ['members' | 'settings'] }>()
 
@@ -36,22 +35,19 @@ const modeLabel: Record<string, string> = {
 // StrongholdAdminModal applies to its own canManage.
 const canManage = computed(() => myRole.value === 'owner' || myRole.value === 'mod' || auth.isAdmin.value)
 
-const showChangePassword = ref(false)
-const showSecuritySettings = ref(false)
+const showPersonalSettings = ref(false)
 
 const userMenu = computed(() => ({
   Items: [
     ...(auth.isAdmin.value ? [{ Text: '服务器管理', Value: 'server-admin' }] : []),
-    { Text: '安全', Value: 'security' },
-    { Text: '修改密码', Value: 'change-password' },
+    { Text: '个人设置', Value: 'personal-settings' },
     { Text: '登出', Value: 'logout' },
   ],
 }))
 
 function onUserMenuSelect(item: { Value: string }) {
   if (item.Value === 'server-admin') emit('open-server-admin')
-  else if (item.Value === 'security') showSecuritySettings.value = true
-  else if (item.Value === 'change-password') showChangePassword.value = true
+  else if (item.Value === 'personal-settings') showPersonalSettings.value = true
   else if (item.Value === 'logout') auth.logout()
 }
 </script>
@@ -59,18 +55,22 @@ function onUserMenuSelect(item: { Value: string }) {
 <template>
   <aside class="right-column">
     <div class="right-column__topbar">
-      <WinButton Style="SubtleButtonStyle" class="right-column__theme-btn" @Click="cycleTheme">
-        主题：{{ modeLabel[mode] }}
-      </WinButton>
-      <WinDropDownButton v-if="auth.isAuthenticated.value" :Flyout="userMenu" @Select="onUserMenuSelect">
-        <span class="right-column__user">
-          <AvatarBadge :seed="auth.user.value?.username ?? ''" :size="24" />
-          <span class="right-column__username">{{ auth.user.value?.username }}</span>
-        </span>
-      </WinDropDownButton>
-      <WinButton v-else Style="AccentButtonStyle" class="right-column__login-btn" @Click="openAuthModal">
-        登录 / 注册
-      </WinButton>
+      <template v-if="auth.isAuthenticated.value">
+        <WinDropDownButton :Flyout="userMenu" @Select="onUserMenuSelect">
+          <span class="right-column__user">
+            <AvatarBadge :seed="auth.user.value?.username ?? ''" :size="24" />
+            <span class="right-column__username">{{ auth.user.value?.username }}</span>
+          </span>
+        </WinDropDownButton>
+      </template>
+      <template v-else>
+        <WinButton Style="SubtleButtonStyle" class="right-column__theme-btn" @Click="cycleTheme">
+          主题：{{ modeLabel[mode] }}
+        </WinButton>
+        <WinButton Style="AccentButtonStyle" class="right-column__login-btn" @Click="openAuthModal">
+          登录 / 注册
+        </WinButton>
+      </template>
     </div>
 
     <div class="right-column__stronghold">
@@ -100,8 +100,7 @@ function onUserMenuSelect(item: { Value: string }) {
       </WinButton>
     </div>
 
-    <ChangePasswordModal :open="showChangePassword" @close="showChangePassword = false" />
-    <SecuritySettingsModal :open="showSecuritySettings" @close="showSecuritySettings = false" />
+    <PersonalSettingsModal :open="showPersonalSettings" @close="showPersonalSettings = false" />
   </aside>
 </template>
 
@@ -123,8 +122,11 @@ function onUserMenuSelect(item: { Value: string }) {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 0.5rem;
+}
+
+.right-column__topbar > :last-child {
+  margin-left: auto;
 }
 
 .right-column__theme-btn,
