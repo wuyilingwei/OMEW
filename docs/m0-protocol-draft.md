@@ -206,6 +206,22 @@ function receive(raw_bytes, peer_ip):
 - `item.bump` 语义见 §10.4,为幂等绝对快照。
 - `client_id` 为客户端生成的幂等 nonce,1–64 个 ASCII 可打印字符,SHOULD 为 UUIDv4。语义见 §4.2。
 
+### 3.2a `item.reaction`(能力位 `reactions` 激活)
+
+依 §13 的延后引入机制激活 §3.8 预留的 `reactions` 能力位,对应 Mew 的 `*_engagement` 事件族。
+
+| 类型 | 定序 | payload 概要 |
+|---|---|---|
+| `item.reaction` | MUST NOT 占 seq | `{target_seq, name, op}` |
+
+- `op` ∈ `add` / `remove`。每 `(actor, target_seq, name)` 至多存在一份反应:重复 `add` MUST 幂等去重,不存在时的 `remove` MUST 幂等无害,二者均 MUST NOT 报错。
+- `name` 为 1–64 个 ASCII 可打印字符的反应标识。服务端 MUST NOT 枚举校验 `name`(反应集属客户端资产,其演进不构成协议迁移),仅作长度与字符集校验。
+- `target_seq` MUST 指向同一房间内既存 item(`OMEW_TARGET_NOT_FOUND`),对已 tombstone 的 target MUST 拒绝(`OMEW_ITEM_DELETED`)。
+- 反应为 engagement 状态,MUST 存于 item 主表之外的侧表,MUST NOT 进入归档分片(分片不可变,§9.2);热层之外的历史反应为尽力而为,实现 MUST 明示该边界。
+- 权限:反应不受 §3.4 `deny` 位约束——`deny` 约束内容写入,不约束 engagement;发起者 MUST 持有效房间会话(游客只读态不可反应)。限流 MUST 与内容写入共用按 actor 的 token bucket。
+- 广播:服务端 MUST 广播绝对计数快照 `{target_seq, entries: [{name, count}], actor, op}`,其中 `entries` 为该 target 的全量反应计数(幂等绝对语义,同 `item.bump` 哲学);`actor` 与 `op` 供各端维护「本人已反应」标记。读端点(历史 / 帖子)MUST 随 item 返回 `entries` 及请求者视角的 `mine` 集合。
+- 联邦:实例能力宣告就绪前,`item.reaction` MUST NOT 出现在联邦链路上,MUST NOT 写入去重表。
+
 ### 3.3 `tip.*`
 
 | 类型 | 链路 | payload 概要 |
@@ -309,7 +325,7 @@ function receive(raw_bytes, peer_ip):
 | `topic_position` / `node_position` / `node_topic_space_position_change` | 不收录。折叠为 `stronghold.room.update` 的 `position` |
 | `node_create` / `node_delete` | 不收录。据点生命周期为实例本地操作 |
 | `role_create` / `role_update` / `role_delete` / `role_position` | 不收录。v1 角色为固定枚举 |
-| `message_engagement` / `thought_engagement` / `comment_engagement` | 延后。能力位预留 `reactions` |
+| `message_engagement` / `thought_engagement` / `comment_engagement` | 收录 → `item.reaction`(§3.2a) |
 | `thought_pin` / `thought_unpin` | 延后。能力位预留 `pins` |
 | `user_typing` / `node_member_activity_change` | 不收录。v1 无 presence |
 | `user_relationship_update` | 不收录。v1 无好友 / 私聊 |
@@ -1156,7 +1172,7 @@ peer 收到后 MUST 比对本地缓存的分片版本(§8.3 的分片元数据),
 ### 13.4 命名保留
 
 - 事件类型名、`kind` 值、`capabilities` 值、`key_id`、`res-id` 一经发布 MUST NOT 复用于不同语义。
-- 已延后的能力位 `reactions`、`pins`(§3.8)与 `speak_gate`(§3.4)予以保留。
+- 能力位 `reactions` 已由 §3.2a 激活;已延后的能力位 `pins`(§3.8)与 `speak_gate`(§3.4)予以保留。
 - 全部域分隔前缀(`openmew/event/v1`、`openmew/instance-descriptor/v1`、`openmew/user-profile/v1`、`openmew/assertion/v1`、`openmew/key-rotation/v1`、`openmew/key-revocation/v1`、`openmew/request/v1`、`openmew/ownership/v1`、`openmew/migration-claim/v1`)一经发布 MUST NOT 改变语义,新增用途 MUST 取新前缀。
 
 ---
