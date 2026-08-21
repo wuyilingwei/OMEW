@@ -379,7 +379,7 @@ async function deleteEmote(emote: Emote) {
   }
 }
 
-// ---- stronghold slug (task 059: 短名地址管理) -----------------------------------
+// ---- stronghold slug (短名地址管理) -----------------------------------
 
 const strongholds = ref<DirectoryEntry[]>([])
 const strongholdsError = ref('')
