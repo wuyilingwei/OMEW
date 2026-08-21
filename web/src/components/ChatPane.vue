@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { EMPTY_STATE } from '../assets/mew'
 import { useAuth } from '../composables/useAuth'
 import { useAuthModal } from '../composables/useAuthModal'
+import { useChannel } from '../composables/useChannel'
 import { useChatRoom } from '../composables/useChatRoom'
 import { useImageAttachments } from '../composables/useImageAttachments'
+import { useStickyScroll } from '../composables/useStickyScroll'
 import { useStrongholdConfig } from '../composables/useStrongholdConfig'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
 import { actorLocalpart } from '../utils/actor'
@@ -18,6 +20,7 @@ const auth = useAuth()
 const { openAuthModal } = useAuthModal()
 const { config } = useStrongholdConfig()
 const { members } = useStrongholdMembers()
+const { selectedChannel } = useChannel()
 const { items, pending, historyLoading, hasMoreHistory, muted, loadOlder, sendText, resend, editMessage, retractMessage } =
   useChatRoom()
 const attachments = useImageAttachments()
@@ -25,7 +28,6 @@ const attachments = useImageAttachments()
 const draft = ref('')
 const editingSeq = ref<number | null>(null)
 const editingText = ref('')
-const scrollEl = ref<HTMLElement | null>(null)
 const showEmotePicker = ref(false)
 const imageInput = ref<HTMLInputElement | null>(null)
 
@@ -83,6 +85,8 @@ const messages = computed<MessageVM[]>(() => {
   return [...confirmed, ...optimistic]
 })
 
+const { el: scrollEl, pin, preserveOnPrepend } = useStickyScroll(() => messages.value.length)
+
 const groupedMessages = computed(() =>
   messages.value.map((message, index) => {
     const previous = messages.value[index - 1]
@@ -98,11 +102,17 @@ function submit() {
   draft.value = ''
   attachments.reset()
   sendText(text, media)
+  pin()
 }
 
 function pickEmote(code: string) {
   showEmotePicker.value = false
   sendText(code)
+  pin()
+}
+
+function onLoadOlder() {
+  void preserveOnPrepend(loadOlder)
 }
 
 function onEnter(event: KeyboardEvent) {
@@ -166,20 +176,16 @@ function onResend(message: MessageVM) {
   if (clientId) resend(clientId)
 }
 
-watch(
-  () => messages.value.length,
-  async () => {
-    await nextTick()
-    if (scrollEl.value) scrollEl.value.scrollTop = scrollEl.value.scrollHeight
-  },
-)
+// a room switch always lands on the newest message, whatever the reader's
+// position in the previous room was
+watch(() => selectedChannel.value?.id, pin, { flush: 'post' })
 </script>
 
 <template>
   <section class="chat-pane">
     <div ref="scrollEl" class="chat-pane__messages">
       <div v-if="hasMoreHistory" class="chat-pane__load-more">
-        <WinButton Style="SubtleButtonStyle" :IsEnabled="!historyLoading" @Click="loadOlder">
+        <WinButton Style="SubtleButtonStyle" :IsEnabled="!historyLoading" @Click="onLoadOlder">
           {{ historyLoading ? '加载中…' : '加载更早的消息' }}
         </WinButton>
       </div>

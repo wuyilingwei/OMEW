@@ -214,12 +214,14 @@ export function useChatRoom() {
     { immediate: true },
   )
 
-  function loadOlder() {
+  // awaitable so the caller can restore the reader's scroll position once the
+  // prepended page has landed
+  async function loadOlder(): Promise<void> {
     const nodeId = selectedNodeId.value
     const room = selectedChannel.value
     const oldest = items.value[0]?.seq
     if (!nodeId || !room || !oldest || historyLoading.value || !hasMoreHistory.value) return
-    void loadHistory(nodeId, room.id, oldest)
+    await loadHistory(nodeId, room.id, oldest)
   }
 
   function sendText(text: string, media?: MediaAttachment[]) {
