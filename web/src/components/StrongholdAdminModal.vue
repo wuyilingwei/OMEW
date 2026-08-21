@@ -6,6 +6,7 @@ import { EMPTY_STATE } from '../assets/mew'
 import { useAuth } from '../composables/useAuth'
 import { useStorageUsage } from '../composables/useStorageUsage'
 import { useStronghold } from '../composables/useStronghold'
+import { useStrongholdConfig } from '../composables/useStrongholdConfig'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
 import { formatBytes, nonNegativeIntError, requiredMaxLengthError } from '../utils/validate'
 import { WinButton, WinComboBox, WinInfoBar, WinSelectorBar, WinToggleSwitch } from '../vendor/winui'
@@ -26,6 +27,7 @@ const emit = defineEmits<{ close: [] }>()
 
 const auth = useAuth()
 const { currentNode, selectedNodeId, loadStrongholds } = useStronghold()
+const { reload: reloadStrongholdConfig } = useStrongholdConfig()
 const { myRole } = useStrongholdMembers()
 
 const ROLE_LABEL: Record<string, string> = { owner: '领主', mod: '管理员', member: '成员' }
@@ -207,9 +209,10 @@ async function saveSettings() {
   if (isOwner.value) patch.visibility = form.visibility
   try {
     await api.patchStrongholdConfig(auth.token.value, selectedNodeId.value, patch)
-    // the rail, the stronghold home card and the tab title all read the name
-    // off the cached stronghold list - refetch it so a rename shows up at once
-    await loadStrongholds(true)
+    // two independent caches read what was just saved: the stronghold list
+    // behind the rail and the tab title, and the config behind the home card
+    // and the edit/retract affordances. Neither refetches on its own.
+    await Promise.all([loadStrongholds(true), reloadStrongholdConfig()])
     settingsSaveOk.value = true
   } catch {
     settingsError.value = '保存失败，请稍后重试'
