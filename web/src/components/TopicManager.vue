@@ -6,7 +6,7 @@ import { useAuth } from '../composables/useAuth'
 import { useStronghold } from '../composables/useStronghold'
 import { useTopics } from '../composables/useTopics'
 import { GROUP_COLOR_SWATCHES } from '../constants/groupColors'
-import { requiredMaxLengthError } from '../utils/validate'
+import { maxLengthError, requiredMaxLengthError } from '../utils/validate'
 import { WinButton } from '../vendor/winui'
 import AppIcon from './icons/AppIcon.vue'
 
@@ -23,29 +23,36 @@ const listError = ref('')
 const editingId = ref<string | null>(null)
 const editingName = ref('')
 const editingColor = ref<string | null>(null)
+const editingDescription = ref('')
 const editError = ref('')
+const descError = ref('')
 
 function startEdit(topic: Topic) {
   editingId.value = topic.id
   editingName.value = topic.name
   editingColor.value = topic.color
+  editingDescription.value = topic.description ?? ''
   editError.value = ''
+  descError.value = ''
 }
 
 function cancelEdit() {
   editingId.value = null
   editError.value = ''
+  descError.value = ''
 }
 
 async function saveEdit(topic: Topic) {
   if (!auth.token.value) return
   editError.value = requiredMaxLengthError(editingName.value, 16, '话题名称')
-  if (editError.value) return
+  descError.value = maxLengthError(editingDescription.value, 64, '描述')
+  if (editError.value || descError.value) return
   busy.value = true
   try {
     await api.patchTopic(auth.token.value, selectedNodeId.value, topic.id, {
       name: editingName.value.trim(),
       color: editingColor.value,
+      description: editingDescription.value.trim() || null,
     })
     await reloadTopics()
     editingId.value = null
@@ -56,18 +63,13 @@ async function saveEdit(topic: Topic) {
   }
 }
 
-async function move(topic: Topic, dir: -1 | 1) {
+async function reorder(list: Topic[]) {
   const token = auth.token.value
   if (!token) return
-  const list = [...topics.value]
-  const idx = list.findIndex((t) => t.id === topic.id)
-  const swap = idx + dir
-  if (idx < 0 || swap < 0 || swap >= list.length) return
-  ;[list[idx], list[swap]] = [list[swap]!, list[idx]!]
   busy.value = true
   listError.value = ''
   try {
-    // 删除会在 position 上留下空洞，只改被交换的两项可能排错；按下标重写整列，只发位置真的变了的那几项。
+    // 删除会在 position 上留下空洞，只改被交换/拖动的两项可能排错；按下标重写整列，只发位置真的变了的那几项。
     await Promise.all(
       list.flatMap((t, i) => (t.position === i ? [] : [api.patchTopic(token, selectedNodeId.value, t.id, { position: i })])),
     )
@@ -77,6 +79,54 @@ async function move(topic: Topic, dir: -1 | 1) {
   } finally {
     busy.value = false
   }
+}
+
+async function move(topic: Topic, dir: -1 | 1) {
+  const list = [...topics.value]
+  const idx = list.findIndex((t) => t.id === topic.id)
+  const swap = idx + dir
+  if (idx < 0 || swap < 0 || swap >= list.length) return
+  ;[list[idx], list[swap]] = [list[swap]!, list[idx]!]
+  await reorder(list)
+}
+
+// ---- drag reorder (desktop only, ≤768px 断点回退到上下移按钮) ----
+const dragFromIndex = ref<number | null>(null)
+const dragOverIndex = ref<number | null>(null)
+
+function onDragStart(idx: number, ev: DragEvent) {
+  dragFromIndex.value = idx
+  if (ev.dataTransfer) {
+    ev.dataTransfer.effectAllowed = 'move'
+    ev.dataTransfer.setData('text/plain', String(idx))
+  }
+}
+
+function onDragOver(idx: number, ev: DragEvent) {
+  ev.preventDefault()
+  dragOverIndex.value = idx
+}
+
+function onDragLeave(idx: number) {
+  if (dragOverIndex.value === idx) dragOverIndex.value = null
+}
+
+function onDragEnd() {
+  dragFromIndex.value = null
+  dragOverIndex.value = null
+}
+
+async function onDrop(idx: number, ev: DragEvent) {
+  ev.preventDefault()
+  const from = dragFromIndex.value
+  dragFromIndex.value = null
+  dragOverIndex.value = null
+  if (from === null || from === idx) return
+  const list = [...topics.value]
+  const [moved] = list.splice(from, 1)
+  if (!moved) return
+  list.splice(idx, 0, moved)
+  await reorder(list)
 }
 
 async function remove(topic: Topic) {
@@ -131,7 +181,24 @@ async function create() {
     <p v-else-if="!topics.length" class="field__hint">暂无话题</p>
 
     <ul v-else class="topic-list">
-      <li v-for="(topic, idx) in topics" :key="topic.id" class="topic-row">
+      <li
+        v-for="(topic, idx) in topics"
+        :key="topic.id"
+        class="topic-row"
+        :class="{ 'topic-row--drag-over': dragOverIndex === idx, 'topic-row--dragging': dragFromIndex === idx }"
+        @dragover="onDragOver(idx, $event)"
+        @dragleave="onDragLeave(idx)"
+        @drop="onDrop(idx, $event)"
+      >
+        <span
+          class="drag-handle only-desktop"
+          draggable="true"
+          title="拖拽排序"
+          @dragstart="onDragStart(idx, $event)"
+          @dragend="onDragEnd"
+        >
+          <span class="drag-handle__bar" /><span class="drag-handle__bar" /><span class="drag-handle__bar" />
+        </span>
         <template v-if="editingId === topic.id">
           <div class="topic-swatches topic-row__edit-swatches">
             <button
@@ -157,6 +224,15 @@ async function create() {
           <div class="field topic-row__edit">
             <input v-model="editingName" type="text" maxlength="16" @keyup.enter="saveEdit(topic)" @keyup.escape="cancelEdit" />
             <p v-if="editError" class="field__error">{{ editError }}</p>
+            <input
+              v-model="editingDescription"
+              type="text"
+              maxlength="64"
+              placeholder="话题描述（可选，≤64 字）"
+              @keyup.enter="saveEdit(topic)"
+              @keyup.escape="cancelEdit"
+            />
+            <p v-if="descError" class="field__error">{{ descError }}</p>
           </div>
           <div class="topic-row__actions">
             <WinButton Style="AccentButtonStyle" :IsEnabled="!busy" @Click="saveEdit(topic)">保存</WinButton>
@@ -165,12 +241,24 @@ async function create() {
         </template>
         <template v-else>
           <span class="topic-row__dot" :style="{ backgroundColor: topic.color ?? 'var(--ctrl-fill-tertiary)' }" />
-          <span class="topic-row__name">{{ topic.name }}</span>
+          <div class="topic-row__info">
+            <span class="topic-row__name">{{ topic.name }}</span>
+            <span class="topic-row__desc" :class="{ 'topic-row__desc--empty': !topic.description }">
+              {{ topic.description || '暂无描述' }}
+            </span>
+          </div>
+          <span class="topic-row__count">{{ topic.post_count }} 篇帖子</span>
           <div class="topic-row__actions">
-            <button type="button" class="icon-btn" title="上移" :disabled="busy || idx === 0" @click="move(topic, -1)">
+            <button type="button" class="icon-btn only-mobile" title="上移" :disabled="busy || idx === 0" @click="move(topic, -1)">
               <AppIcon name="chevron-right" :size="16" class="icon-btn__rotate-up" />
             </button>
-            <button type="button" class="icon-btn" title="下移" :disabled="busy || idx === topics.length - 1" @click="move(topic, 1)">
+            <button
+              type="button"
+              class="icon-btn only-mobile"
+              title="下移"
+              :disabled="busy || idx === topics.length - 1"
+              @click="move(topic, 1)"
+            >
               <AppIcon name="chevron-right" :size="16" class="icon-btn__rotate-down" />
             </button>
             <WinButton Style="SubtleButtonStyle" :IsEnabled="!busy" @Click="startEdit(topic)">编辑</WinButton>
@@ -249,9 +337,15 @@ async function create() {
   border-radius: 50%;
 }
 
-.topic-row__name {
+.topic-row__info {
   flex: 1 1 auto;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.topic-row__name {
   font-size: 0.88rem;
   font-weight: 600;
   color: var(--text-primary);
@@ -260,10 +354,31 @@ async function create() {
   white-space: nowrap;
 }
 
+.topic-row__desc {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topic-row__desc--empty {
+  font-style: italic;
+}
+
+.topic-row__count {
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+
 .topic-row__edit {
   flex: 1 1 100%;
   min-width: 0;
   margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
 }
 
 .topic-row__edit-swatches {
@@ -355,5 +470,47 @@ async function create() {
 .topic-create__field {
   flex: 1 1 auto;
   margin: 0;
+}
+
+.drag-handle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 20px;
+  height: 28px;
+  cursor: grab;
+}
+
+.drag-handle__bar {
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--text-tertiary);
+}
+
+.topic-row--drag-over {
+  border-color: rgb(var(--colors-primary));
+  background: var(--card-bg-secondary);
+}
+
+.topic-row--dragging {
+  opacity: 0.5;
+}
+
+.only-mobile {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .only-desktop {
+    display: none !important;
+  }
+
+  .only-mobile {
+    display: inline-flex !important;
+  }
 }
 </style>

@@ -44,6 +44,7 @@ function onClick(id: string) {
       class="topic-chip"
       :class="{ 'topic-chip--selectable': selectable, 'topic-chip--active': selectable && isSelected(topic.id) }"
       :disabled="isDisabled(topic.id)"
+      :title="topic.description || undefined"
       @click="onClick(topic.id)"
     >
       <span v-if="topic.color" class="topic-chip__dot" :style="{ background: topic.color }" />

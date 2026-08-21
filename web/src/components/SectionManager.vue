@@ -4,7 +4,7 @@ import { api, ApiRequestError } from '../api'
 import type { RoomSummary } from '../api/types'
 import { useAuth } from '../composables/useAuth'
 import { useStronghold } from '../composables/useStronghold'
-import { requiredMaxLengthError } from '../utils/validate'
+import { maxLengthError, requiredMaxLengthError } from '../utils/validate'
 import { WinButton } from '../vendor/winui'
 import AppIcon from './icons/AppIcon.vue'
 
@@ -19,26 +19,35 @@ const listError = ref('')
 
 const editingId = ref<string | null>(null)
 const editingName = ref('')
+const editingDescription = ref('')
 const editError = ref('')
+const descError = ref('')
 
 function startEdit(room: RoomSummary) {
   editingId.value = room.id
   editingName.value = room.name
+  editingDescription.value = room.description ?? ''
   editError.value = ''
+  descError.value = ''
 }
 
 function cancelEdit() {
   editingId.value = null
   editError.value = ''
+  descError.value = ''
 }
 
 async function saveEdit(room: RoomSummary) {
   if (!auth.token.value) return
   editError.value = requiredMaxLengthError(editingName.value, 32, '名称')
-  if (editError.value) return
+  descError.value = maxLengthError(editingDescription.value, 64, '描述')
+  if (editError.value || descError.value) return
   busy.value = true
   try {
-    await api.patchRoom(auth.token.value, selectedNodeId.value, room.id, { name: editingName.value.trim() })
+    await api.patchRoom(auth.token.value, selectedNodeId.value, room.id, {
+      name: editingName.value.trim(),
+      description: editingDescription.value.trim() || null,
+    })
     await loadStrongholds(true)
     editingId.value = null
   } catch {
@@ -48,19 +57,14 @@ async function saveEdit(room: RoomSummary) {
   }
 }
 
-async function move(room: RoomSummary, dir: -1 | 1) {
+async function reorder(list: RoomSummary[]) {
   const token = auth.token.value
   if (!token) return
-  const list = [...sections.value]
-  const idx = list.findIndex((r) => r.id === room.id)
-  const swap = idx + dir
-  if (idx < 0 || swap < 0 || swap >= list.length) return
-  ;[list[idx], list[swap]] = [list[swap]!, list[idx]!]
   busy.value = true
   listError.value = ''
   try {
-    // 房间的 position 可以为空（建房间时不设），只改被交换的两项会让它们排到未设过的房间之后，
-    // 所以每次排序都按下标重写整列。
+    // 房间的 position 可以为空（建房间时不设），只改被交换/拖动的两项会让它们排到未设过的
+    // 房间之后，所以每次排序都按下标重写整列。
     await Promise.all(list.map((r, i) => api.patchRoom(token, selectedNodeId.value, r.id, { position: i })))
     await loadStrongholds(true)
   } catch {
@@ -68,6 +72,54 @@ async function move(room: RoomSummary, dir: -1 | 1) {
   } finally {
     busy.value = false
   }
+}
+
+async function move(room: RoomSummary, dir: -1 | 1) {
+  const list = [...sections.value]
+  const idx = list.findIndex((r) => r.id === room.id)
+  const swap = idx + dir
+  if (idx < 0 || swap < 0 || swap >= list.length) return
+  ;[list[idx], list[swap]] = [list[swap]!, list[idx]!]
+  await reorder(list)
+}
+
+// ---- drag reorder (desktop only, ≤768px 断点回退到上下移按钮) ----
+const dragFromIndex = ref<number | null>(null)
+const dragOverIndex = ref<number | null>(null)
+
+function onDragStart(idx: number, ev: DragEvent) {
+  dragFromIndex.value = idx
+  if (ev.dataTransfer) {
+    ev.dataTransfer.effectAllowed = 'move'
+    ev.dataTransfer.setData('text/plain', String(idx))
+  }
+}
+
+function onDragOver(idx: number, ev: DragEvent) {
+  ev.preventDefault()
+  dragOverIndex.value = idx
+}
+
+function onDragLeave(idx: number) {
+  if (dragOverIndex.value === idx) dragOverIndex.value = null
+}
+
+function onDragEnd() {
+  dragFromIndex.value = null
+  dragOverIndex.value = null
+}
+
+async function onDrop(idx: number, ev: DragEvent) {
+  ev.preventDefault()
+  const from = dragFromIndex.value
+  dragFromIndex.value = null
+  dragOverIndex.value = null
+  if (from === null || from === idx) return
+  const list = [...sections.value]
+  const [moved] = list.splice(from, 1)
+  if (!moved) return
+  list.splice(idx, 0, moved)
+  await reorder(list)
 }
 
 async function remove(room: RoomSummary) {
@@ -113,11 +165,30 @@ async function create() {
     <p v-if="!sections.length" class="field__hint">暂无分区</p>
 
     <ul v-else class="section-list">
-      <li v-for="(room, idx) in sections" :key="room.id" class="section-row">
+      <li
+        v-for="(room, idx) in sections"
+        :key="room.id"
+        class="section-row"
+        :class="{ 'section-row--drag-over': dragOverIndex === idx, 'section-row--dragging': dragFromIndex === idx }"
+        @dragover="onDragOver(idx, $event)"
+        @dragleave="onDragLeave(idx)"
+        @drop="onDrop(idx, $event)"
+      >
+        <span
+          class="drag-handle only-desktop"
+          draggable="true"
+          title="拖拽排序"
+          @dragstart="onDragStart(idx, $event)"
+          @dragend="onDragEnd"
+        >
+          <span class="drag-handle__bar" /><span class="drag-handle__bar" /><span class="drag-handle__bar" />
+        </span>
         <template v-if="editingId === room.id">
           <div class="field section-row__edit">
             <input v-model="editingName" type="text" maxlength="32" @keyup.enter="saveEdit(room)" @keyup.escape="cancelEdit" />
             <p v-if="editError" class="field__error">{{ editError }}</p>
+            <input v-model="editingDescription" type="text" maxlength="64" placeholder="分区描述（可选，≤64 字）" @keyup.enter="saveEdit(room)" @keyup.escape="cancelEdit" />
+            <p v-if="descError" class="field__error">{{ descError }}</p>
           </div>
           <div class="section-row__actions">
             <WinButton Style="AccentButtonStyle" :IsEnabled="!busy" @Click="saveEdit(room)">保存</WinButton>
@@ -125,12 +196,24 @@ async function create() {
           </div>
         </template>
         <template v-else>
-          <span class="section-row__name">{{ room.name }}</span>
+          <div class="section-row__info">
+            <span class="section-row__name">{{ room.name }}</span>
+            <span class="section-row__desc" :class="{ 'section-row__desc--empty': !room.description }">
+              {{ room.description || '暂无描述' }}
+            </span>
+          </div>
+          <span class="section-row__count">{{ room.post_count ?? 0 }} 篇帖子</span>
           <div class="section-row__actions">
-            <button type="button" class="icon-btn" title="上移" :disabled="busy || idx === 0" @click="move(room, -1)">
+            <button type="button" class="icon-btn only-mobile" title="上移" :disabled="busy || idx === 0" @click="move(room, -1)">
               <AppIcon name="chevron-right" :size="16" class="icon-btn__rotate-up" />
             </button>
-            <button type="button" class="icon-btn" title="下移" :disabled="busy || idx === sections.length - 1" @click="move(room, 1)">
+            <button
+              type="button"
+              class="icon-btn only-mobile"
+              title="下移"
+              :disabled="busy || idx === sections.length - 1"
+              @click="move(room, 1)"
+            >
               <AppIcon name="chevron-right" :size="16" class="icon-btn__rotate-down" />
             </button>
             <WinButton Style="SubtleButtonStyle" :IsEnabled="!busy" @Click="startEdit(room)">重命名</WinButton>
@@ -179,9 +262,15 @@ async function create() {
   border: 1px solid var(--card-stroke);
 }
 
-.section-row__name {
+.section-row__info {
   flex: 1 1 auto;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.section-row__name {
   font-size: 0.88rem;
   font-weight: 600;
   color: var(--text-primary);
@@ -190,10 +279,35 @@ async function create() {
   white-space: nowrap;
 }
 
+.section-row__desc {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.section-row__desc--empty {
+  font-style: italic;
+}
+
+.section-row__count {
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+
 .section-row__edit {
   flex: 1 1 auto;
   min-width: 0;
   margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.section-row__edit input + input {
+  margin-top: 0.1rem;
 }
 
 .section-row__actions {
@@ -242,5 +356,47 @@ async function create() {
 .section-create__field {
   flex: 1 1 auto;
   margin: 0;
+}
+
+.drag-handle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 20px;
+  height: 28px;
+  cursor: grab;
+}
+
+.drag-handle__bar {
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--text-tertiary);
+}
+
+.section-row--drag-over {
+  border-color: rgb(var(--colors-primary));
+  background: var(--card-bg-secondary);
+}
+
+.section-row--dragging {
+  opacity: 0.5;
+}
+
+.only-mobile {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .only-desktop {
+    display: none !important;
+  }
+
+  .only-mobile {
+    display: inline-flex !important;
+  }
 }
 </style>
