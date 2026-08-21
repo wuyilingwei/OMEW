@@ -154,9 +154,24 @@ describe("POST /api/media success + GET /media/:id", () => {
     expect(fetched).toEqual(body);
   });
 
-  it("requires auth to read a media object", async () => {
+  it("serves a media object to an unauthenticated reader - the random id is the capability", async () => {
+    const token = await freshUserToken();
+    await setMediaLimits({ max_file_bytes: 1_000_000, user_storage_quota_bytes: 1_000_000 });
+
+    const body = pngBytes(96);
+    const uploadRes = await mediaUploadRequest({ token, contentType: "image/png", declaredLength: body.byteLength, body });
+    const created = (await uploadRes.json()) as { url: string };
+
+    const getRes = await apiRequest(created.url);
+    expect(getRes.status).toBe(200);
+    expect(getRes.headers.get("Content-Type")).toBe("image/png");
+    expect(new Uint8Array(await getRes.arrayBuffer())).toEqual(body);
+  });
+
+  it("404s an unknown media id", async () => {
     const res = await apiRequest("/media/does-not-exist");
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "NOT_FOUND" });
   });
 });
 

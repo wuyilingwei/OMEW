@@ -1178,10 +1178,11 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     return handleMediaUpload(request, env);
   }
 
+  // Public read: a media id is a random UUID, so the URL is the capability.
+  // Browsers can't attach an Authorization header to an <img> subresource, so
+  // gating this route makes every uploaded image unrenderable.
   const mediaGetMatch = match("/media/:id", path);
   if (mediaGetMatch && method === "GET") {
-    const actor = await requireActor(request, env);
-    if (!actor) return apiError(401, "AUTH_REQUIRED");
     const row = await env.DB.prepare("SELECT mime, r2_key FROM media WHERE id = ?")
       .bind(mediaGetMatch.id!)
       .first<{ mime: string; r2_key: string }>();

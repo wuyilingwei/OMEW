@@ -40,8 +40,7 @@ let guestPollTimer: ReturnType<typeof setInterval> | null = null
 
 // tracks this client's own in-flight optimistic reaction op per target seq -
 // used to roll back precisely on a transport failure or a matching error
-// frame, and to derive `mine` off our own self-authored broadcast (see
-// onReaction below; the frame itself has no `name`, only actor+op).
+// frame.
 const pendingReactionOps = new Map<number, { name: string; op: 'add' | 'remove' }>()
 
 function upsertItem(item: RoomItem) {
@@ -171,11 +170,9 @@ async function connectRoom(nodeId: string, room: RoomSummary) {
       },
       onItem: (item) => upsertItem(item),
       // absolute snapshot (m0-protocol §3.2a): overwrite entries with the
-      // authoritative count. `actor`+`op` are for maintaining each client's
-      // own "have I reacted" flag - when it's our own actor, this frame is
-      // frames carry actor/name/op, so any connection of the same account -
-      // this tab or another - derives `mine` directly; other actors' toggles
-      // leave `mine` untouched.
+      // authoritative count. Frames carry actor/name/op, so any connection of
+      // the same account - this tab or another - derives `mine` directly;
+      // other actors' toggles leave `mine` untouched.
       onReaction: (frame) => {
         const idx = items.value.findIndex((i) => i.seq === frame.target_seq)
         if (idx < 0) return
@@ -267,12 +264,14 @@ export function useChatRoom() {
     { immediate: true },
   )
 
-  function loadOlder() {
+  // awaitable so the caller can restore the reader's scroll position once the
+  // prepended page has landed
+  async function loadOlder(): Promise<void> {
     const nodeId = selectedNodeId.value
     const room = selectedChannel.value
     const oldest = items.value[0]?.seq
     if (!nodeId || !room || !oldest || historyLoading.value || !hasMoreHistory.value) return
-    void loadHistory(nodeId, room.id, oldest)
+    await loadHistory(nodeId, room.id, oldest)
   }
 
   function sendText(text: string, media?: MediaAttachment[]) {
