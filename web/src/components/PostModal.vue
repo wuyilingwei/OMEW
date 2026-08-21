@@ -5,10 +5,12 @@ import { useAuthModal } from '../composables/useAuthModal'
 import { usePostModal } from '../composables/usePostModal'
 import { useSectionRoom } from '../composables/useSectionRoom'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
+import { useTopics } from '../composables/useTopics'
 import { actorLocalpart } from '../utils/actor'
 import { WinButton } from '../vendor/winui'
 import AvatarBadge from './AvatarBadge.vue'
 import MediaGrid from './MediaGrid.vue'
+import TopicChips from './TopicChips.vue'
 
 const auth = useAuth()
 const { openAuthModal } = useAuthModal()
@@ -16,6 +18,7 @@ const { openPostSeq, close } = usePostModal()
 const { thread, threadLoading, threadRepliesLoading, threadHasMore, openThread, closeThread, loadMoreReplies, createReply } =
   useSectionRoom()
 const { members } = useStrongholdMembers()
+const { topics } = useTopics()
 
 const replyDraft = ref('')
 const replyError = ref('')
@@ -76,6 +79,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                 {{ paragraph }}
               </p>
               <MediaGrid v-if="thread.post.media?.length" :media="thread.post.media" />
+              <TopicChips v-if="thread.post.topics?.length" :topics="topics" :ids="thread.post.topics" />
 
               <div class="post-modal__comments">
                 <h2 class="post-modal__comments-title">评论（{{ thread.post.reply_count }}）</h2>
