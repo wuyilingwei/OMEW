@@ -49,17 +49,19 @@ async function saveEdit(room: RoomSummary) {
 }
 
 async function move(room: RoomSummary, dir: -1 | 1) {
-  if (!auth.token.value) return
-  const idx = sections.value.findIndex((r) => r.id === room.id)
-  const target = sections.value[idx + dir]
-  if (!target) return
+  const token = auth.token.value
+  if (!token) return
+  const list = [...sections.value]
+  const idx = list.findIndex((r) => r.id === room.id)
+  const swap = idx + dir
+  if (idx < 0 || swap < 0 || swap >= list.length) return
+  ;[list[idx], list[swap]] = [list[swap]!, list[idx]!]
   busy.value = true
   listError.value = ''
   try {
-    await Promise.all([
-      api.patchRoom(auth.token.value, selectedNodeId.value, room.id, { position: idx + dir }),
-      api.patchRoom(auth.token.value, selectedNodeId.value, target.id, { position: idx }),
-    ])
+    // 房间的 position 可以为空（建房间时不设），只改被交换的两项会让它们排到未设过的房间之后，
+    // 所以每次排序都按下标重写整列。
+    await Promise.all(list.map((r, i) => api.patchRoom(token, selectedNodeId.value, r.id, { position: i })))
     await loadStrongholds(true)
   } catch {
     listError.value = '排序失败，请稍后重试'

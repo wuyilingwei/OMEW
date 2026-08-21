@@ -23,7 +23,11 @@ const threadHasMore = ref(false)
 let openPostSeq: number | null = null
 
 let transport: RoomTransport | null = null
+// roomKey identifies the WS (node + room); loadKey additionally carries the
+// topic filter, since changing the filter re-fetches the list but must not
+// tear down a perfectly good socket.
 let roomKey = ''
+let loadKey = ''
 
 // item.create's broadcast excludes the sender (room-do.ts enqueueBroadcast
 // passes the sender's own ws to exclude it from the batch fan-out) - the
@@ -54,13 +58,18 @@ function bumpPost(update: { post_seq: number; last_reply_seq: number; reply_coun
   }
 }
 
-async function connectRoom(nodeId: string, room: RoomSummary) {
-  const key = `${nodeId}/${room.id}`
-  const wsNeedsReconnect = key !== roomKey
-  roomKey = key
+async function connectRoom(nodeId: string, room: RoomSummary, topic: string | null) {
+  const wsKey = `${nodeId}/${room.id}`
+  const key = `${wsKey}/${topic ?? ''}`
+  if (key === loadKey) return
+  loadKey = key
+  const wsNeedsReconnect = wsKey !== roomKey
+  roomKey = wsKey
   if (wsNeedsReconnect) {
     transport?.close()
     transport = null
+    connected.value = false
+    pendingCreates.clear()
   }
   posts.value = []
   postsCursor.value = null
@@ -69,12 +78,9 @@ async function connectRoom(nodeId: string, room: RoomSummary) {
   openPostSeq = null
 
   await loadMorePosts(true)
-  if (roomKey !== key) return
+  if (loadKey !== key) return
 
   if (!wsNeedsReconnect) return
-
-  connected.value = false
-  pendingCreates.clear()
 
   // guest (no session): the read-only list/thread above already came through
   // over REST - posting needs the room WS, which stays member-only.
@@ -113,11 +119,11 @@ async function connectRoom(nodeId: string, room: RoomSummary) {
             reply_count: 0,
             bumped_at: ts,
           }
-          if (!posts.value.some((p) => p.post_seq === ack.seq)) posts.value.unshift(entry)
-          // the just-created post's own detail view (if open) won't otherwise
-          // pick up media - the real listPosts/getPost projection doesn't
-          // carry it yet (server-side gap tracked separately) - patch the
-          // locally-known thread in place so the author's own view is correct.
+          // a filtered list must not gain a post that the filter excludes -
+          // it would vanish again on the next fetch.
+          const { topicFilter } = useSection()
+          const matchesFilter = !topicFilter.value || (pending.topics?.includes(topicFilter.value) ?? false)
+          if (matchesFilter && !posts.value.some((p) => p.post_seq === ack.seq)) posts.value.unshift(entry)
           if (thread.value && thread.value.post.post_seq === ack.seq && pending.media?.length) {
             thread.value = { ...thread.value, post: { ...thread.value.post, media: pending.media } }
           }
@@ -181,12 +187,13 @@ export function useSectionRoom() {
 
   watch(
     [selectedNodeId, selectedSection, topicFilter],
-    ([nodeId, room]) => {
-      if (nodeId && room) void connectRoom(nodeId, room)
+    ([nodeId, room, topic]) => {
+      if (nodeId && room) void connectRoom(nodeId, room, topic)
       else {
         transport?.close()
         transport = null
         roomKey = ''
+        loadKey = ''
         posts.value = []
         thread.value = null
       }

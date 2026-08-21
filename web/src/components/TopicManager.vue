@@ -57,17 +57,20 @@ async function saveEdit(topic: Topic) {
 }
 
 async function move(topic: Topic, dir: -1 | 1) {
-  if (!auth.token.value) return
-  const idx = topics.value.findIndex((t) => t.id === topic.id)
-  const target = topics.value[idx + dir]
-  if (!target) return
+  const token = auth.token.value
+  if (!token) return
+  const list = [...topics.value]
+  const idx = list.findIndex((t) => t.id === topic.id)
+  const swap = idx + dir
+  if (idx < 0 || swap < 0 || swap >= list.length) return
+  ;[list[idx], list[swap]] = [list[swap]!, list[idx]!]
   busy.value = true
   listError.value = ''
   try {
-    await Promise.all([
-      api.patchTopic(auth.token.value, selectedNodeId.value, topic.id, { position: idx + dir }),
-      api.patchTopic(auth.token.value, selectedNodeId.value, target.id, { position: idx }),
-    ])
+    // 删除会在 position 上留下空洞，只改被交换的两项可能排错；按下标重写整列，只发位置真的变了的那几项。
+    await Promise.all(
+      list.flatMap((t, i) => (t.position === i ? [] : [api.patchTopic(token, selectedNodeId.value, t.id, { position: i })])),
+    )
     await reloadTopics()
   } catch {
     listError.value = '排序失败，请稍后重试'
