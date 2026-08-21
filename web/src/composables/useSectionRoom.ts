@@ -1,9 +1,10 @@
-import { computed, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { api } from '../api'
 import { createRoomTransport } from '../api/transport'
 import type { MediaAttachment, PostReply, PostSummary, PostThread, RoomSummary } from '../api/types'
 import type { RoomTransport } from '../api/roomSocket'
 import { useAuth } from './useAuth'
+import { useSection } from './useSection'
 import { useStronghold } from './useStronghold'
 
 const POSTS_PAGE_SIZE = 20
@@ -36,6 +37,7 @@ interface PendingCreate {
   text: string
   cover?: string
   media?: MediaAttachment[]
+  topics?: string[]
   parentSeq?: number
 }
 const pendingCreates = new Map<string, PendingCreate>()
@@ -54,20 +56,25 @@ function bumpPost(update: { post_seq: number; last_reply_seq: number; reply_coun
 
 async function connectRoom(nodeId: string, room: RoomSummary) {
   const key = `${nodeId}/${room.id}`
-  if (key === roomKey) return
+  const wsNeedsReconnect = key !== roomKey
   roomKey = key
-  transport?.close()
-  transport = null
+  if (wsNeedsReconnect) {
+    transport?.close()
+    transport = null
+  }
   posts.value = []
   postsCursor.value = null
   hasMorePosts.value = true
-  connected.value = false
   thread.value = null
   openPostSeq = null
-  pendingCreates.clear()
 
   await loadMorePosts(true)
   if (roomKey !== key) return
+
+  if (!wsNeedsReconnect) return
+
+  connected.value = false
+  pendingCreates.clear()
 
   // guest (no session): the read-only list/thread above already came through
   // over REST - posting needs the room WS, which stays member-only.
@@ -101,6 +108,7 @@ async function connectRoom(nodeId: string, room: RoomSummary) {
             cover: pending.cover ?? null,
             preview: pending.text.slice(0, 80),
             media: pending.media,
+            topics: pending.topics,
             last_reply_seq: ack.seq,
             reply_count: 0,
             bumped_at: ts,
@@ -140,14 +148,22 @@ async function connectRoom(nodeId: string, room: RoomSummary) {
 }
 
 async function loadMorePosts(reset = false) {
-  const { selectedNodeId, currentNode } = useStronghold()
+  const { selectedNodeId } = useStronghold()
+  const { selectedSection, topicFilter } = useSection()
   const auth = useAuth()
-  const room = currentNode.value?.rooms.find((r) => r.type === 'section')
+  const room = selectedSection.value
   if (!selectedNodeId.value || !room) return
   if (!reset && (postsLoading.value || !hasMorePosts.value)) return
   postsLoading.value = true
   try {
-    const page = await api.listPosts(auth.token.value, selectedNodeId.value, room.id, reset ? null : postsCursor.value, POSTS_PAGE_SIZE)
+    const page = await api.listPosts(
+      auth.token.value,
+      selectedNodeId.value,
+      room.id,
+      reset ? null : postsCursor.value,
+      POSTS_PAGE_SIZE,
+      topicFilter.value,
+    )
     posts.value = reset ? page.posts : [...posts.value, ...page.posts]
     postsCursor.value = page.next_cursor
     hasMorePosts.value = page.next_cursor != null
@@ -159,11 +175,12 @@ async function loadMorePosts(reset = false) {
 }
 
 export function useSectionRoom() {
-  const { selectedNodeId, currentNode } = useStronghold()
-  const postRoom = computed<RoomSummary | null>(() => currentNode.value?.rooms.find((r) => r.type === 'section') ?? null)
+  const { selectedNodeId } = useStronghold()
+  const { selectedSection, topicFilter } = useSection()
+  const postRoom = selectedSection
 
   watch(
-    [selectedNodeId, postRoom],
+    [selectedNodeId, selectedSection, topicFilter],
     ([nodeId, room]) => {
       if (nodeId && room) void connectRoom(nodeId, room)
       else {
@@ -177,16 +194,18 @@ export function useSectionRoom() {
     { immediate: true },
   )
 
-  function createPost(title: string, text: string, cover?: string, media?: MediaAttachment[]) {
+  function createPost(title: string, text: string, cover?: string, media?: MediaAttachment[], topics?: string[]) {
     const auth = useAuth()
     if (!transport || !auth.user.value) return false
     const clientId = crypto.randomUUID()
     const trimmedTitle = title.trim()
     const trimmedText = text.trim()
     const trimmedCover = cover?.trim() || undefined
+    const trimmedTopics = topics?.length ? topics.slice(0, 5) : undefined
     const body: Record<string, unknown> = { title: trimmedTitle, text: trimmedText }
     if (trimmedCover) body.cover = trimmedCover
     if (media?.length) body.media = media
+    if (trimmedTopics) body.topics = trimmedTopics
     const ok = transport.createItem(clientId, 'post', body)
     if (ok) {
       pendingCreates.set(clientId, {
@@ -196,6 +215,7 @@ export function useSectionRoom() {
         text: trimmedText,
         cover: trimmedCover,
         media,
+        topics: trimmedTopics,
       })
     }
     return ok

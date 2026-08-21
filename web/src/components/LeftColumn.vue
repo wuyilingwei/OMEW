@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { EMPTY_STATE } from '../assets/mew'
 import { useAuth } from '../composables/useAuth'
 import { useAuthModal } from '../composables/useAuthModal'
+import { useSection } from '../composables/useSection'
 import { useSectionRoom } from '../composables/useSectionRoom'
-import { WinButton } from '../vendor/winui'
+import { useTopics } from '../composables/useTopics'
+import { WinButton, WinDropDownButton } from '../vendor/winui'
 import ComposePostModal from './ComposePostModal.vue'
 import EmptyState from './EmptyState.vue'
 import PostCard from './PostCard.vue'
@@ -12,8 +14,19 @@ import PostCard from './PostCard.vue'
 const auth = useAuth()
 const { openAuthModal } = useAuthModal()
 const { posts, postsLoading, hasMorePosts, loadMorePosts, postRoom } = useSectionRoom()
+const { sectionRooms, selectedSection, selectSection, topicFilter, setTopicFilter } = useSection()
+const { topics } = useTopics()
 
 const showCompose = ref(false)
+
+const sectionFlyout = computed(() => ({
+  Items: sectionRooms.value.map((room) => ({ Text: room.name, Value: room.id })),
+}))
+
+function onSelectSection(item: { Value: string }) {
+  const room = sectionRooms.value.find((candidate) => candidate.id === item.Value)
+  if (room) selectSection(room)
+}
 
 function openCompose() {
   showCompose.value = true
@@ -27,7 +40,15 @@ function closeCompose() {
 <template>
   <aside class="left-column">
     <div class="left-column__header">
-      <span>帖子</span>
+      <WinDropDownButton
+        v-if="sectionRooms.length > 1"
+        class="left-column__section-switcher"
+        :Flyout="sectionFlyout"
+        @Select="onSelectSection"
+      >
+        <span class="left-column__section-label">{{ selectedSection?.name ?? '帖子' }}</span>
+      </WinDropDownButton>
+      <span v-else>{{ selectedSection?.name ?? '帖子' }}</span>
       <WinButton
         v-if="postRoom && auth.isAuthenticated.value"
         Style="AccentButtonStyle"
@@ -39,6 +60,28 @@ function closeCompose() {
       <WinButton v-else-if="postRoom" Style="DefaultButtonStyle" class="left-column__compose-btn" @Click="openAuthModal">
         登录后发帖
       </WinButton>
+    </div>
+
+    <div v-if="topics.length" class="left-column__topic-filter">
+      <button
+        type="button"
+        class="topic-filter-chip"
+        :class="{ 'topic-filter-chip--active': topicFilter == null }"
+        @click="setTopicFilter(null)"
+      >
+        全部
+      </button>
+      <button
+        v-for="topic in topics"
+        :key="topic.id"
+        type="button"
+        class="topic-filter-chip"
+        :class="{ 'topic-filter-chip--active': topicFilter === topic.id }"
+        @click="setTopicFilter(topic.id)"
+      >
+        <span v-if="topic.color" class="topic-filter-chip__dot" :style="{ background: topic.color }" />
+        {{ topic.name }}
+      </button>
     </div>
 
     <ComposePostModal :open="showCompose" @close="closeCompose" />
@@ -81,6 +124,54 @@ function closeCompose() {
 
 .left-column__compose-btn {
   font-size: 0.78rem;
+}
+
+.left-column__section-switcher {
+  font-size: 0.85rem;
+}
+
+.left-column__section-label {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.left-column__topic-filter {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 1rem 0.6rem;
+  overflow-x: auto;
+}
+
+.topic-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex: 0 0 auto;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--ctrl-border);
+  background: var(--ctrl-fill-secondary);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.topic-filter-chip--active {
+  border-color: var(--accent-base);
+  color: var(--text-primary);
+  background: var(--card-bg-secondary);
+}
+
+.topic-filter-chip__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
 }
 
 .left-column__feed {
