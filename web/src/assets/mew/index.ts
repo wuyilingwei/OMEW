@@ -6,7 +6,6 @@ import defaultAvatar0Url from './default-avatar-0.png'
 import defaultAvatar1Url from './default-avatar-1.png'
 import defaultNodePageBgUrl from './default-node-page-bg.png'
 import helpfulUrl from './helpful.webp'
-import imAddReactionUrl from './im-add-reaction.png'
 import kusaUrl from './kusa.webp'
 import lanceUrl from './lance.webp'
 import likeUrl from './like.webp'
@@ -40,29 +39,36 @@ export const EMPTY_STATE = {
   onboarding: azUrl,
 }
 
-// name -> url, keyed the same way the seed script names emotes (filename minus extension)
-export const MASCOT_EMOTES: Record<string, string> = {
-  az: azUrl,
-  comfort: comfortUrl,
-  helpful: helpfulUrl,
-  'im-add-reaction': imAddReactionUrl,
-  kusa: kusaUrl,
-  lance: lanceUrl,
-  like: likeUrl,
+// chibi twin-character illustrations (m-* pink-haired / w-* dark-haired) - sent
+// as standalone stamp cards in chat, keyed the same way the seed script names
+// emotes (filename minus extension). Drives the built-in stamp pack, see mew-emotes.ts.
+export const STAMP_EMOTES: Record<string, string> = {
   'm-alice': mAliceUrl,
   'm-angry': mAngryUrl,
   'm-sad': mSadUrl,
   'm-success': mSuccessUrl,
   'm-warning': mWarningUrl,
+  'w-alice': wAliceUrl,
+  'w-do-not': wDoNotUrl,
+  'w-ellipsis': wEllipsisUrl,
+  'w-error': wErrorUrl,
+  'w-let-me-see': wLetMeSeeUrl,
+}
+
+// flat thick-outline mascot glyphs - small reactions meant to attach to a
+// message/post rather than be sent as their own card. Not wired into any
+// EmotePack yet; reserved for the upcoming reaction feature.
+export const REACTION_SET: Record<string, string> = {
+  az: azUrl,
+  comfort: comfortUrl,
+  helpful: helpfulUrl,
+  kusa: kusaUrl,
+  lance: lanceUrl,
+  like: likeUrl,
   niubi: niubiUrl,
   okashii: okashiiUrl,
   question: questionUrl,
   salute: saluteUrl,
   tear: tearUrl,
   uhhuh: uhhuhUrl,
-  'w-alice': wAliceUrl,
-  'w-do-not': wDoNotUrl,
-  'w-ellipsis': wEllipsisUrl,
-  'w-error': wErrorUrl,
-  'w-let-me-see': wLetMeSeeUrl,
 }

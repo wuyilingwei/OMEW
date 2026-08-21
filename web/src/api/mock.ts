@@ -2,7 +2,7 @@
 // dev-only opt-in (see index.ts); production builds never import this module's
 // data path in practice since USE_MOCK is false by default.
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/browser'
-import { MASCOT_EMOTES } from '../assets/mew'
+import { STAMP_EMOTES } from '../assets/mew'
 import { ApiRequestError } from './errors'
 import type { RoomSocketHandlers, RoomTransport } from './roomSocket'
 import type {
@@ -91,7 +91,7 @@ const emotePacks: EmotePack[] = [
   {
     id: 'mock-pack-mew',
     name: 'Mew',
-    emotes: Object.entries(MASCOT_EMOTES).map(([name, url]): Emote => ({ id: `mock-emote-${name}`, name, media_id: `mock-media-${name}`, url })),
+    emotes: Object.entries(STAMP_EMOTES).map(([name, url]): Emote => ({ id: `mock-emote-${name}`, name, media_id: `mock-media-${name}`, url })),
   },
 ]
 
