@@ -15,7 +15,7 @@ import { getInstanceConfig } from "./config";
 import { handleInbox } from "./inbox";
 import type { EffectivePermissions } from "./permissions";
 import { synthesizeEffectivePermissions } from "./permissions";
-import { fetchServerGroupsForLocalpart, type ConfigRow, type MemberRow, type TopicRow } from "./stronghold-do";
+import { deriveSlugBase, fetchServerGroupsForLocalpart, type ConfigRow, type MemberRow, type RoomRow, type TopicRow } from "./stronghold-do";
 import { generateTotpSecret, totpOtpauthUrl, verifyTotpCode } from "./totp";
 import {
   HOME_DOMAIN,
@@ -324,6 +324,20 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const config = await getInstanceConfig(env);
     if (!config.allow_guest_browsing) return apiError(404, "NOT_FOUND");
     return json({ strongholds: await listPublicDirectory(env) });
+  }
+
+  // URL short-name resolution, e.g. /a/<slug> - "a" is this instance's
+  // own reserved server-id segment; every other value is a federated instance,
+  // not yet implemented (M6-era), so it 404s rather than guessing. No auth -
+  // a guest following a public stronghold's address needs this to work too.
+  const resolveMatch = match("/api/resolve/:server/:slug", path);
+  if (resolveMatch && method === "GET") {
+    if (resolveMatch.server !== "a") return apiError(404, "NOT_FOUND");
+    const row = await env.DB.prepare("SELECT stronghold_id FROM stronghold_slug_index WHERE slug = ?")
+      .bind(resolveMatch.slug!)
+      .first<{ stronghold_id: string }>();
+    if (!row) return apiError(404, "NOT_FOUND");
+    return json({ stronghold_id: row.stronghold_id });
   }
 
   if (method === "POST" && path === "/api/register") {
@@ -1620,6 +1634,44 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     return json({ id: application.id, state: "approved", stronghold: toApiConfig(created) });
   }
 
+  // rename a stronghold's URL short-name. Server owner/admin only -
+  // same gate as every other /api/admin/* route in this file, deliberately not
+  // the per-stronghold owner/mod effectiveRole (a stronghold's own owner/mod
+  // MUST NOT be able to hijack another stronghold's slug or grief their own).
+  const slugMatch = match("/api/admin/strongholds/:id/slug", path);
+  if (slugMatch && method === "PATCH") {
+    const gate = await requireServerRole(request, env, "admin");
+    if (gate instanceof Response) return gate;
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    const slug = typeof body.slug === "string" ? body.slug : "";
+    if (!SLUG_RE.test(slug)) return apiError(400, "MALFORMED");
+
+    const stub = env.STRONGHOLD_DO.getByName(slugMatch.id!);
+    const config = await stub.getConfig();
+    if (!config) return apiError(404, "NOT_FOUND");
+    if (config.slug === slug) return json({ id: config.id, slug });
+
+    // The index table's stronghold_id column is UNIQUE (one slug per stronghold),
+    // so the old row has to go before the new one can be inserted - if the new
+    // slug turns out to be taken, put the old mapping back rather than leaving
+    // this stronghold with no slug row at all.
+    await env.DB.prepare("DELETE FROM stronghold_slug_index WHERE stronghold_id = ?").bind(config.id).run();
+    try {
+      await env.DB.prepare("INSERT INTO stronghold_slug_index (slug, stronghold_id) VALUES (?, ?)")
+        .bind(slug, config.id)
+        .run();
+    } catch {
+      await env.DB.prepare("INSERT INTO stronghold_slug_index (slug, stronghold_id) VALUES (?, ?)")
+        .bind(config.slug, config.id)
+        .run()
+        .catch(() => {});
+      return apiError(409, "ALREADY_EXISTS");
+    }
+    const updated = await stub.updateSlug(slug);
+    return json({ id: updated!.id, slug: updated!.slug });
+  }
+
   m = match("/api/stronghold/:id/rooms", path);
   if (m && method === "POST") {
     const session = await requireSession(request, env);
@@ -1636,7 +1688,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
     const resId = generateResId();
     const room = await stub.createRoom(resId, type, name, ["text"], false);
-    return json({ id: room.res_id, name: room.name, type: room.type }, 201);
+    return json(toApiRoom(room), 201);
   }
   // Task 034: the only other room listing under the /api/* flat-shape surface is
   // embedded per-actor in GET /api/me/strongholds (auth-only, "my strongholds") -
@@ -1644,21 +1696,20 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   if (m && method === "GET") {
     const gate = await resolveGuestOrMember(request, env, m.id!);
     if (gate instanceof Response) return gate;
-    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const strongholdId = m.id!;
+    const stub = env.STRONGHOLD_DO.getByName(strongholdId);
     const rooms = await stub.listRooms();
     const visible = gate.kind === "guest" ? rooms.filter((r) => !r.restricted) : rooms;
-    // m0-protocol §3.2a/§13.3: server accepts reactions on every room regardless
-    // of when it was created, so rooms whose stored capabilities predate the
-    // feature get "reactions" unioned in rather than misreporting themselves.
-    return json(visible.map((r) => {
-      const caps = JSON.parse(r.capabilities_json) as string[];
-      return {
-        id: r.res_id,
-        name: r.name,
-        type: r.type,
-        capabilities: caps.includes("reactions") ? caps : [...caps, "reactions"],
-      };
-    }));
+    const projected = await Promise.all(
+      visible.map(async (r) => {
+        if (r.type !== "section") return toApiRoom(r);
+        const roomRef = `${strongholdId}/${typeToKind(r.type)}/${r.res_id}`;
+        const roomStub = env.ROOM_DO.getByName(roomRef);
+        const postCount = await roomStub.countPosts();
+        return toApiRoom(r, postCount);
+      })
+    );
+    return json(projected);
   }
 
   m = match("/api/stronghold/:id/rooms/:resId", path);
@@ -1669,11 +1720,16 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
     const body = await readJsonBody(request);
     if (!body) return apiError(413, "PAYLOAD_INVALID");
-    const patch: { name?: string; restricted?: boolean; position?: number } = {};
+    const patch: { name?: string; description?: string | null; restricted?: boolean; position?: number } = {};
     if ("name" in body) {
       const name = typeof body.name === "string" ? body.name.trim() : "";
       if (!name) return apiError(400, "MALFORMED");
       patch.name = name;
+    }
+    if ("description" in body) {
+      const description = asOptionalDescription(body.description);
+      if (description === INVALID_DESCRIPTION) return apiError(400, "MALFORMED");
+      patch.description = description;
     }
     if ("restricted" in body) {
       if (typeof body.restricted !== "boolean") return apiError(400, "MALFORMED");
@@ -1686,7 +1742,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const stub = env.STRONGHOLD_DO.getByName(m.id!);
     const updated = await stub.updateRoom(m.resId!, patch);
     if (!updated) return apiError(404, "NOT_FOUND");
-    return json({ id: updated.res_id, name: updated.name, type: updated.type });
+    return json(toApiRoom(updated));
   }
   if (m && method === "DELETE") {
     const session = await requireSession(request, env);
@@ -1709,9 +1765,11 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   if (m && method === "GET") {
     const gate = await resolveGuestOrMember(request, env, m.id!);
     if (gate instanceof Response) return gate;
-    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const strongholdId = m.id!;
+    const stub = env.STRONGHOLD_DO.getByName(strongholdId);
     const topics = await stub.listTopics();
-    return json(topics.map(toApiTopic));
+    const counts = await topicPostCounts(env, strongholdId, stub, topics.map((t) => t.id));
+    return json(topics.map((t) => toApiTopic(t, counts.get(t.id) ?? 0)));
   }
   if (m && method === "POST") {
     const session = await requireSession(request, env);
@@ -1724,10 +1782,12 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (!name || name.length > 16) return apiError(400, "MALFORMED");
     const color = parseOptionalColor(body.color);
     if (color === INVALID_COLOR) return apiError(400, "MALFORMED");
+    const description = asOptionalDescription(body.description);
+    if (description === INVALID_DESCRIPTION) return apiError(400, "MALFORMED");
     const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    const result = await stub.createTopic(generateResId(), name, color);
+    const result = await stub.createTopic(generateResId(), name, color, description);
     if (!result.ok) return apiError(409, result.code);
-    return json(toApiTopic(result.topic), 201);
+    return json(toApiTopic(result.topic, 0), 201);
   }
 
   m = match("/api/stronghold/:id/topics/:topicId", path);
@@ -1738,7 +1798,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
     const body = await readJsonBody(request);
     if (!body) return apiError(413, "PAYLOAD_INVALID");
-    const patch: { name?: string; color?: string | null; position?: number } = {};
+    const patch: { name?: string; color?: string | null; description?: string | null; position?: number } = {};
     if ("name" in body) {
       const name = typeof body.name === "string" ? body.name.trim() : "";
       if (!name || name.length > 16) return apiError(400, "MALFORMED");
@@ -1749,14 +1809,21 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
       if (color === INVALID_COLOR) return apiError(400, "MALFORMED");
       patch.color = color;
     }
+    if ("description" in body) {
+      const description = asOptionalDescription(body.description);
+      if (description === INVALID_DESCRIPTION) return apiError(400, "MALFORMED");
+      patch.description = description;
+    }
     if ("position" in body) {
       if (typeof body.position !== "number") return apiError(400, "MALFORMED");
       patch.position = body.position;
     }
-    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const strongholdId = m.id!;
+    const stub = env.STRONGHOLD_DO.getByName(strongholdId);
     const result = await stub.updateTopic(m.topicId!, patch);
     if (!result.ok) return apiError(result.code === "NOT_FOUND" ? 404 : 409, result.code);
-    return json(toApiTopic(result.topic));
+    const counts = await topicPostCounts(env, strongholdId, stub, [result.topic.id]);
+    return json(toApiTopic(result.topic, counts.get(result.topic.id) ?? 0));
   }
   if (m && method === "DELETE") {
     const session = await requireSession(request, env);
@@ -1820,6 +1887,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
           id: config.id,
           name: config.name,
           cover: config.cover,
+          slug: config.slug,
           rooms: rooms.map((room) => ({ id: room.res_id, name: room.name, type: room.type })),
         };
       })
@@ -2476,6 +2544,31 @@ function generateResId(): string {
   return crypto.randomUUID().replace(/-/g, "").slice(0, 20);
 }
 
+// claims a globally-unique slug for a brand-new stronghold id.
+// The D1 index table's PRIMARY KEY on slug does the actual race-safe claim -
+// this just retries with a numeric suffix on conflict, same idiom as the rest
+// of this codebase's conflict-then-retry writes (e.g. invite code generation).
+const SLUG_CLAIM_MAX_ATTEMPTS = 50;
+
+async function reserveSlug(env: Env, strongholdId: string, name: string): Promise<string> {
+  const base = deriveSlugBase(name);
+  let candidate = base;
+  for (let attempt = 1; attempt <= SLUG_CLAIM_MAX_ATTEMPTS; attempt++) {
+    try {
+      await env.DB.prepare("INSERT INTO stronghold_slug_index (slug, stronghold_id) VALUES (?, ?)")
+        .bind(candidate, strongholdId)
+        .run();
+      return candidate;
+    } catch {
+      candidate = `${base}-${attempt + 1}`;
+    }
+  }
+  // Pathological collision storm - fall back to a slug nobody else can guess.
+  const fallback = `${base}-${crypto.randomUUID().replace(/-/g, "").slice(0, 6)}`;
+  await env.DB.prepare("INSERT INTO stronghold_slug_index (slug, stronghold_id) VALUES (?, ?)").bind(fallback, strongholdId).run();
+  return fallback;
+}
+
 // Shared by the open-policy path in POST /api/strongholds and by approving a
 // stronghold_applications row - both end with the same owner + default rooms.
 async function createStrongholdWithDefaults(
@@ -2486,8 +2579,9 @@ async function createStrongholdWithDefaults(
   description?: string
 ): Promise<ConfigRow> {
   const id = generateResId();
+  const slug = await reserveSlug(env, id, name);
   const stub = env.STRONGHOLD_DO.getByName(id);
-  const config = await stub.initConfig(id, name, visibility, ownerActor, description);
+  const config = await stub.initConfig(id, name, visibility, ownerActor, description, undefined, slug);
   // Every stronghold starts with one real channel and one real section - tips
   // and room lookups work immediately, no separate "register this room" step.
   await stub.createRoom("lobby", "channel", "大厅", ["text"], false);
@@ -2513,12 +2607,31 @@ function toApiConfig(row: ConfigRow) {
     edit_window_secs: row.edit_window_secs,
     owner_actor: row.owner_actor,
     created_at: row.created_at,
+    slug: row.slug,
   };
 }
 
-function toApiTopic(row: TopicRow) {
-  return { id: row.id, name: row.name, color: row.color, position: row.position };
+function toApiTopic(row: TopicRow, postCount: number) {
+  return { id: row.id, name: row.name, color: row.color, description: row.description, position: row.position, post_count: postCount };
 }
+
+function toApiRoom(row: RoomRow, postCount?: number) {
+  // m0-protocol §3.2a/§13.3: reactions are served on every room regardless of
+  // when it was created, so rooms whose stored capabilities predate the feature
+  // get it unioned in rather than misreporting themselves.
+  const caps = JSON.parse(row.capabilities_json) as string[];
+  return {
+    id: row.res_id,
+    name: row.name,
+    type: row.type,
+    description: row.description,
+    capabilities: caps.includes("reactions") ? caps : [...caps, "reactions"],
+    ...(postCount != null ? { post_count: postCount } : {}),
+  };
+}
+
+// PATCH /api/admin/strongholds/:id/slug format gate.
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
 // ---- server groups helpers (task 048, m0-protocol §7.10a) ------------------------
 
@@ -2559,6 +2672,43 @@ function parseOptionalColor(v: unknown): string | null | typeof INVALID_COLOR {
   if (v === null || v === undefined) return null;
   if (typeof v !== "string" || !COLOR_RE.test(v)) return INVALID_COLOR;
   return v;
+}
+
+// topic/room description - trimmed, <=64 chars, absent/null/empty clears it.
+const INVALID_DESCRIPTION = Symbol("invalid_description");
+const DESCRIPTION_MAX = 64;
+
+function asOptionalDescription(v: unknown): string | null | typeof INVALID_DESCRIPTION {
+  if (v === null || v === undefined) return null;
+  if (typeof v !== "string") return INVALID_DESCRIPTION;
+  const trimmed = v.trim();
+  if (trimmed.length > DESCRIPTION_MAX) return INVALID_DESCRIPTION;
+  return trimmed || null;
+}
+
+// sums each section room's per-topic post_count (RoomDO.countPostsByTopic)
+// across the whole stronghold - topics are stronghold-wide, posts live per-room.
+async function topicPostCounts(
+  env: Env,
+  strongholdId: string,
+  stub: DurableObjectStub<import("./stronghold-do").StrongholdDO>,
+  topicIds: string[]
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>(topicIds.map((id) => [id, 0]));
+  if (topicIds.length === 0) return counts;
+  const rooms = await stub.listRooms();
+  const sectionRooms = rooms.filter((r) => r.type === "section");
+  await Promise.all(
+    sectionRooms.map(async (room) => {
+      const roomRef = `${strongholdId}/${typeToKind(room.type)}/${room.res_id}`;
+      const roomStub = env.ROOM_DO.getByName(roomRef);
+      const roomCounts = await roomStub.countPostsByTopic(topicIds);
+      for (const [topicId, n] of Object.entries(roomCounts)) {
+        counts.set(topicId, (counts.get(topicId) ?? 0) + n);
+      }
+    })
+  );
+  return counts;
 }
 
 // perm_speak/perm_post/perm_reply: -1 deny / 0 inherit / 1 allow. Missing means
@@ -2740,7 +2890,7 @@ function guestBlockedFromRoom(gate: { kind: "member" | "guest" }, room: { restri
 // listMembers() per entry is fine, no cache column needed yet.
 async function listPublicDirectory(
   env: Env
-): Promise<Array<{ id: string; name: string; description: string | null; cover: string | null; member_count: number }>> {
+): Promise<Array<{ id: string; name: string; description: string | null; cover: string | null; member_count: number; slug: string }>> {
   const { results } = await env.DB.prepare("SELECT DISTINCT stronghold_id FROM stronghold_member_index").all<{
     stronghold_id: string;
   }>();
@@ -2750,7 +2900,14 @@ async function listPublicDirectory(
       const config = await stub.getConfig();
       if (!config || config.visibility !== "public") return null;
       const members = await stub.listMembers();
-      return { id: config.id, name: config.name, description: config.description, cover: config.cover, member_count: members.length };
+      return {
+        id: config.id,
+        name: config.name,
+        description: config.description,
+        cover: config.cover,
+        member_count: members.length,
+        slug: config.slug,
+      };
     })
   );
   return entries.filter((e): e is NonNullable<typeof e> => e != null);

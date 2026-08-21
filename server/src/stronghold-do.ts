@@ -28,12 +28,14 @@ export type ConfigRow = {
   edit_window_secs: number;
   owner_actor: string;
   created_at: number;
+  slug: string;
 };
 
 export type TopicRow = {
   id: string;
   name: string;
   color: string | null;
+  description: string | null;
   position: number;
   created_at: number;
 };
@@ -42,12 +44,26 @@ export type RoomRow = {
   res_id: string;
   type: RoomType;
   name: string;
+  description: string | null;
   capabilities_json: string;
   restricted: number;
   position: number | null;
   archived: number;
   created_at: number;
 };
+
+// URL short-name derivation, shared by direct creation and
+// application approval. Lowercase, non [a-z0-9] folds to '-', collapses runs,
+// trims edges, caps at 32 - an all-non-ASCII name collapses to empty, which
+// falls back to a random short string rather than an empty slug.
+export function deriveSlugBase(name: string): string {
+  const base = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32);
+  return base || crypto.randomUUID().replace(/-/g, "").slice(0, 8);
+}
 
 export type MemberRow = {
   actor: string;
@@ -112,7 +128,10 @@ export class StrongholdDO extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.selfId = ctx.id.name ?? ctx.id.toString();
-    ctx.blockConcurrencyWhile(async () => this.migrate());
+    ctx.blockConcurrencyWhile(async () => {
+      this.migrate();
+      await this.backfillSlug();
+    });
   }
 
   // Best-effort side index (GET /api/me/strongholds) - the `member` table above
@@ -157,6 +176,9 @@ export class StrongholdDO extends DurableObject<Env> {
         position INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL
       );
     `);
+    this.addColumnIfMissing("config", "slug", "TEXT");
+    this.addColumnIfMissing("topic", "description", "TEXT");
+    this.addColumnIfMissing("room", "description", "TEXT");
     // task 048: stronghold-local groups (task 037) moved to server-level D1
     // tables (server_groups/user_server_groups, migration 0009) - drop the
     // per-DO tables outright, no migration of their data.
@@ -177,6 +199,25 @@ export class StrongholdDO extends DurableObject<Env> {
     }
   }
 
+  // strongholds created before the slug column existed have
+  // slug = NULL - backfill with the stronghold's own id (already globally
+  // unique) and best-effort mirror that into the D1 reverse index so
+  // GET /api/resolve/:server/:slug finds them too. Runs every wake-up but is
+  // a no-op past the first once every row has a slug.
+  private async backfillSlug(): Promise<void> {
+    const rows = this.ctx.storage.sql.exec<{ id: string; slug: string | null }>("SELECT id, slug FROM config").toArray();
+    for (const row of rows) {
+      if (row.slug) continue;
+      this.ctx.storage.sql.exec("UPDATE config SET slug = ? WHERE id = ?", row.id, row.id);
+      await this.env.DB.prepare(
+        "INSERT INTO stronghold_slug_index (slug, stronghold_id) VALUES (?, ?) ON CONFLICT DO NOTHING"
+      )
+        .bind(row.id, row.id)
+        .run()
+        .catch(() => {});
+    }
+  }
+
   // ---- config -----------------------------------------------------------------
 
   async initConfig(
@@ -185,15 +226,17 @@ export class StrongholdDO extends DurableObject<Env> {
     visibility: "public" | "private",
     ownerActor: string,
     description?: string,
-    icon?: string
+    icon?: string,
+    slug?: string
   ): Promise<ConfigRow> {
     const existing = this.ctx.storage.sql.exec<ConfigRow>("SELECT * FROM config WHERE id = ?", id).toArray();
     if (existing.length > 0) return existing[0]!;
     const createdAt = Date.now();
+    const resolvedSlug = slug ?? id;
     this.ctx.storage.sql.exec(
-      "INSERT INTO config (id, name, description, visibility, icon, cover, allow_message_edit, allow_message_retract, edit_window_secs, owner_actor, created_at) " +
-        "VALUES (?, ?, ?, ?, ?, NULL, 1, 1, 300, ?, ?)",
-      id, name, description ?? null, visibility, icon ?? null, ownerActor, createdAt
+      "INSERT INTO config (id, name, description, visibility, icon, cover, allow_message_edit, allow_message_retract, edit_window_secs, owner_actor, created_at, slug) " +
+        "VALUES (?, ?, ?, ?, ?, NULL, 1, 1, 300, ?, ?, ?)",
+      id, name, description ?? null, visibility, icon ?? null, ownerActor, createdAt, resolvedSlug
     );
     this.ctx.storage.sql.exec(
       "INSERT INTO member (actor, role, deny, restricted, application_state, joined_at) VALUES (?, 'owner', 0, 0, 'approved', ?)",
@@ -203,8 +246,17 @@ export class StrongholdDO extends DurableObject<Env> {
     return {
       id, name, description: description ?? null, visibility, icon: icon ?? null, cover: null,
       allow_message_edit: 1, allow_message_retract: 1, edit_window_secs: 300,
-      owner_actor: ownerActor, created_at: createdAt,
+      owner_actor: ownerActor, created_at: createdAt, slug: resolvedSlug,
     };
+  }
+
+  // server admin-only slug rename (api.ts holds the D1-index
+  // uniqueness check + gate; this just applies the already-resolved value).
+  async updateSlug(newSlug: string): Promise<ConfigRow | null> {
+    const current = await this.getConfig();
+    if (!current) return null;
+    this.ctx.storage.sql.exec("UPDATE config SET slug = ? WHERE id = ?", newSlug, current.id);
+    return { ...current, slug: newSlug };
   }
 
   async getConfig(): Promise<ConfigRow | null> {
@@ -313,7 +365,15 @@ export class StrongholdDO extends DurableObject<Env> {
 
   // ---- rooms --------------------------------------------------------------------
 
-  async createRoom(resId: string, type: RoomType, name: string, capabilities: string[], restricted: boolean, position?: number): Promise<RoomRow> {
+  async createRoom(
+    resId: string,
+    type: RoomType,
+    name: string,
+    capabilities: string[],
+    restricted: boolean,
+    position?: number,
+    description?: string | null
+  ): Promise<RoomRow> {
     // m0-protocol §13.3: "text" is mandatory on every room; "reactions" (§3.2a) is
     // served for every room too, so it's forced into the registry the same way.
     const withText = capabilities.includes("text") ? capabilities : ["text", ...capabilities];
@@ -323,11 +383,12 @@ export class StrongholdDO extends DurableObject<Env> {
     // of every explicitly ordered room - append it to the end instead.
     const maxPos = this.ctx.storage.sql.exec<{ maxpos: number | null }>("SELECT MAX(position) AS maxpos FROM room").one().maxpos;
     const pos = position ?? (maxPos ?? -1) + 1;
+    const desc = description ?? null;
     this.ctx.storage.sql.exec(
-      "INSERT INTO room (res_id, type, name, capabilities_json, restricted, position, archived, created_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
-      resId, type, name, JSON.stringify(caps), restricted ? 1 : 0, pos, createdAt
+      "INSERT INTO room (res_id, type, name, description, capabilities_json, restricted, position, archived, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)",
+      resId, type, name, desc, JSON.stringify(caps), restricted ? 1 : 0, pos, createdAt
     );
-    return { res_id: resId, type, name, capabilities_json: JSON.stringify(caps), restricted: restricted ? 1 : 0, position: pos, archived: 0, created_at: createdAt };
+    return { res_id: resId, type, name, description: desc, capabilities_json: JSON.stringify(caps), restricted: restricted ? 1 : 0, position: pos, archived: 0, created_at: createdAt };
   }
 
   async listRooms(): Promise<RoomRow[]> {
@@ -341,20 +402,21 @@ export class StrongholdDO extends DurableObject<Env> {
 
   async updateRoom(
     resId: string,
-    patch: { name?: string; restricted?: boolean; position?: number; capabilities?: string[] }
+    patch: { name?: string; description?: string | null; restricted?: boolean; position?: number; capabilities?: string[] }
   ): Promise<RoomRow | null> {
     const current = await this.getRoom(resId);
     if (!current) return null;
     const next = {
       ...current,
       name: patch.name ?? current.name,
+      description: "description" in patch ? (patch.description ?? null) : current.description,
       restricted: patch.restricted != null ? (patch.restricted ? 1 : 0) : current.restricted,
       position: patch.position ?? current.position,
       capabilities_json: patch.capabilities ? JSON.stringify(patch.capabilities) : current.capabilities_json,
     };
     this.ctx.storage.sql.exec(
-      "UPDATE room SET name = ?, capabilities_json = ?, restricted = ?, position = ? WHERE res_id = ?",
-      next.name, next.capabilities_json, next.restricted, next.position, resId
+      "UPDATE room SET name = ?, description = ?, capabilities_json = ?, restricted = ?, position = ? WHERE res_id = ?",
+      next.name, next.description, next.capabilities_json, next.restricted, next.position, resId
     );
     return next;
   }
@@ -376,21 +438,25 @@ export class StrongholdDO extends DurableObject<Env> {
     return this.ctx.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM topic").one().n;
   }
 
-  async createTopic(id: string, name: string, color: string | null): Promise<TopicMutationResult> {
+  async createTopic(id: string, name: string, color: string | null, description?: string | null): Promise<TopicMutationResult> {
     const dup = this.ctx.storage.sql.exec<{ id: string }>("SELECT id FROM topic WHERE name = ?", name).toArray();
     if (dup.length > 0) return { ok: false, code: "ALREADY_EXISTS" };
     if ((await this.countTopics()) >= TOPIC_LIMIT) return { ok: false, code: "TOPIC_LIMIT" };
     const createdAt = Date.now();
     const posRow = this.ctx.storage.sql.exec<{ maxpos: number | null }>("SELECT MAX(position) AS maxpos FROM topic").one();
     const position = (posRow.maxpos ?? -1) + 1;
+    const desc = description ?? null;
     this.ctx.storage.sql.exec(
-      "INSERT INTO topic (id, name, color, position, created_at) VALUES (?, ?, ?, ?, ?)",
-      id, name, color, position, createdAt
+      "INSERT INTO topic (id, name, color, description, position, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      id, name, color, desc, position, createdAt
     );
-    return { ok: true, topic: { id, name, color, position, created_at: createdAt } };
+    return { ok: true, topic: { id, name, color, description: desc, position, created_at: createdAt } };
   }
 
-  async updateTopic(id: string, patch: { name?: string; color?: string | null; position?: number }): Promise<TopicMutationResult> {
+  async updateTopic(
+    id: string,
+    patch: { name?: string; color?: string | null; description?: string | null; position?: number }
+  ): Promise<TopicMutationResult> {
     const rows = this.ctx.storage.sql.exec<TopicRow>("SELECT * FROM topic WHERE id = ?", id).toArray();
     const current = rows[0];
     if (!current) return { ok: false, code: "NOT_FOUND" };
@@ -400,10 +466,14 @@ export class StrongholdDO extends DurableObject<Env> {
         .toArray();
       if (dup.length > 0) return { ok: false, code: "ALREADY_EXISTS" };
     }
-    const next = { ...current, ...patch };
+    const next = {
+      ...current,
+      ...patch,
+      description: "description" in patch ? (patch.description ?? null) : current.description,
+    };
     this.ctx.storage.sql.exec(
-      "UPDATE topic SET name = ?, color = ?, position = ? WHERE id = ?",
-      next.name, next.color, next.position, id
+      "UPDATE topic SET name = ?, color = ?, description = ?, position = ? WHERE id = ?",
+      next.name, next.color, next.description, next.position, id
     );
     return { ok: true, topic: next };
   }

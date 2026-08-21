@@ -149,6 +149,46 @@ describe("topic CRUD", () => {
   });
 });
 
+describe("topic description", () => {
+  it("round-trips a description through create + patch", async () => {
+    const owner = "@topicdesc1:local";
+    const id = await freshStronghold(owner);
+    const token = await sessionToken(owner);
+
+    const createRes = await apiRequest(`/api/stronghold/${id}/topics`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ name: "Guide", description: "  how-to posts  " }),
+    });
+    expect(createRes.status).toBe(201);
+    const topic = (await createRes.json()) as { id: string; description: string | null; post_count: number };
+    expect(topic.description).toBe("how-to posts");
+    expect(topic.post_count).toBe(0);
+
+    const patchRes = await apiRequest(`/api/stronghold/${id}/topics/${topic.id}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ description: null }),
+    });
+    expect(patchRes.status).toBe(200);
+    expect((await patchRes.json()) as { description: string | null }).toMatchObject({ description: null });
+  });
+
+  it("rejects a description over 64 chars with MALFORMED", async () => {
+    const owner = "@topicdesc2:local";
+    const id = await freshStronghold(owner);
+    const token = await sessionToken(owner);
+
+    const res = await apiRequest(`/api/stronghold/${id}/topics`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ name: "Over", description: "x".repeat(65) }),
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "MALFORMED" });
+  });
+});
+
 describe("room rename/delete", () => {
   it("owner renames a room via PATCH", async () => {
     const owner = "@roomowner1:local";
@@ -163,7 +203,37 @@ describe("room rename/delete", () => {
       body: JSON.stringify({ name: "Renamed Room" }),
     });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ id: "general", name: "Renamed Room", type: "channel" });
+    expect(await res.json()).toEqual({
+      id: "general",
+      name: "Renamed Room",
+      type: "channel",
+      description: null,
+      capabilities: ["text", "reactions"],
+    });
+  });
+
+  it("round-trips a room description and rejects one over 64 chars", async () => {
+    const owner = "@roomowner4:local";
+    const id = await freshStronghold(owner);
+    const stub = env.STRONGHOLD_DO.getByName(id);
+    await stub.createRoom("general", "channel", "General", ["text"], false);
+    const token = await sessionToken(owner);
+
+    const okRes = await apiRequest(`/api/stronghold/${id}/rooms/general`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ description: "  general chat  " }),
+    });
+    expect(okRes.status).toBe(200);
+    expect((await okRes.json()) as { description: string | null }).toMatchObject({ description: "general chat" });
+
+    const tooLong = await apiRequest(`/api/stronghold/${id}/rooms/general`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ description: "x".repeat(65) }),
+    });
+    expect(tooLong.status).toBe(400);
+    expect(await tooLong.json()).toEqual({ error: "MALFORMED" });
   });
 
   it("rejects a non-owner/mod PATCH with FORBIDDEN", async () => {
@@ -291,5 +361,74 @@ describe("posts carry topics through projection and filtering", () => {
     const page2 = (await page2Res.json()) as { posts: Array<Record<string, unknown>>; next_cursor: string | null };
     expect(page2.posts.map((p) => p.post_seq)).toEqual([a1.seq]);
     expect(page2.next_cursor).toBeNull();
+  });
+});
+
+describe("post_count statistics", () => {
+  it("rooms list: section post_count increments on post, decrements on retract; channel carries no post_count", async () => {
+    const owner = "@postcount1:local";
+    const id = await freshStronghold(owner);
+    const stub = env.STRONGHOLD_DO.getByName(id);
+    await stub.createRoom("general", "channel", "General", ["text"], false);
+    await stub.createRoom("posts", "section", "Posts", ["text"], false);
+    const token = await sessionToken(owner);
+
+    const before = (await (
+      await apiRequest(`/api/stronghold/${id}/rooms`, { headers: { Authorization: `Bearer ${token}` } })
+    ).json()) as Array<Record<string, unknown>>;
+    expect(before.find((r) => r.id === "posts")).toMatchObject({ post_count: 0 });
+    expect(before.find((r) => r.id === "general")).not.toHaveProperty("post_count");
+
+    const roomRef = `${id}/sec/posts`;
+    const { ws } = await connectRoom(roomRef, owner, "owner");
+    ws.send(postFrame("pc1", "Counted", "body"));
+    const ack = await nextMessage(ws);
+    ws.close();
+
+    const afterPost = (await (
+      await apiRequest(`/api/stronghold/${id}/rooms`, { headers: { Authorization: `Bearer ${token}` } })
+    ).json()) as Array<Record<string, unknown>>;
+    expect(afterPost.find((r) => r.id === "posts")).toMatchObject({ post_count: 1 });
+
+    await apiRequest(`/api/stronghold/${id}/rooms/posts/items/${ack.seq}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    const afterRetract = (await (
+      await apiRequest(`/api/stronghold/${id}/rooms`, { headers: { Authorization: `Bearer ${token}` } })
+    ).json()) as Array<Record<string, unknown>>;
+    expect(afterRetract.find((r) => r.id === "posts")).toMatchObject({ post_count: 0 });
+  });
+
+  it("topics list: post_count reflects tagged, non-retracted posts across all section rooms", async () => {
+    const owner = "@postcount2:local";
+    const id = await freshStronghold(owner);
+    const stub = env.STRONGHOLD_DO.getByName(id);
+    await stub.createRoom("posts", "section", "Posts", ["text"], false);
+    const topic = await stub.createTopic("pc-topic", "Tagged", null);
+    if (!topic.ok) throw new Error("setup failed");
+    const token = await sessionToken(owner);
+
+    const roomRef = `${id}/sec/posts`;
+    const { ws } = await connectRoom(roomRef, owner, "owner");
+    ws.send(postFrame("pc2", "Tagged post", "body", [topic.topic.id]));
+    const ack = await nextMessage(ws);
+    ws.close();
+
+    const afterPost = (await (
+      await apiRequest(`/api/stronghold/${id}/topics`, { headers: { Authorization: `Bearer ${token}` } })
+    ).json()) as Array<{ id: string; post_count: number }>;
+    expect(afterPost.find((t) => t.id === topic.topic.id)?.post_count).toBe(1);
+
+    await apiRequest(`/api/stronghold/${id}/rooms/posts/items/${ack.seq}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    const afterRetract = (await (
+      await apiRequest(`/api/stronghold/${id}/topics`, { headers: { Authorization: `Bearer ${token}` } })
+    ).json()) as Array<{ id: string; post_count: number }>;
+    expect(afterRetract.find((t) => t.id === topic.topic.id)?.post_count).toBe(0);
   });
 });
