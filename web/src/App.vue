@@ -16,10 +16,12 @@ import { useAuth } from './composables/useAuth'
 import { LEFT_WIDTH_DEFAULT, LEFT_WIDTH_KEY, RIGHT_WIDTH_DEFAULT, RIGHT_WIDTH_KEY } from './composables/useColumnResize'
 import { useDocumentTitle } from './composables/useDocumentTitle'
 import { useInstanceConfig } from './composables/useInstanceConfig'
+import { useRoute } from './composables/useRoute'
 import { useShellView } from './composables/useShellView'
 import { useStronghold } from './composables/useStronghold'
 
 const auth = useAuth()
+useRoute()
 // ServerAdminModal and StrongholdAdminModal are two independent
 // PostModal-style floating overlays with separate entry points (task 039
 // split, task 048 modal-ized) - the shell underneath keeps rendering while
