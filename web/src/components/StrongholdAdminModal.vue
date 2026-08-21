@@ -13,6 +13,8 @@ import AvatarBadge from './AvatarBadge.vue'
 import CoverUploader from './CoverUploader.vue'
 import EmptyState from './EmptyState.vue'
 import MemberInfoCard from './MemberInfoCard.vue'
+import SectionManager from './SectionManager.vue'
+import TopicManager from './TopicManager.vue'
 
 // stronghold-scoped management only (members / blacklist / stronghold
 // settings) - server-level administration (policy, server members, invite
@@ -32,7 +34,9 @@ const MEMBER_SUBTABS: { Text: string; value: 'all' | 'restricted' }[] = [
   { Text: '受限', value: 'restricted' },
 ]
 
-const panelTab = ref<'members' | 'banned' | 'settings'>(props.initialTab)
+type PanelTab = 'members' | 'banned' | 'sections' | 'topics' | 'settings'
+
+const panelTab = ref<PanelTab>(props.initialTab)
 // m0-protocol §7.10: a server owner/admin manages every stronghold with
 // owner-equivalent permission even without a membership row - mirrors the
 // server's overlayRole/effectiveRole gate (api.ts), not just the local role.
@@ -40,15 +44,17 @@ const canManage = computed(() => myRole.value === 'owner' || myRole.value === 'm
 const isOwner = computed(() => myRole.value === 'owner')
 
 const panelTabOptions = computed(() => {
-  const opts: { Text: string; value: 'members' | 'banned' | 'settings' }[] = [{ Text: '成员', value: 'members' }]
+  const opts: { Text: string; value: PanelTab }[] = [{ Text: '成员', value: 'members' }]
   if (canManage.value) {
     opts.push({ Text: '黑名单', value: 'banned' })
+    opts.push({ Text: '分区', value: 'sections' })
+    opts.push({ Text: '话题', value: 'topics' })
     opts.push({ Text: '设置', value: 'settings' })
   }
   return opts
 })
 const panelTabSelected = computed(() => panelTabOptions.value.find((o) => o.value === panelTab.value))
-function onPanelTabSelect(item: { value: 'members' | 'banned' | 'settings' }) {
+function onPanelTabSelect(item: { value: PanelTab }) {
   panelTab.value = item.value
 }
 
@@ -325,6 +331,14 @@ watch(
                   </div>
                 </li>
               </ul>
+            </div>
+
+            <div v-else-if="panelTab === 'sections'" class="admin-modal__body">
+              <SectionManager />
+            </div>
+
+            <div v-else-if="panelTab === 'topics'" class="admin-modal__body">
+              <TopicManager />
             </div>
 
             <div v-else class="admin-modal__body">
