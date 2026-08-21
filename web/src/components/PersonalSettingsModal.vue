@@ -11,10 +11,9 @@ import { passwordError, requiredError } from '../utils/validate'
 import { WinButton, WinInfoBar, WinSelectorBar } from '../vendor/winui'
 import AppIcon from './icons/AppIcon.vue'
 
-// account-scoped settings: 安全(改密含 042 所有权托管密文解封-重封、TOTP、passkey，原分散在
-// ChangePasswordModal + SecuritySettingsModal 两个菜单项/组件里)与 外观(主题三态)归入同一悬浮
-// 窗，两个源组件的模板与逻辑原样迁入后即删除，避免两份并存。chrome 沿用
-// ServerAdminModal/StrongholdAdminModal 的 PostModal 式浮窗模式。
+// account-scoped settings: 安全(改密含 §7.9a 所有权托管密文解封-重封、TOTP、passkey)与
+// 外观(主题三态)归入同一悬浮窗。chrome 沿用 ServerAdminModal/StrongholdAdminModal 的
+// PostModal 式浮窗模式。
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -77,7 +76,7 @@ function onSecurityTabSelect(item: { value: SecurityTab }) {
   securityTab.value = item.value
 }
 
-// ---- 修改密码（迁自 ChangePasswordModal，042 托管重封逻辑原样保留）----
+// ---- 修改密码 ----
 
 // m0-protocol §7.9a: when the custody passphrase defaults to the login
 // password, a password change must re-wrap the custody ciphertext too, or the
@@ -139,7 +138,7 @@ async function submitPasswordChange() {
   }
 }
 
-// ---- 通行密钥（迁自 SecuritySettingsModal）----
+// ---- 通行密钥 ----
 
 const passkeys = ref<Passkey[]>([])
 const passkeysLoading = ref(false)
@@ -220,7 +219,7 @@ async function deletePasskey(passkey: Passkey) {
   passkeys.value = passkeys.value.filter((p) => p.id !== passkey.id)
 }
 
-// ---- 两步验证 TOTP（迁自 SecuritySettingsModal）----
+// ---- 两步验证 TOTP ----
 
 type TotpStep = 'status' | 'setup-scan' | 'setup-verify' | 'disable'
 const totpStep = ref<TotpStep>('status')
