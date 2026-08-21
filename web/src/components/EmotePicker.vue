@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { BUILTIN_PACK_IDS } from '../assets/mew-emotes'
 import { useEmotes } from '../composables/useEmotes'
 
 const emit = defineEmits<{ pick: [code: string]; close: [] }>()
 const { packs, loading } = useEmotes()
 
-// built-in pack always shows first regardless of load order, instance-defined
+// built-in packs always show first regardless of load order, instance-defined
 // packs follow in whatever order the API returned them.
 const groups = computed(() => {
-  const builtin = packs.value.filter((pack) => pack.id === 'builtin-mew')
-  const custom = packs.value.filter((pack) => pack.id !== 'builtin-mew')
+  const builtin = packs.value.filter((pack) => BUILTIN_PACK_IDS.includes(pack.id))
+  const custom = packs.value.filter((pack) => !BUILTIN_PACK_IDS.includes(pack.id))
   return [...builtin, ...custom].filter((pack) => pack.emotes.length > 0)
 })
 const isEmpty = computed(() => !loading.value && groups.value.length === 0)
