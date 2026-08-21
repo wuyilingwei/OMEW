@@ -911,6 +911,37 @@ export class RoomDO extends DurableObject<Env> {
     return { posts, next_cursor };
   }
 
+  // task 059: section room post_count for the rooms list - a plain count, not
+  // listPosts's full page (avoids pulling the whole post_index + item join).
+  async countPosts(): Promise<number> {
+    return this.ctx.storage.sql
+      .exec<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM post_index p LEFT JOIN tombstone t ON t.seq = p.post_seq WHERE t.seq IS NULL"
+      )
+      .one().n;
+  }
+
+  // task 059: per-topic post_count for the topics list - api.ts calls this once
+  // per section room in the stronghold and sums the per-topic counts itself.
+  async countPostsByTopic(topicIds: string[]): Promise<Record<string, number>> {
+    if (topicIds.length === 0) return {};
+    const placeholders = topicIds.map(() => "?").join(",");
+    const rows = this.ctx.storage.sql
+      .exec<{ topic_id: string; n: number }>(
+        `SELECT pt.topic_id AS topic_id, COUNT(*) AS n
+         FROM post_topic pt
+         JOIN post_index p ON p.post_seq = pt.post_seq
+         LEFT JOIN tombstone t ON t.seq = p.post_seq
+         WHERE t.seq IS NULL AND pt.topic_id IN (${placeholders})
+         GROUP BY pt.topic_id`,
+        ...topicIds
+      )
+      .toArray();
+    const out: Record<string, number> = {};
+    for (const row of rows) out[row.topic_id] = row.n;
+    return out;
+  }
+
   // Post detail + seq-anchored reply page (same before/limit idiom as getHistory).
   async getPost(postSeq: number, before: number | null, limit?: number): Promise<{ post: unknown; replies: unknown[]; next_before: number | null } | null> {
     const postRows = this.ctx.storage.sql
