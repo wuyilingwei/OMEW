@@ -13,6 +13,7 @@ export const ICON_PATHS = {
   home: 'M3 21V10l9-7 9 7v11 M9 21v-7h6v7',
   key: 'M15 7a4 4 0 1 0-4 4h-.5L4 17.5V20h2.5L12 14.5V13a4 4 0 0 0 3-6Z M14 8h.01',
   delete: 'M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13 M10 11v6 M14 11v6',
+  compass: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z M15 9l-2 6-6 2 2-6 6-2Z',
 } as const
 
 // 实心图标（fill=currentColor，非描边）：分隔点等装饰性符号

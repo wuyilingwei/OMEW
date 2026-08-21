@@ -46,6 +46,11 @@ export interface ErrorFrame {
   message: string
 }
 
+export interface RoomTokenClaims {
+  role: string
+  deny: number
+}
+
 export interface RoomSocketHandlers {
   onOpen?(): void
   onClose?(): void
@@ -56,6 +61,35 @@ export interface RoomSocketHandlers {
   onBump?(b: BumpFrame): void
   onError?(e: ErrorFrame): void
   onResyncGap?(): void
+  // F6: the room token is a base64url JSON payload (server's auth.ts
+  // signToken format, unverified here - purely a UI hint) carrying the
+  // effective role/deny baked in server-side (permissions.ts) - decoding it
+  // client-side lets the compose box front-run a mute instead of only
+  // discovering it from a failed send.
+  onToken?(claims: RoomTokenClaims): void
+}
+
+// decodes the unsigned JSON payload half of a signToken()-issued token
+// (server's auth.ts: `${base64url(json)}.${base64url(sig)}`) - no signature
+// check, this only ever informs client UI, the server re-checks deny on
+// every frame regardless.
+export function decodeTokenPayload(token: string): RoomTokenClaims | null {
+  try {
+    const [payload] = token.split('.')
+    if (!payload) return null
+    const padded = payload.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((payload.length + 3) % 4)
+    const json = decodeURIComponent(
+      atob(padded)
+        .split('')
+        .map((c) => '%' + c.charCodeAt(0).toString(16).padStart(2, '0'))
+        .join(''),
+    )
+    const claims = JSON.parse(json) as Partial<RoomTokenClaims>
+    if (typeof claims.role !== 'string' || typeof claims.deny !== 'number') return null
+    return { role: claims.role, deny: claims.deny }
+  } catch {
+    return null
+  }
 }
 
 // Shared by the real WS transport (below) and api/mock.ts's in-memory
@@ -108,6 +142,8 @@ export class RoomSocket implements RoomTransport {
       return
     }
     if (this.closed) return
+    const claims = decodeTokenPayload(token)
+    if (claims) this.handlers.onToken?.(claims)
 
     const url = `${wsOrigin()}${this.wsPath}`
     const ws = new WebSocket(url, [token])

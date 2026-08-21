@@ -2,10 +2,12 @@
 import { ref } from 'vue'
 import { useStronghold } from '../composables/useStronghold'
 import CreateStrongholdCard from './CreateStrongholdCard.vue'
+import DirectoryModal from './DirectoryModal.vue'
 import AppIcon from './icons/AppIcon.vue'
 
 const { nodes, selectedNodeId, selectNode, isGuestMode } = useStronghold()
 const showCreate = ref(false)
+const showDirectory = ref(false)
 
 function onCreated() {
   showCreate.value = false
@@ -28,6 +30,11 @@ function onCreated() {
         </button>
       </li>
       <li v-if="!isGuestMode">
+        <button class="node-rail__item node-rail__item--add" type="button" title="发现据点" @click="showDirectory = true">
+          <AppIcon name="compass" :size="18" />
+        </button>
+      </li>
+      <li v-if="!isGuestMode">
         <button class="node-rail__item node-rail__item--add" type="button" title="创建据点" @click="showCreate = true">
           <AppIcon name="add" :size="18" />
         </button>
@@ -42,6 +49,8 @@ function onCreated() {
         </div>
       </div>
     </Teleport>
+
+    <DirectoryModal :open="showDirectory" @close="showDirectory = false" />
   </nav>
 </template>
 

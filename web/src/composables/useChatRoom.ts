@@ -3,6 +3,8 @@ import { api } from '../api'
 import { createRoomTransport } from '../api/transport'
 import type { MediaAttachment, RoomItem, RoomSummary } from '../api/types'
 import type { RoomTransport } from '../api/roomSocket'
+// mirrors server's types.ts DENY_CHANNEL_SPEAK bit (m0-protocol S3.4 deny bitmask)
+const DENY_CHANNEL_SPEAK = 1
 import { useAuth } from './useAuth'
 import { useChannel } from './useChannel'
 import { useStronghold } from './useStronghold'
@@ -13,6 +15,10 @@ export interface PendingSend {
   media?: MediaAttachment[]
   ts: number
   status: 'sending' | 'failed'
+  // F6: distinguishes a server-side permission denial (OMEW_FORBIDDEN, no
+  // point retrying) from an ack timeout/dropped connection (worth a retry) -
+  // MessageBubble picks its failure copy and whether to offer 重试 off this.
+  failReason?: 'denied' | 'network'
 }
 
 const HISTORY_PAGE_SIZE = 50
@@ -22,6 +28,7 @@ const GUEST_POLL_MS = 15000
 const items = ref<RoomItem[]>([])
 const pending = ref<PendingSend[]>([])
 const connected = ref(false)
+const muted = ref(false)
 const historyLoading = ref(false)
 const hasMoreHistory = ref(true)
 
@@ -86,6 +93,7 @@ async function connectRoom(nodeId: string, room: RoomSummary) {
   pending.value = []
   hasMoreHistory.value = true
   connected.value = false
+  muted.value = false
   for (const t of ackTimers.values()) clearTimeout(t)
   ackTimers = new Map()
 
@@ -112,6 +120,9 @@ async function connectRoom(nodeId: string, room: RoomSummary) {
       },
       onClose: () => {
         connected.value = false
+      },
+      onToken: (claims) => {
+        muted.value = (claims.deny & DENY_CHANNEL_SPEAK) !== 0
       },
       onAck: (ack) => {
         if (!ack.client_id) return
@@ -142,6 +153,21 @@ async function connectRoom(nodeId: string, room: RoomSummary) {
       },
       onDelete: (d) => {
         items.value = items.value.filter((i) => i.seq !== d.target_seq)
+      },
+      // no client_id on a frame-level error (server's room-do.ts sendError),
+      // so this can't target one exact pending entry - marking every
+      // still-sending one is the closest match and self-corrects on the next
+      // successful send.
+      onError: (e) => {
+        if (e.code !== 'OMEW_FORBIDDEN') return
+        muted.value = true
+        for (const entry of pending.value) {
+          if (entry.status === 'sending') {
+            entry.status = 'failed'
+            entry.failReason = 'denied'
+            clearAckTimer(entry.clientId)
+          }
+        }
       },
       onResyncGap: () => {
         void loadHistory(nodeId, room.id, null)
@@ -206,14 +232,20 @@ export function useChatRoom() {
     const ok = transport.createItem(clientId, 'post', body)
     if (!ok) {
       const entry = pending.value.find((p) => p.clientId === clientId)
-      if (entry) entry.status = 'failed'
+      if (entry) {
+        entry.status = 'failed'
+        entry.failReason = 'network'
+      }
       return
     }
     ackTimers.set(
       clientId,
       setTimeout(() => {
         const entry = pending.value.find((p) => p.clientId === clientId)
-        if (entry) entry.status = 'failed'
+        if (entry) {
+          entry.status = 'failed'
+          entry.failReason = 'network'
+        }
       }, ACK_TIMEOUT_MS),
     )
   }
@@ -222,6 +254,7 @@ export function useChatRoom() {
     const entry = pending.value.find((p) => p.clientId === clientId)
     if (!entry || !transport) return
     entry.status = 'sending'
+    entry.failReason = undefined
     // same client_id: server's (origin, client_id) unique index makes this
     // safe even if the original send actually landed and only the ack was lost.
     const body: Record<string, unknown> = { text: entry.text }
@@ -229,13 +262,17 @@ export function useChatRoom() {
     const ok = transport.createItem(clientId, 'post', body)
     if (!ok) {
       entry.status = 'failed'
+      entry.failReason = 'network'
       return
     }
     ackTimers.set(
       clientId,
       setTimeout(() => {
         const e = pending.value.find((p) => p.clientId === clientId)
-        if (e) e.status = 'failed'
+        if (e) {
+          e.status = 'failed'
+          e.failReason = 'network'
+        }
       }, ACK_TIMEOUT_MS),
     )
   }
@@ -267,5 +304,5 @@ export function useChatRoom() {
     }
   }
 
-  return { items, pending, connected, historyLoading, hasMoreHistory, loadOlder, sendText, resend, editMessage, retractMessage }
+  return { items, pending, connected, muted, historyLoading, hasMoreHistory, loadOlder, sendText, resend, editMessage, retractMessage }
 }
