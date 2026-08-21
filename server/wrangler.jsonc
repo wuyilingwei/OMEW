@@ -45,7 +45,10 @@
   "assets": {
     "directory": "../web/dist",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/federation/*", "/stronghold", "/stronghold/*", "/inbox", "/inbox/*"]
+    // every worker-served prefix must be listed here: anything missing is
+    // swallowed by the SPA fallback above and comes back as index.html.
+    // Keep in sync with web/vite.config.ts's dev proxy.
+    "run_worker_first": ["/api/*", "/federation/*", "/stronghold", "/stronghold/*", "/inbox", "/inbox/*", "/media/*"]
   },
   "routes": [
     { "pattern": "omew.wuyilingwei.com", "custom_domain": true }
