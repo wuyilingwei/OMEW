@@ -16,7 +16,6 @@ const UPLOAD_ERROR_MESSAGES: Record<string, string> = {
 
 const { usage, noteUploaded } = useStorageUsage()
 
-const advanced = ref(false)
 const uploading = ref(false)
 const progress = ref(0)
 const error = ref('')
@@ -64,20 +63,9 @@ async function onFileChange(event: Event) {
         <WinButton Style="DefaultButtonStyle" :IsEnabled="!uploading" @Click="pickFile">
           {{ uploading ? `上传中…${progress}%` : '上传文件' }}
         </WinButton>
-        <button type="button" class="cover-uploader__advanced-toggle" @click="advanced = !advanced">
-          {{ advanced ? '收起高级选项' : '高级：直接填 URL' }}
-        </button>
       </div>
     </div>
     <p v-if="error" class="field__error">{{ error }}</p>
-    <input
-      v-if="advanced"
-      type="text"
-      class="cover-uploader__url-input"
-      :value="modelValue"
-      placeholder="封面图 URL"
-      @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)"
-    />
   </div>
 </template>
 
@@ -118,22 +106,4 @@ async function onFileChange(event: Event) {
   clip: rect(0 0 0 0);
 }
 
-.cover-uploader__advanced-toggle {
-  border: none;
-  background: transparent;
-  padding: 0;
-  font-size: 0.78rem;
-  color: var(--text-tertiary);
-  text-decoration: underline;
-}
-
-.cover-uploader__url-input {
-  width: 100%;
-  padding: 0.5rem 0.7rem;
-  border-radius: var(--radius-xs);
-  border: 1px solid var(--ctrl-border);
-  background: var(--ctrl-fill-secondary);
-  color: var(--text-primary);
-  font: inherit;
-}
 </style>

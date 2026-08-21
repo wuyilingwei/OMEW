@@ -26,13 +26,6 @@ export function passwordError(value: string): string {
   return ''
 }
 
-export function ownershipPassphraseError(value: string, loginPassword: string): string {
-  if (!value) return '所有权口令不能为空'
-  if (value.length < MIN_PASSWORD_LENGTH) return `所有权口令至少需要 ${MIN_PASSWORD_LENGTH} 位`
-  if (loginPassword && value === loginPassword) return '所有权口令不能与登录密码相同'
-  return ''
-}
-
 export function emailError(value: string): string {
   if (!value) return '邮箱不能为空'
   if (!EMAIL_RE.test(value)) return '邮箱格式不正确'
