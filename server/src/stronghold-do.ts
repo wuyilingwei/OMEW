@@ -316,11 +316,15 @@ export class StrongholdDO extends DurableObject<Env> {
   async createRoom(resId: string, type: RoomType, name: string, capabilities: string[], restricted: boolean, position?: number): Promise<RoomRow> {
     const caps = capabilities.includes("text") ? capabilities : ["text", ...capabilities];
     const createdAt = Date.now();
+    // listRooms orders by position first, so a room without one would sort ahead
+    // of every explicitly ordered room - append it to the end instead.
+    const maxPos = this.ctx.storage.sql.exec<{ maxpos: number | null }>("SELECT MAX(position) AS maxpos FROM room").one().maxpos;
+    const pos = position ?? (maxPos ?? -1) + 1;
     this.ctx.storage.sql.exec(
       "INSERT INTO room (res_id, type, name, capabilities_json, restricted, position, archived, created_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
-      resId, type, name, JSON.stringify(caps), restricted ? 1 : 0, position ?? null, createdAt
+      resId, type, name, JSON.stringify(caps), restricted ? 1 : 0, pos, createdAt
     );
-    return { res_id: resId, type, name, capabilities_json: JSON.stringify(caps), restricted: restricted ? 1 : 0, position: position ?? null, archived: 0, created_at: createdAt };
+    return { res_id: resId, type, name, capabilities_json: JSON.stringify(caps), restricted: restricted ? 1 : 0, position: pos, archived: 0, created_at: createdAt };
   }
 
   async listRooms(): Promise<RoomRow[]> {

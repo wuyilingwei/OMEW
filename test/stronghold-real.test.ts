@@ -70,7 +70,7 @@ describe("POST /api/stronghold/:id/rooms", () => {
     expect(res.status).toBe(201);
     const room = (await res.json()) as Record<string, unknown>;
     expect(room).toMatchObject({ name: "Announcements", type: "channel" });
-    expect(room.res_id).toBeTypeOf("string");
+    expect(room.id).toBeTypeOf("string");
 
     const forbidden = await apiRequest(`/api/stronghold/${id}/rooms`, {
       method: "POST",

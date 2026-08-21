@@ -1632,7 +1632,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
     const resId = generateResId();
     const room = await stub.createRoom(resId, type, name, ["text"], false);
-    return json(room, 201);
+    return json({ id: room.res_id, name: room.name, type: room.type }, 201);
   }
   // Task 034: the only other room listing under the /api/* flat-shape surface is
   // embedded per-actor in GET /api/me/strongholds (auth-only, "my strongholds") -
