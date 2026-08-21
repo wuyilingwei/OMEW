@@ -28,6 +28,10 @@ function cycleTheme() {
   mode.value = mode.value === 'system' ? 'light' : mode.value === 'light' ? 'dark' : 'system'
 }
 
+function setMode(next: ThemeMode) {
+  mode.value = next
+}
+
 export function useTheme() {
-  return { mode, cycleTheme }
+  return { mode, cycleTheme, setMode }
 }
