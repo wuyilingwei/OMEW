@@ -11,9 +11,8 @@ import {
   generateOwnershipKey,
   type OwnershipEnvelope,
 } from '../crypto/ownershipKey'
-import { emailError, ownershipPassphraseError, passwordError, requiredError, usernameError } from '../utils/validate'
+import { emailError, passwordError, requiredError, usernameError } from '../utils/validate'
 import { WinButton, WinInfoBar, WinSelectorBar } from '../vendor/winui'
-import AppIcon from './icons/AppIcon.vue'
 
 // the login/register form body, shared by AuthGate's full-screen gate and
 // AuthModal's popup shell (task 034) - hosts own the surrounding chrome
@@ -139,17 +138,10 @@ const registerForm = reactive({
   password: '',
   email: '',
   code: '',
-  ownershipPassphrase: '',
-  ownershipPassphraseConfirm: '',
 })
 const registerError = ref('')
 const registerBusy = ref(false)
 const pendingBackup = ref<{ session: AuthResponse; pubkeyBase64: string; envelope: OwnershipEnvelope } | null>(null)
-
-// m0-protocol §7.9a: the custody passphrase defaults to the login password
-// (no separate field) - independent custody passphrase is an opt-in advanced
-// mode, off by default, that restores the old two-field behavior.
-const useIndependentOwnershipPassphrase = ref(false)
 
 // exposed so a modal host can warn before discarding an unexported backup
 defineExpose({ hasPendingBackup: computed(() => pendingBackup.value != null) })
@@ -184,17 +176,11 @@ async function submitRegister() {
     needs('email') ? emailError(registerForm.email) : '',
     needs('code') ? requiredError(registerForm.code, '邀请码') : '',
   ].filter(Boolean)
-  if (useIndependentOwnershipPassphrase.value) {
-    const ownershipErr = ownershipPassphraseError(registerForm.ownershipPassphrase, registerForm.password)
-    if (ownershipErr) errors.push(ownershipErr)
-    if (registerForm.ownershipPassphrase !== registerForm.ownershipPassphraseConfirm) errors.push('两次输入的所有权口令不一致')
-  }
   registerError.value = errors.join('；')
   if (registerError.value) return
   registerBusy.value = true
   try {
-    const custodyPassphrase = useIndependentOwnershipPassphrase.value ? registerForm.ownershipPassphrase : registerForm.password
-    const { pubkeyBase64, envelope } = await generateOwnershipKey(custodyPassphrase)
+    const { pubkeyBase64, envelope } = await generateOwnershipKey(registerForm.password)
     const session = await auth.register({
       username: registerForm.username,
       password: registerForm.password,
@@ -325,43 +311,7 @@ function finishRegistration() {
           <input id="register-code" v-model.trim="registerForm.code" type="text" />
         </div>
 
-        <div class="auth-form__advanced-toggle">
-          <button
-            type="button"
-            class="auth-form__advanced-toggle-btn"
-            :aria-expanded="useIndependentOwnershipPassphrase"
-            @click="useIndependentOwnershipPassphrase = !useIndependentOwnershipPassphrase"
-          >
-            <AppIcon
-              name="chevron-right"
-              :size="14"
-              class="auth-form__advanced-toggle-icon"
-              :class="{ 'auth-form__advanced-toggle-icon--open': useIndependentOwnershipPassphrase }"
-            />
-            高级：使用独立所有权口令
-          </button>
-        </div>
-
-        <fieldset v-if="useIndependentOwnershipPassphrase" class="auth-form__ownership">
-          <legend class="field__label">所有权口令</legend>
-          <p class="field__hint">
-            独立于登录密码，永远不会发送到服务器——仅在本地用于加密你的账号所有权密钥，供将来账号迁移使用。请牢记，遗失后将无法找回。
-          </p>
-          <div class="field">
-            <label class="field__label" for="register-ownership">所有权口令</label>
-            <input id="register-ownership" v-model="registerForm.ownershipPassphrase" type="password" autocomplete="new-password" />
-          </div>
-          <div class="field">
-            <label class="field__label" for="register-ownership-confirm">确认所有权口令</label>
-            <input
-              id="register-ownership-confirm"
-              v-model="registerForm.ownershipPassphraseConfirm"
-              type="password"
-              autocomplete="new-password"
-            />
-          </div>
-        </fieldset>
-        <p v-else class="field__hint">
+        <p class="field__hint">
           账号所有权密钥将使用登录密码托管加密，无需单独设置。
         </p>
 
@@ -427,46 +377,4 @@ function finishRegistration() {
   background: var(--stroke-divider);
 }
 
-.auth-form__ownership {
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.7rem;
-  padding: 0.85rem;
-  border: 1px solid var(--stroke-divider);
-  border-radius: var(--radius-sm);
-}
-
-.auth-form__ownership legend {
-  padding: 0 0.3rem;
-}
-
-.auth-form__advanced-toggle {
-  display: flex;
-}
-
-.auth-form__advanced-toggle-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0;
-  border: none;
-  background: none;
-  font-size: 0.8rem;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.auth-form__advanced-toggle-btn:hover {
-  color: var(--text-primary);
-}
-
-.auth-form__advanced-toggle-icon {
-  display: inline-block;
-  transition: transform var(--fast-duration, 0.1s) var(--fast-out-slow-in, ease);
-}
-
-.auth-form__advanced-toggle-icon--open {
-  transform: rotate(90deg);
-}
 </style>

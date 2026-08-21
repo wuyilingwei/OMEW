@@ -220,6 +220,24 @@ export interface RoomSummary {
   type: RoomType
 }
 
+export interface RoomPatch {
+  name?: string
+  position?: number
+  restricted?: boolean
+}
+
+export interface Topic {
+  id: string
+  name: string
+  color: string | null
+  position: number
+}
+
+export interface TopicPayload {
+  name: string
+  color?: string | null
+}
+
 export interface StrongholdSummary {
   id: string
   name: string
@@ -266,6 +284,7 @@ export interface ItemBody {
   preview?: string
   media?: MediaAttachment[]
   quote?: unknown
+  topics?: string[]
 }
 
 export interface RoomItem {
@@ -299,10 +318,8 @@ export interface PostSummary {
   title: string
   cover: string | null
   preview: string
-  // optional: real listPosts/getPost responses don't project this field out
-  // of the stored body yet (server-side follow-up) - present for the
-  // author's own just-created post (local echo) and in mock/dev.
   media?: MediaAttachment[]
+  topics?: string[]
   last_reply_seq: number
   reply_count: number
   bumped_at: number
@@ -315,6 +332,7 @@ export interface PostPage {
 
 export interface PostDetail extends PostSummary {
   text: string
+  topics?: string[]
 }
 
 export interface PostReply {

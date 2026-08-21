@@ -34,6 +34,7 @@ import type {
   PublicUser,
   RegisterPayload,
   RoomItem,
+  RoomPatch,
   RoomSummary,
   RoomTokenResponse,
   RoomType,
@@ -48,9 +49,14 @@ import type {
   StrongholdConfigPatch,
   StrongholdMember,
   StrongholdSummary,
+  Topic,
+  TopicPayload,
   TotpLoginResult,
   TotpSetupResponse,
 } from './types'
+
+const TOPIC_LIMIT = 32
+const POST_TOPIC_LIMIT = 5
 
 interface MockUser extends AuthUser {
   password: string
@@ -264,6 +270,8 @@ interface MockRoomState {
   res_id: string
   type: RoomType
   name: string
+  position: number
+  restricted: boolean
   items: RoomItem[] // seq ascending
   tombstoned: Set<number>
   postIndex: Map<number, { last_reply_seq: number; reply_count: number; bumped_at: number }>
@@ -281,6 +289,7 @@ interface MockStrongholdState {
   edit_window_secs: number
   owner_actor: string
   rooms: Map<string, MockRoomState>
+  topics: Topic[]
 }
 
 const strongholds = new Map<string, MockStrongholdState>()
@@ -311,8 +320,18 @@ function minutesAgo(mins: number): number {
   return Date.now() - mins * 60_000
 }
 
-function makeRoom(resId: string, type: RoomType, name: string): MockRoomState {
-  return { res_id: resId, type, name, items: [], tombstoned: new Set(), postIndex: new Map(), nextSeq: 1 }
+function makeRoom(resId: string, type: RoomType, name: string, position = 0): MockRoomState {
+  return {
+    res_id: resId,
+    type,
+    name,
+    position,
+    restricted: false,
+    items: [],
+    tombstoned: new Set(),
+    postIndex: new Map(),
+    nextSeq: 1,
+  }
 }
 
 function appendItem(
@@ -325,8 +344,11 @@ function appendItem(
 ): RoomItem {
   const seq = room.nextSeq++
   const rootSeq = parentSeq ?? seq
+  const topics = body.topics?.length ? [...new Set(body.topics)].slice(0, POST_TOPIC_LIMIT) : undefined
   const finalBody: ItemBody =
-    room.type === 'section' && parentSeq == null ? { ...body, preview: (body.text ?? '').slice(0, PREVIEW_LEN) } : body
+    room.type === 'section' && parentSeq == null
+      ? { ...body, preview: (body.text ?? '').slice(0, PREVIEW_LEN), topics }
+      : { ...body, topics }
   const item: RoomItem = { seq, parent_seq: parentSeq, root_seq: rootSeq, actor, kind, ts, body: finalBody }
   room.items.push(item)
   if (room.type === 'section' && parentSeq == null) {
@@ -345,8 +367,8 @@ function appendItem(
 function seedDemoStronghold(): void {
   const id = 'demo-stronghold'
   if (strongholds.has(id)) return
-  const lobby = makeRoom('lobby', 'channel', '大厅')
-  const posts = makeRoom('posts', 'section', '帖子')
+  const lobby = makeRoom('lobby', 'channel', '大厅', 0)
+  const posts = makeRoom('posts', 'section', '帖子', 0)
 
   const chatSeed: [string, string, number][] = [
     ['rin', '早上好，今天的同步会议改到下午三点', 60],
@@ -384,6 +406,10 @@ function seedDemoStronghold(): void {
       [lobby.res_id, lobby],
       [posts.res_id, posts],
     ]),
+    topics: [
+      { id: 'topic-announce', name: '公告', color: '#4b9dd7', position: 0 },
+      { id: 'topic-chat', name: '闲聊', color: '#af5d3e', position: 1 },
+    ],
   })
 
   // task 048: two demo server groups + one assignment, so the server admin
@@ -453,8 +479,22 @@ function toStrongholdConfig(state: MockStrongholdState): StrongholdConfig {
 }
 
 function toStrongholdSummary(state: MockStrongholdState): StrongholdSummary {
-  const rooms: RoomSummary[] = [...state.rooms.values()].map((r) => ({ id: r.res_id, name: r.name, type: r.type }))
+  const rooms: RoomSummary[] = [...state.rooms.values()]
+    .sort((a, b) => a.position - b.position)
+    .map((r) => ({ id: r.res_id, name: r.name, type: r.type }))
   return { id: state.id, name: state.name, cover: state.cover || null, rooms }
+}
+
+function requireTopic(state: MockStrongholdState, topicId: string): Topic {
+  const topic = state.topics.find((t) => t.id === topicId)
+  if (!topic) throw new ApiRequestError('NOT_FOUND', 404)
+  return topic
+}
+
+function validateTopicName(name: string): string {
+  const trimmed = name.trim()
+  if (trimmed.length < 1 || trimmed.length > 16) throw new ApiRequestError('MALFORMED', 400)
+  return trimmed
 }
 
 function requireRoom(nodeId: string, resId: string): MockRoomState {
@@ -484,10 +524,8 @@ function toPost(room: MockRoomState, item: RoomItem) {
     title: item.body.title ?? '',
     cover: item.body.cover ?? null,
     preview: item.body.preview ?? '',
-    // unlike the real backend (server-side projection gap, tracked
-    // separately), the mock stand-in just returns the stored body's media
-    // as-is so image-message dev/visual checks work end-to-end.
     media: item.body.media,
+    topics: item.body.topics,
     last_reply_seq: idx?.last_reply_seq ?? item.seq,
     reply_count: idx?.reply_count ?? 0,
     bumped_at: idx?.bumped_at ?? item.ts,
@@ -838,8 +876,8 @@ export const mockApi = {
       return delay({ application_id: application.id, state: 'pending' as const })
     }
     const id = `sh-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
-    const lobby = makeRoom('lobby', 'channel', '大厅')
-    const posts = makeRoom('posts', 'section', '帖子')
+    const lobby = makeRoom('lobby', 'channel', '大厅', 0)
+    const posts = makeRoom('posts', 'section', '帖子', 0)
     const state: MockStrongholdState = {
       id,
       name: payload.name,
@@ -854,6 +892,7 @@ export const mockApi = {
         [lobby.res_id, lobby],
         [posts.res_id, posts],
       ]),
+      topics: [],
     }
     strongholds.set(id, state)
     strongholdMembers.set(id, [
@@ -911,7 +950,87 @@ export const mockApi = {
     const state = strongholds.get(nodeId)
     if (!state) throw new ApiRequestError('NOT_FOUND', 404)
     requireUserOrGuest(token, nodeId)
-    return delay([...state.rooms.values()].map((r) => ({ id: r.res_id, name: r.name, type: r.type })))
+    return delay(
+      [...state.rooms.values()]
+        .sort((a, b) => a.position - b.position)
+        .map((r) => ({ id: r.res_id, name: r.name, type: r.type })),
+    )
+  },
+
+  async patchRoom(token: string, nodeId: string, resId: string, patch: RoomPatch): Promise<RoomSummary> {
+    requireManager(token, nodeId)
+    const room = requireRoom(nodeId, resId)
+    if (patch.name !== undefined) room.name = patch.name
+    if (patch.position !== undefined) room.position = patch.position
+    if (patch.restricted !== undefined) room.restricted = patch.restricted
+    return delay({ id: room.res_id, name: room.name, type: room.type })
+  },
+
+  async deleteRoom(token: string, nodeId: string, resId: string): Promise<void> {
+    requireManager(token, nodeId)
+    const state = strongholds.get(nodeId)
+    const room = requireRoom(nodeId, resId)
+    const sameType = [...(state?.rooms.values() ?? [])].filter((r) => r.type === room.type)
+    if (sameType.length <= 1) throw new ApiRequestError('LAST_ROOM_OF_TYPE', 409)
+    state?.rooms.delete(resId)
+    return delay(undefined)
+  },
+
+  // ---- topics (据点共用话题池) --------------------------------------------
+
+  async listTopics(token: string | null, nodeId: string): Promise<Topic[]> {
+    const state = strongholds.get(nodeId)
+    if (!state) throw new ApiRequestError('NOT_FOUND', 404)
+    requireUserOrGuest(token, nodeId)
+    return delay(
+      [...state.topics].sort((a, b) => a.position - b.position),
+    )
+  },
+
+  async createTopic(token: string, nodeId: string, payload: TopicPayload): Promise<Topic> {
+    requireManager(token, nodeId)
+    const state = strongholds.get(nodeId)
+    if (!state) throw new ApiRequestError('NOT_FOUND', 404)
+    const name = validateTopicName(payload.name)
+    if (state.topics.some((t) => t.name === name)) throw new ApiRequestError('ALREADY_EXISTS', 409)
+    if (state.topics.length >= TOPIC_LIMIT) throw new ApiRequestError('TOPIC_LIMIT', 409)
+    const topic: Topic = {
+      id: `topic-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+      name,
+      color: payload.color ?? null,
+      position: state.topics.length ? Math.max(...state.topics.map((t) => t.position)) + 1 : 0,
+    }
+    state.topics.push(topic)
+    return delay(topic, 120)
+  },
+
+  async patchTopic(
+    token: string,
+    nodeId: string,
+    topicId: string,
+    patch: Partial<TopicPayload> & { position?: number },
+  ): Promise<Topic> {
+    requireManager(token, nodeId)
+    const state = strongholds.get(nodeId)
+    if (!state) throw new ApiRequestError('NOT_FOUND', 404)
+    const topic = requireTopic(state, topicId)
+    if (patch.name !== undefined) {
+      const name = validateTopicName(patch.name)
+      if (state.topics.some((t) => t.id !== topicId && t.name === name)) throw new ApiRequestError('ALREADY_EXISTS', 409)
+      topic.name = name
+    }
+    if (patch.color !== undefined) topic.color = patch.color
+    if (patch.position !== undefined) topic.position = patch.position
+    return delay({ ...topic }, 120)
+  },
+
+  async deleteTopic(token: string, nodeId: string, topicId: string): Promise<void> {
+    requireManager(token, nodeId)
+    const state = strongholds.get(nodeId)
+    if (!state) throw new ApiRequestError('NOT_FOUND', 404)
+    requireTopic(state, topicId)
+    state.topics = state.topics.filter((t) => t.id !== topicId)
+    return delay(undefined, 120)
   },
 
   async getStrongholdConfig(token: string | null, nodeId: string): Promise<StrongholdConfig> {
@@ -971,12 +1090,20 @@ export const mockApi = {
 
   // ---- posts ------------------------------------------------------------------
 
-  async listPosts(token: string | null, nodeId: string, resId: string, after?: string | null, limit = 20): Promise<PostPage> {
+  async listPosts(
+    token: string | null,
+    nodeId: string,
+    resId: string,
+    after?: string | null,
+    limit = 20,
+    topic?: string | null,
+  ): Promise<PostPage> {
     requireUserOrGuest(token, nodeId)
     const room = requireRoom(nodeId, resId)
     const posts = room.items
       .filter((i) => i.parent_seq == null && !room.tombstoned.has(i.seq))
       .map((i) => toPost(room, i))
+      .filter((p) => !topic || p.topics?.includes(topic))
       .sort((a, b) => b.bumped_at - a.bumped_at || b.post_seq - a.post_seq)
     let startIndex = 0
     if (after) {
@@ -1231,8 +1358,8 @@ export const mockApi = {
     application.decided_at = Date.now()
     if (state === 'approved') {
       const nodeId = `sh-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
-      const lobby = makeRoom('lobby', 'channel', '大厅')
-      const posts = makeRoom('posts', 'section', '帖子')
+      const lobby = makeRoom('lobby', 'channel', '大厅', 0)
+      const posts = makeRoom('posts', 'section', '帖子', 0)
       strongholds.set(nodeId, {
         id: nodeId,
         name: application.name,
@@ -1247,6 +1374,7 @@ export const mockApi = {
           [lobby.res_id, lobby],
           [posts.res_id, posts],
         ]),
+        topics: [],
       })
       strongholdMembers.set(nodeId, [
         {
