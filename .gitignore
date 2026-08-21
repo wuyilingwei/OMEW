@@ -7,3 +7,7 @@ dist/
 .dev.vars
 *.log
 .DS_Store
+
+# counter-exception to any global /test/ ignore rule: this repo tracks its test suite
+!/test/
+!/test/**

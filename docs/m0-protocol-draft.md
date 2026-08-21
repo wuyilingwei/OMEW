@@ -216,10 +216,11 @@ function receive(raw_bytes, peer_ip):
 
 - `op` ∈ `add` / `remove`。每 `(actor, target_seq, name)` 至多存在一份反应:重复 `add` MUST 幂等去重,不存在时的 `remove` MUST 幂等无害,二者均 MUST NOT 报错。
 - `name` 为 1–64 个 ASCII 可打印字符的反应标识。服务端 MUST NOT 枚举校验 `name`(反应集属客户端资产,其演进不构成协议迁移),仅作长度与字符集校验。
-- `target_seq` MUST 指向同一房间内既存 item(`OMEW_TARGET_NOT_FOUND`),对已 tombstone 的 target MUST 拒绝(`OMEW_ITEM_DELETED`)。
+- `target_seq` MUST 指向同一房间内既存 item(`OMEW_TARGET_NOT_FOUND`),对已 tombstone 的 target MUST 拒绝(`OMEW_ITEM_DELETED`)。反应类拒绝的错误帧 MUST 附带 `target_seq` 与 `name`,使客户端能精确回滚乐观状态。
 - 反应为 engagement 状态,MUST 存于 item 主表之外的侧表,MUST NOT 进入归档分片(分片不可变,§9.2);热层之外的历史反应为尽力而为,实现 MUST 明示该边界。
+- 反应快照不占 seq,故不入 §5.2 的 resync 修复面:resync 重放条目 MUST 随行其当前反应快照,未重放条目在断线期间的反应变更以重连后的读端点加载为准。此边界与热层边界同属 MUST 明示范围。
 - 权限:反应不受 §3.4 `deny` 位约束——`deny` 约束内容写入,不约束 engagement;发起者 MUST 持有效房间会话(游客只读态不可反应)。限流 MUST 与内容写入共用按 actor 的 token bucket。
-- 广播:服务端 MUST 广播绝对计数快照 `{target_seq, entries: [{name, count}], actor, op}`,其中 `entries` 为该 target 的全量反应计数(幂等绝对语义,同 `item.bump` 哲学);`actor` 与 `op` 供各端维护「本人已反应」标记。读端点(历史 / 帖子)MUST 随 item 返回 `entries` 及请求者视角的 `mine` 集合。
+- 广播:服务端 MUST 广播绝对计数快照 `{target_seq, entries: [{name, count}], actor, name, op}`,其中 `entries` 为该 target 的全量反应计数(幂等绝对语义,同 `item.bump` 哲学);`actor`、`name` 与 `op` 供各端——含同一账号的其他连接——维护「本人已反应」标记。读端点(历史 / 帖子)MUST 随 item 返回 `entries` 及请求者视角的 `mine` 集合。
 - 联邦:实例能力宣告就绪前,`item.reaction` MUST NOT 出现在联邦链路上,MUST NOT 写入去重表。
 
 ### 3.3 `tip.*`

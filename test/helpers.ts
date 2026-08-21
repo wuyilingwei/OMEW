@@ -228,6 +228,10 @@ export function itemDeleteFrame(targetSeq: number, reason?: string): string {
   return JSON.stringify({ type: "item.delete", target_seq: targetSeq, reason });
 }
 
+export function itemReactionFrame(targetSeq: number, name: string, op: "add" | "remove"): string {
+  return JSON.stringify({ type: "item.reaction", target_seq: targetSeq, name, op });
+}
+
 // Mints a bearer session token directly (bypasses /api/register + D1) - mirrors
 // connectRoom's direct RoomTokenClaims signing, for tests that only care about
 // StrongholdDO/RoomDO authorization mechanics rather than the full user system.

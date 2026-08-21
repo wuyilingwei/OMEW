@@ -117,6 +117,17 @@ export class RoomDO extends DurableObject<Env> {
         PRIMARY KEY (post_seq, topic_id)
       );
       CREATE INDEX IF NOT EXISTS idx_post_topic_topic ON post_topic(topic_id, post_seq DESC);
+      -- m0-protocol §3.2a: reaction is hot-layer engagement state only, MUST NOT
+      -- enter archive shards; history beyond the hot layer is best-effort. resync
+      -- replays carry each replayed item's current reaction snapshot inline - items
+      -- outside that window rely on the post-reconnect read endpoints instead.
+      CREATE TABLE IF NOT EXISTS reaction (
+        target_seq INTEGER NOT NULL, name TEXT NOT NULL, actor TEXT NOT NULL, ts INTEGER NOT NULL,
+        PRIMARY KEY(target_seq, name, actor)
+      );
+      -- primary key already leads with target_seq, so a standalone index on just
+      -- that column is a redundant left-prefix - write cost with no read benefit.
+      DROP INDEX IF EXISTS idx_reaction_target;
     `);
     sql.exec(`INSERT OR IGNORE INTO meta (key, value) VALUES ('next_seq', 1)`);
   }
@@ -278,6 +289,9 @@ export class RoomDO extends DurableObject<Env> {
         return;
       case "item.delete":
         this.handleItemDelete(ws, attachment, frame);
+        return;
+      case "item.reaction":
+        this.handleItemReaction(ws, attachment, frame);
         return;
       case "resync":
         this.handleResync(ws, frame);
@@ -495,6 +509,73 @@ export class RoomDO extends DurableObject<Env> {
     this.sendAck(ws, result.seq == null ? { status: "ok", target_seq: targetSeq } : { status: "ok", target_seq: targetSeq, seq: result.seq });
   }
 
+  // m0-protocol §3.2a: engagement toggle, never occupies seq, not gated by deny
+  // bits. Rate limiting is already applied once per frame in webSocketMessage
+  // above (shared actor bucket), so this handler doesn't take a token itself.
+  private handleItemReaction(ws: WebSocket, attachment: Attachment, frame: Record<string, unknown>): void {
+    const rawTargetSeq = frame.target_seq;
+    const rawName = frame.name;
+    const op = frame.op;
+
+    // Guard types before coercing: Number()/String() would turn {} into
+    // "[object Object]" (storable) and true into 1 (addressable) rather than
+    // rejecting them. Echo back whatever locator the frame carried, even if
+    // it fails validation, so the client can still match this reply to its
+    // pending optimistic update.
+    if (typeof rawName !== "string" || !Number.isSafeInteger(rawTargetSeq)) {
+      this.sendError(ws, "OMEW_MALFORMED", "bad item.reaction", { target_seq: rawTargetSeq, name: rawName });
+      return;
+    }
+    const targetSeq = rawTargetSeq as number;
+    const name = rawName;
+    if (!/^[\x20-\x7e]{1,64}$/.test(name) || (op !== "add" && op !== "remove")) {
+      this.sendError(ws, "OMEW_MALFORMED", "bad item.reaction", { target_seq: targetSeq, name });
+      return;
+    }
+
+    const target = this.ctx.storage.sql.exec<{ seq: number }>("SELECT seq FROM item WHERE seq = ?", targetSeq).toArray();
+    if (target.length === 0) {
+      this.sendError(ws, "OMEW_TARGET_NOT_FOUND", "target not found", { target_seq: targetSeq, name });
+      return;
+    }
+    const tomb = this.ctx.storage.sql.exec<{ seq: number }>("SELECT seq FROM tombstone WHERE seq = ?", targetSeq).toArray();
+    if (tomb.length > 0) {
+      this.sendError(ws, "OMEW_ITEM_DELETED", "target already deleted", { target_seq: targetSeq, name });
+      return;
+    }
+
+    // Per-(actor, target, name) toggle is idempotent: duplicate add and a
+    // missing remove are silent no-ops, never errors.
+    if (op === "add") {
+      this.ctx.storage.sql.exec(
+        "INSERT OR IGNORE INTO reaction (target_seq, name, actor, ts) VALUES (?, ?, ?, ?)",
+        targetSeq, name, attachment.actor, Date.now()
+      );
+    } else {
+      this.ctx.storage.sql.exec(
+        "DELETE FROM reaction WHERE target_seq = ? AND name = ? AND actor = ?",
+        targetSeq, name, attachment.actor
+      );
+    }
+
+    const entries = this.ctx.storage.sql
+      .exec<{ name: string; count: number }>(
+        "SELECT name, COUNT(*) AS count FROM reaction WHERE target_seq = ? GROUP BY name ORDER BY name",
+        targetSeq
+      )
+      .toArray();
+
+    // Absolute snapshot, same shape to sender and everyone else - sender gets it
+    // immediately (not batched), the rest via the usual batching window.
+    const responseFrame = { type: "item.reaction", target_seq: targetSeq, entries, actor: attachment.actor, name, op };
+    try {
+      ws.send(JSON.stringify(responseFrame));
+    } catch {
+      // socket already gone; the broadcast below still reaches everyone else.
+    }
+    this.enqueueBroadcast(ws, responseFrame);
+  }
+
   // HTTP entry points for the same edit/retract operations (api.ts), for clients
   // that aren't holding the room's WS open. Core logic and the
   // item.update/item.delete broadcast are shared with the WS frame handlers above.
@@ -541,16 +622,26 @@ export class RoomDO extends DurableObject<Env> {
       return { ok: false, code: "WINDOW_EXPIRED", message: "edit window has expired" };
     }
 
+    // Section top-level post: preview is server-derived and folded into the
+    // stored body at create time (handleItemCreate's isSectionPost branch) - an
+    // edit MUST re-fold it the same way, or list/post reads keep the stale preview.
+    const roomKind = roomRef.split("/")[1];
+    const isSectionPost = roomKind === "sec" && target[0]!.parent_seq == null;
+    const b = body as Record<string, unknown>;
+    const finalBody: unknown = isSectionPost && typeof b.text === "string"
+      ? { ...b, preview: b.text.slice(0, PREVIEW_LEN) }
+      : body;
+
     const editedAt = Date.now();
     const seq = this.allocateSeq();
-    const bodyJson = JSON.stringify(body);
+    const bodyJson = JSON.stringify(finalBody);
     this.ctx.storage.sql.exec(
       "INSERT INTO edit (target_seq, seq, body, edited_at) VALUES (?, ?, ?, ?) " +
         "ON CONFLICT(target_seq) DO UPDATE SET seq = excluded.seq, body = excluded.body, edited_at = excluded.edited_at",
       targetSeq, seq, bodyJson, editedAt
     );
 
-    this.enqueueBroadcast(excludeWs, { type: "item.update", seq, target_seq: targetSeq, body, edited_at: editedAt });
+    this.enqueueBroadcast(excludeWs, { type: "item.update", seq, target_seq: targetSeq, body: finalBody, edited_at: editedAt });
     this.reportTip(roomRef, seq);
     return { ok: true, seq };
   }
@@ -669,11 +760,61 @@ export class RoomDO extends DurableObject<Env> {
         ts: r.ts,
         body: JSON.parse(r.edit_body ?? r.body),
       }));
+    const requester = (ws.deserializeAttachment() as Attachment | null)?.actor ?? null;
     try {
-      ws.send(JSON.stringify({ type: "batch", items }));
+      ws.send(JSON.stringify({ type: "batch", items: this.attachReactions(items, (i) => i.seq, requester) }));
     } catch {
       // socket already gone.
     }
+  }
+
+  // ---- reactions (m0-protocol §3.2a) -----------------------------------------
+  // Absolute {entries, mine} attached to every read-path item/post. entries is
+  // the full per-name count (never a delta, same idempotent-snapshot philosophy
+  // as item.bump); mine is the requester's own reaction names, empty for guests
+  // or when no requester identity is available. Batched IN(...) lookups so a
+  // 200-row history page or post list costs two extra queries total, not 2*N.
+  private attachReactions<T>(
+    rows: T[],
+    seqOf: (row: T) => number,
+    actor: string | null
+  ): (T & { reactions: { entries: { name: string; count: number }[]; mine: string[] } })[] {
+    if (rows.length === 0) return [];
+    const seqs = rows.map(seqOf);
+    const placeholders = seqs.map(() => "?").join(",");
+
+    const entryRows = this.ctx.storage.sql
+      .exec<{ target_seq: number; name: string; count: number }>(
+        `SELECT target_seq, name, COUNT(*) AS count FROM reaction WHERE target_seq IN (${placeholders}) GROUP BY target_seq, name ORDER BY name`,
+        ...seqs
+      )
+      .toArray();
+    const entriesBySeq = new Map<number, { name: string; count: number }[]>();
+    for (const r of entryRows) {
+      const list = entriesBySeq.get(r.target_seq) ?? [];
+      list.push({ name: r.name, count: r.count });
+      entriesBySeq.set(r.target_seq, list);
+    }
+
+    const mineBySeq = new Map<number, string[]>();
+    if (actor) {
+      const mineRows = this.ctx.storage.sql
+        .exec<{ target_seq: number; name: string }>(
+          `SELECT target_seq, name FROM reaction WHERE actor = ? AND target_seq IN (${placeholders})`,
+          actor, ...seqs
+        )
+        .toArray();
+      for (const r of mineRows) {
+        const list = mineBySeq.get(r.target_seq) ?? [];
+        list.push(r.name);
+        mineBySeq.set(r.target_seq, list);
+      }
+    }
+
+    return rows.map((row) => {
+      const seq = seqOf(row);
+      return { ...row, reactions: { entries: entriesBySeq.get(seq) ?? [], mine: mineBySeq.get(seq) ?? [] } };
+    });
   }
 
   // ---- ack / batch broadcast -------------------------------------------------
@@ -690,9 +831,9 @@ export class RoomDO extends DurableObject<Env> {
     }
   }
 
-  private sendError(ws: WebSocket, code: string, message: string): void {
+  private sendError(ws: WebSocket, code: string, message: string, extra?: Record<string, unknown>): void {
     try {
-      ws.send(JSON.stringify({ type: "error", code, message }));
+      ws.send(JSON.stringify({ type: "error", code, message, ...extra }));
     } catch {
       // ignore.
     }
@@ -811,7 +952,7 @@ export class RoomDO extends DurableObject<Env> {
   // ---- history RPC ------------------------------------------------------------
 
   // S5.3: pagination is seq-anchored, never timestamp-anchored.
-  async getHistory(beforeSeq: number | null, limit: number): Promise<unknown[]> {
+  async getHistory(beforeSeq: number | null, limit: number, actor: string | null = null): Promise<unknown[]> {
     const cappedLimit = Math.max(1, Math.min(limit || HISTORY_DEFAULT_LIMIT, HISTORY_MAX_LIMIT));
     const rows = beforeSeq == null
       ? this.ctx.storage.sql
@@ -835,7 +976,7 @@ export class RoomDO extends DurableObject<Env> {
           )
           .toArray();
 
-    return rows
+    const items = rows
       .filter((r) => r.tomb_seq == null)
       .map((r) => ({
         seq: r.seq,
@@ -847,6 +988,7 @@ export class RoomDO extends DurableObject<Env> {
         body: JSON.parse(r.edit_body ?? r.body),
         edited_at: r.edited_at ?? undefined,
       }));
+    return this.attachReactions(items, (i) => i.seq, actor);
   }
 
   // ---- section posts RPC (proposal S4.5) ---------------------------------------
@@ -854,7 +996,7 @@ export class RoomDO extends DurableObject<Env> {
   // Sorted by bumped_at desc (most recently active thread first), composite
   // (bumped_at, post_seq) cursor so a tie at the same millisecond still paginates
   // deterministically.
-  async listPosts(after: string | null, limit?: number, topicId?: string | null): Promise<{ posts: unknown[]; next_cursor: string | null }> {
+  async listPosts(after: string | null, limit?: number, topicId?: string | null, actor: string | null = null): Promise<{ posts: unknown[]; next_cursor: string | null }> {
     const cappedLimit = Math.max(1, Math.min(limit || POSTS_DEFAULT_LIMIT, POSTS_MAX_LIMIT));
     let cursorBumpedAt = Number.MAX_SAFE_INTEGER;
     let cursorSeq = Number.MAX_SAFE_INTEGER;
@@ -869,9 +1011,11 @@ export class RoomDO extends DurableObject<Env> {
     }
 
     const params: unknown[] = [];
-    let query = `SELECT p.post_seq, p.last_reply_seq, p.reply_count, p.bumped_at, i.actor, i.ts, i.body
+    let query = `SELECT p.post_seq, p.last_reply_seq, p.reply_count, p.bumped_at, i.actor, i.ts, i.body,
+                        e.body AS edit_body, e.edited_at
                  FROM post_index p
-                 JOIN item i ON i.seq = p.post_seq`;
+                 JOIN item i ON i.seq = p.post_seq
+                 LEFT JOIN edit e ON e.target_seq = p.post_seq`;
     if (topicId) {
       query += ` JOIN post_topic pt ON pt.post_seq = p.post_seq AND pt.topic_id = ?`;
       params.push(topicId);
@@ -882,7 +1026,10 @@ export class RoomDO extends DurableObject<Env> {
     params.push(cursorBumpedAt, cursorBumpedAt, cursorSeq, cappedLimit + 1);
 
     const rows = this.ctx.storage.sql
-      .exec<{ post_seq: number; last_reply_seq: number; reply_count: number; bumped_at: number; actor: string; ts: number; body: string }>(
+      .exec<{
+        post_seq: number; last_reply_seq: number; reply_count: number; bumped_at: number;
+        actor: string; ts: number; body: string; edit_body: string | null; edited_at: number | null;
+      }>(
         query,
         ...params
       )
@@ -891,7 +1038,7 @@ export class RoomDO extends DurableObject<Env> {
     const hasMore = rows.length > cappedLimit;
     const page = rows.slice(0, cappedLimit);
     const posts = page.map((r) => {
-      const body = JSON.parse(r.body) as { title?: string; cover?: string; preview?: string; media?: unknown; topics?: string[] };
+      const body = JSON.parse(r.edit_body ?? r.body) as { title?: string; cover?: string; preview?: string; media?: unknown; topics?: string[] };
       return {
         post_seq: r.post_seq,
         actor: r.actor,
@@ -904,18 +1051,23 @@ export class RoomDO extends DurableObject<Env> {
         last_reply_seq: r.last_reply_seq,
         reply_count: r.reply_count,
         bumped_at: r.bumped_at,
+        edited_at: r.edited_at ?? undefined,
       };
     });
     const last = page[page.length - 1];
     const next_cursor = hasMore && last ? `${last.bumped_at}:${last.post_seq}` : null;
-    return { posts, next_cursor };
+    return { posts: this.attachReactions(posts, (p) => p.post_seq, actor), next_cursor };
   }
 
   // Post detail + seq-anchored reply page (same before/limit idiom as getHistory).
-  async getPost(postSeq: number, before: number | null, limit?: number): Promise<{ post: unknown; replies: unknown[]; next_before: number | null } | null> {
+  async getPost(postSeq: number, before: number | null, limit?: number, actor: string | null = null): Promise<{ post: unknown; replies: unknown[]; next_before: number | null } | null> {
     const postRows = this.ctx.storage.sql
-      .exec<ItemRow & { tomb_seq: number | null }>(
-        "SELECT i.*, t.seq AS tomb_seq FROM item i LEFT JOIN tombstone t ON t.seq = i.seq WHERE i.seq = ?",
+      .exec<ItemRow & { tomb_seq: number | null; edit_body: string | null; edited_at: number | null }>(
+        `SELECT i.*, t.seq AS tomb_seq, e.body AS edit_body, e.edited_at
+         FROM item i
+         LEFT JOIN tombstone t ON t.seq = i.seq
+         LEFT JOIN edit e ON e.target_seq = i.seq
+         WHERE i.seq = ?`,
         postSeq
       )
       .toArray();
@@ -928,7 +1080,7 @@ export class RoomDO extends DurableObject<Env> {
         "SELECT last_reply_seq, reply_count, bumped_at FROM post_index WHERE post_seq = ?", postSeq
       )
       .toArray()[0];
-    const body = JSON.parse(postRow.body) as { title?: string; text?: string; cover?: string; preview?: string; media?: unknown; topics?: string[] };
+    const body = JSON.parse(postRow.edit_body ?? postRow.body) as { title?: string; text?: string; cover?: string; preview?: string; media?: unknown; topics?: string[] };
     const post = {
       post_seq: postSeq,
       actor: postRow.actor,
@@ -942,20 +1094,27 @@ export class RoomDO extends DurableObject<Env> {
       last_reply_seq: idx?.last_reply_seq ?? postSeq,
       reply_count: idx?.reply_count ?? 0,
       bumped_at: idx?.bumped_at ?? postRow.ts,
+      edited_at: postRow.edited_at ?? undefined,
     };
 
     const cappedLimit = Math.max(1, Math.min(limit || HISTORY_DEFAULT_LIMIT, HISTORY_MAX_LIMIT));
     const replyRows = before == null
       ? this.ctx.storage.sql
-          .exec<ItemRow & { tomb_seq: number | null }>(
-            `SELECT i.*, t.seq AS tomb_seq FROM item i LEFT JOIN tombstone t ON t.seq = i.seq
+          .exec<ItemRow & { tomb_seq: number | null; edit_body: string | null; edited_at: number | null }>(
+            `SELECT i.*, t.seq AS tomb_seq, e.body AS edit_body, e.edited_at
+             FROM item i
+             LEFT JOIN tombstone t ON t.seq = i.seq
+             LEFT JOIN edit e ON e.target_seq = i.seq
              WHERE i.root_seq = ? AND i.parent_seq IS NOT NULL ORDER BY i.seq DESC LIMIT ?`,
             postSeq, cappedLimit
           )
           .toArray()
       : this.ctx.storage.sql
-          .exec<ItemRow & { tomb_seq: number | null }>(
-            `SELECT i.*, t.seq AS tomb_seq FROM item i LEFT JOIN tombstone t ON t.seq = i.seq
+          .exec<ItemRow & { tomb_seq: number | null; edit_body: string | null; edited_at: number | null }>(
+            `SELECT i.*, t.seq AS tomb_seq, e.body AS edit_body, e.edited_at
+             FROM item i
+             LEFT JOIN tombstone t ON t.seq = i.seq
+             LEFT JOIN edit e ON e.target_seq = i.seq
              WHERE i.root_seq = ? AND i.parent_seq IS NOT NULL AND i.seq < ? ORDER BY i.seq DESC LIMIT ?`,
             postSeq, before, cappedLimit
           )
@@ -963,9 +1122,13 @@ export class RoomDO extends DurableObject<Env> {
 
     const replies = replyRows
       .filter((r) => r.tomb_seq == null)
-      .map((r) => ({ seq: r.seq, actor: r.actor, ts: r.ts, body: JSON.parse(r.body) }));
+      .map((r) => ({ seq: r.seq, actor: r.actor, ts: r.ts, body: JSON.parse(r.edit_body ?? r.body), edited_at: r.edited_at ?? undefined }));
     const lastRow = replyRows[replyRows.length - 1];
     const next_before = replyRows.length === cappedLimit && lastRow ? lastRow.seq : null;
-    return { post, replies, next_before };
+    return {
+      post: this.attachReactions([post], (p) => p.post_seq, actor)[0],
+      replies: this.attachReactions(replies, (r) => r.seq, actor),
+      next_before,
+    };
   }
 }

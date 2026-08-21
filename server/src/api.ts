@@ -1643,7 +1643,18 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const stub = env.STRONGHOLD_DO.getByName(m.id!);
     const rooms = await stub.listRooms();
     const visible = gate.kind === "guest" ? rooms.filter((r) => !r.restricted) : rooms;
-    return json(visible.map((r) => ({ id: r.res_id, name: r.name, type: r.type })));
+    // m0-protocol §3.2a/§13.3: server accepts reactions on every room regardless
+    // of when it was created, so rooms whose stored capabilities predate the
+    // feature get "reactions" unioned in rather than misreporting themselves.
+    return json(visible.map((r) => {
+      const caps = JSON.parse(r.capabilities_json) as string[];
+      return {
+        id: r.res_id,
+        name: r.name,
+        type: r.type,
+        capabilities: caps.includes("reactions") ? caps : [...caps, "reactions"],
+      };
+    }));
   }
 
   m = match("/api/stronghold/:id/rooms/:resId", path);
@@ -2167,9 +2178,11 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
     const session = await requireSession(request, env);
     let isGuest = false;
+    let requester: string | null = null;
     if (!(session instanceof Response)) {
       const member = await strongholdStub.getMember(session.actor);
       if (!overlayRole(session.server_role, member)) return errorResponse(403, "OMEW_BANNED", "not a member or banned");
+      requester = session.actor;
     } else {
       const policy = await getInstanceConfig(env);
       if (!(policy.allow_guest_browsing && config.visibility === "public")) {
@@ -2185,7 +2198,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const before = url.searchParams.has("before") ? Number(url.searchParams.get("before")) : null;
     const limit = url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : 50;
     const roomStub = env.ROOM_DO.getByName(roomRef);
-    const items = await roomStub.getHistory(before, limit);
+    const items = await roomStub.getHistory(before, limit, requester);
     return json({ items });
   }
 
@@ -2209,7 +2222,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const after = url.searchParams.get("after");
     const limit = url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined;
     const topic = url.searchParams.get("topic");
-    return json(await roomStub.listPosts(after, limit, topic));
+    const requester = gate.kind === "member" ? gate.actor : null;
+    return json(await roomStub.listPosts(after, limit, topic, requester));
   }
 
   m = match("/api/stronghold/:id/rooms/:resId/posts/:seq", path);
@@ -2228,7 +2242,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const roomStub = env.ROOM_DO.getByName(roomRef);
     const before = url.searchParams.has("before") ? Number(url.searchParams.get("before")) : null;
     const limit = url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined;
-    const result = await roomStub.getPost(seq, before, limit);
+    const requester = gate.kind === "member" ? gate.actor : null;
+    const result = await roomStub.getPost(seq, before, limit, requester);
     if (!result) return apiError(404, "NOT_FOUND");
     return json(result);
   }
