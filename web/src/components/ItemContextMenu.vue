@@ -4,23 +4,21 @@ import { BUILTIN_REACTION_SET } from '../assets/mew-emotes'
 import { WinMenuFlyout } from '../vendor/winui'
 
 // Right-click/long-press menu shared by chat messages, post bodies and post
-// replies (see useContextMenuGesture for the open-gesture wiring). Always
-// renders through WinMenuFlyout's default slot with an empty `Items` array
-// instead of its built-in Items/Select flow - that flow auto-closes the
-// flyout on every selection, which would fight the picker's own open state
-// when 添加反应 is chosen without closing the menu.
+// replies (see useContextMenuGesture for the open-gesture wiring). Laid out
+// like the Windows 11 shell menu: a row of icon buttons pinned across the top,
+// the labelled commands underneath. Renders through WinMenuFlyout's default
+// slot with an empty `Items` array because that row isn't expressible as a
+// flyout item.
 const props = defineProps<{ canReact: boolean; canEdit: boolean; canRetract: boolean; mine?: string[] }>()
 const emit = defineEmits<{ 'add-reaction': [name: string]; edit: []; retract: [] }>()
 
 const open = ref(false)
-const showPicker = ref(false)
 const anchorRect = ref<{ top: number; left: number; right: number; bottom: number; width: number; height: number } | null>(null)
 
 const reactionNames = Object.keys(BUILTIN_REACTION_SET)
 
 function close() {
   open.value = false
-  showPicker.value = false
 }
 
 // WinMenuFlyout estimates its own popup height from `Items` (always [] here,
@@ -28,24 +26,31 @@ function close() {
 // for the actual content - openAt() below works around that by estimating a
 // real size from this component's own CSS metrics and clamping/flipping the
 // anchor itself instead of trusting WinMenuFlyout's placement math.
-const PICKER_COLS = 4
-const PICKER_CELL = 40 // .item-context-menu__picker-item
-const PICKER_GAP = 4.8 // 0.3rem
-const PICKER_PAD = 6.4 // 0.4rem, one side
+const REACTION_CELL = 32
+const REACTION_GAP = 2
+const REACTION_PAD = 4 // one side
+const SEPARATOR_HEIGHT = 9 // 1px rule + 2*4px margin
 const LIST_ITEM_HEIGHT = 36 // .win-menu-flyout-item: 32px min-height + 2*2px margin
 const CHROME = 16 // WinMenuFlyout's own border + padding around the slot
 const MENU_GAP = 6 // matches WinMenuFlyout's default Gap prop
 const VIEWPORT_MARGIN = 8
+const MIN_WIDTH = 160
 
 function estimateMenuSize(): { width: number; height: number } {
-  const rows = Math.ceil(reactionNames.length / PICKER_COLS)
-  const pickerWidth = PICKER_COLS * PICKER_CELL + (PICKER_COLS - 1) * PICKER_GAP + PICKER_PAD * 2
-  const pickerHeight = rows * PICKER_CELL + (rows - 1) * PICKER_GAP + PICKER_PAD * 2
-  const itemCount = [props.canReact, props.canEdit, props.canRetract].filter(Boolean).length
-  const listHeight = itemCount * LIST_ITEM_HEIGHT
-  // sized for whichever sub-view (item list or reaction picker) is bigger, so
-  // switching between them after opening never needs a repositioning jump.
-  return { width: Math.max(160, pickerWidth) + CHROME, height: Math.max(listHeight, pickerHeight) + CHROME }
+  const commandCount = [props.canEdit, props.canRetract].filter(Boolean).length
+  const commandsHeight = commandCount * LIST_ITEM_HEIGHT
+  if (!props.canReact) return { width: MIN_WIDTH + CHROME, height: commandsHeight + CHROME }
+
+  const rowWidth = reactionNames.length * REACTION_CELL + (reactionNames.length - 1) * REACTION_GAP + REACTION_PAD * 2
+  // the row scrolls horizontally rather than widening the menu past the
+  // viewport - matches the .item-context-menu max-width below.
+  const maxWidth = Math.max(MIN_WIDTH, window.innerWidth - VIEWPORT_MARGIN * 2 - CHROME)
+  const rowHeight = REACTION_CELL + REACTION_PAD * 2
+  const separator = commandCount > 0 ? SEPARATOR_HEIGHT : 0
+  return {
+    width: Math.max(MIN_WIDTH, Math.min(rowWidth, maxWidth)) + CHROME,
+    height: rowHeight + separator + commandsHeight + CHROME,
+  }
 }
 
 function openAt(x: number, y: number) {
@@ -58,25 +63,15 @@ function openAt(x: number, y: number) {
   const clampedLeft = Math.min(Math.max(desiredLeft, VIEWPORT_MARGIN), Math.max(VIEWPORT_MARGIN, vw - menuW - VIEWPORT_MARGIN))
   const left = clampedLeft + menuW / 2
 
-  const spaceBelow = vh - y - MENU_GAP - VIEWPORT_MARGIN
-  const spaceAbove = y - MENU_GAP - VIEWPORT_MARGIN
-  const opensUp = spaceBelow < menuH && (spaceAbove >= menuH || spaceAbove > spaceBelow)
+  // WinMenuFlyout infers its own up/down direction, and its height guess comes
+  // from `Items` - always [] here, so it always concludes "fits below" and then
+  // clamps the popup to whatever room is left, scrolling the overflow. Rather
+  // than fight that inference, hand it an anchor that is already high enough
+  // for the menu to fit below: it opens downward from there, which lands the
+  // popup above the pointer when the pointer is near the bottom edge.
+  const top = Math.min(y, Math.max(VIEWPORT_MARGIN, vh - menuH - MENU_GAP - VIEWPORT_MARGIN))
 
-  anchorRect.value = {
-    top: y,
-    left,
-    right: left,
-    // WinMenuFlyout picks its own up/down direction from `spaceBelow` vs. its
-    // (wrong) Items-based height guess, which is small enough that it always
-    // reads as "fits below". Pushing `bottom` past the viewport when we've
-    // decided to flip up forces that comparison to fail on its own terms,
-    // without touching the up-branch math (which only reads `top`, so the
-    // visual anchor stays the real pointer position).
-    bottom: opensUp ? vh + menuH : y,
-    width: 0,
-    height: 0,
-  }
-  showPicker.value = false
+  anchorRect.value = { top, left, right: left, bottom: top, width: 0, height: 0 }
   open.value = true
 }
 
@@ -115,28 +110,26 @@ defineExpose({ openAt })
 <template>
   <WinMenuFlyout :Open="open" :AnchorRect="anchorRect" :Items="[]" Placement="Bottom" @Close="close">
     <div class="item-context-menu">
-      <div v-if="!showPicker" role="menu" class="win-menu-flyout-items">
-        <button v-if="canReact" type="button" class="win-menu-flyout-item" role="menuitem" @click="showPicker = true">
-          <span class="win-menu-flyout-label">添加反应</span>
+      <div v-if="canReact" class="item-context-menu__reactions" role="group" aria-label="添加反应">
+        <button
+          v-for="name in reactionNames"
+          :key="name"
+          type="button"
+          class="item-context-menu__reaction"
+          :class="{ 'item-context-menu__reaction--mine': mine?.includes(name) }"
+          :title="name"
+          @click="pick(name)"
+        >
+          <img :src="BUILTIN_REACTION_SET[name]" :alt="name" />
         </button>
+      </div>
+      <div v-if="canReact && (canEdit || canRetract)" class="item-context-menu__separator" role="separator"></div>
+      <div v-if="canEdit || canRetract" role="menu" class="win-menu-flyout-items">
         <button v-if="canEdit" type="button" class="win-menu-flyout-item" role="menuitem" @click="onEditClick">
           <span class="win-menu-flyout-label">编辑</span>
         </button>
         <button v-if="canRetract" type="button" class="win-menu-flyout-item" role="menuitem" @click="onRetractClick">
           <span class="win-menu-flyout-label">撤回</span>
-        </button>
-      </div>
-      <div v-else class="item-context-menu__picker">
-        <button
-          v-for="name in reactionNames"
-          :key="name"
-          type="button"
-          class="item-context-menu__picker-item"
-          :class="{ 'item-context-menu__picker-item--mine': mine?.includes(name) }"
-          :title="name"
-          @click="pick(name)"
-        >
-          <img :src="BUILTIN_REACTION_SET[name]" :alt="name" />
         </button>
       </div>
     </div>
@@ -146,35 +139,48 @@ defineExpose({ openAt })
 <style scoped>
 .item-context-menu {
   min-width: 160px;
+  max-width: calc(100vw - 2rem);
 }
 
-.item-context-menu__picker {
-  display: grid;
-  grid-template-columns: repeat(4, 40px);
-  gap: 0.3rem;
-  padding: 0.4rem;
+.item-context-menu__reactions {
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
-.item-context-menu__picker-item {
-  width: 40px;
-  height: 40px;
-  padding: 0.3rem;
+.item-context-menu__reactions::-webkit-scrollbar {
+  display: none;
+}
+
+.item-context-menu__separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--stroke-divider);
+}
+
+.item-context-menu__reaction {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  padding: 4px;
   border: 1px solid transparent;
   border-radius: var(--radius-xs);
-  background: var(--ctrl-fill-secondary);
+  background: transparent;
   transition: background var(--fast-duration) var(--fast-out-slow-in);
 }
 
-.item-context-menu__picker-item:hover {
-  background: var(--ctrl-fill-tertiary);
+.item-context-menu__reaction:hover {
+  background: var(--ctrl-fill-secondary);
 }
 
-.item-context-menu__picker-item--mine {
+.item-context-menu__reaction--mine {
   border-color: rgb(var(--colors-primary));
-  background: color-mix(in srgb, rgb(var(--colors-primary)) 16%, var(--ctrl-fill-secondary));
+  background: color-mix(in srgb, rgb(var(--colors-primary)) 16%, transparent);
 }
 
-.item-context-menu__picker-item img {
+.item-context-menu__reaction img {
   width: 100%;
   height: 100%;
   object-fit: contain;

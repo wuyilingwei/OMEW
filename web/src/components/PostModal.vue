@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { PostReply } from '../api/types'
 import { useAuth } from '../composables/useAuth'
 import { useAuthModal } from '../composables/useAuthModal'
@@ -141,8 +141,11 @@ function clearReplyPressTimer() {
   }
 }
 
-function openReplyMenu(reply: PostReply, x: number, y: number) {
+async function openReplyMenu(reply: PostReply, x: number, y: number) {
   activeReply.value = reply
+  // see ChatPane's onOpenMessageMenu: the menu reads its own props to size and
+  // gate itself, so it can only open once this reply's values have rendered.
+  await nextTick()
   replyMenuRef.value?.openAt(x, y)
 }
 

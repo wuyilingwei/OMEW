@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { EMPTY_STATE } from '../assets/mew'
 import { useAuth } from '../composables/useAuth'
 import { useAuthModal } from '../composables/useAuthModal'
@@ -190,8 +190,12 @@ function onToggleReaction(message: MessageVM, name: string) {
   toggleReaction(message.seq, name)
 }
 
-function onOpenMessageMenu(message: MessageVM, x: number, y: number) {
+async function onOpenMessageMenu(message: MessageVM, x: number, y: number) {
   activeMessage.value = message
+  // the menu sizes and gates itself off its props, which only carry this
+  // message's permissions after the next render - opening in the same tick
+  // reads the previous row's values, or none at all on the first open.
+  await nextTick()
   menuRef.value?.openAt(x, y)
 }
 
