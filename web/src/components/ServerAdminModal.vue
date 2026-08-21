@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { api } from '../api'
+import { api, ApiRequestError } from '../api'
 import type {
   AdminInstanceConfig,
   AdminUserEntry,
+  DirectoryEntry,
   Emote,
   EmotePack,
   InviteCode,
@@ -378,6 +379,57 @@ async function deleteEmote(emote: Emote) {
   }
 }
 
+// ---- stronghold slug (短名地址管理) -----------------------------------
+
+const strongholds = ref<DirectoryEntry[]>([])
+const strongholdsError = ref('')
+const editingSlugId = ref('')
+const editingSlugValue = ref('')
+const slugError = ref('')
+const slugBusy = ref(false)
+
+async function loadStrongholdsList() {
+  strongholdsError.value = ''
+  try {
+    strongholds.value = await api.getDirectory()
+  } catch {
+    strongholdsError.value = '无法加载据点列表'
+  }
+}
+
+function startEditSlug(s: DirectoryEntry) {
+  editingSlugId.value = s.id
+  editingSlugValue.value = s.slug
+  slugError.value = ''
+}
+
+function cancelEditSlug() {
+  editingSlugId.value = ''
+  slugError.value = ''
+}
+
+async function saveSlug(s: DirectoryEntry) {
+  if (!auth.token.value || slugBusy.value) return
+  const next = editingSlugValue.value.trim().toLowerCase()
+  if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(next)) {
+    slugError.value = '短名只能用小写字母、数字与连字符'
+    return
+  }
+  slugBusy.value = true
+  slugError.value = ''
+  try {
+    const result = await api.patchStrongholdSlug(auth.token.value, s.id, next)
+    s.slug = result.slug
+    editingSlugId.value = ''
+  } catch (err) {
+    if (err instanceof ApiRequestError && err.code === 'MALFORMED') slugError.value = '短名只能用小写字母、数字与连字符'
+    else if (err instanceof ApiRequestError && err.code === 'ALREADY_EXISTS') slugError.value = '该短名已被占用'
+    else slugError.value = '保存失败，请稍后重试'
+  } finally {
+    slugBusy.value = false
+  }
+}
+
 function close() {
   emit('close')
 }
@@ -399,6 +451,7 @@ watch(
     })
     loadInviteCodes()
     loadPacks()
+    loadStrongholdsList()
     if (auth.isServerOwner.value) void loadUsers()
   },
   { immediate: true },
@@ -469,6 +522,32 @@ watch(
                   </li>
                 </ul>
                 <p v-else class="field__hint">暂无邀请码。</p>
+              </section>
+
+              <section class="admin-card">
+                <h2 class="admin-card__title">据点短名</h2>
+                <WinInfoBar :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Informational">
+                  短名用于据点的地址（如 /a/短名），改名会让旧链接失效。
+                </WinInfoBar>
+                <p v-if="strongholdsError" class="field__error">{{ strongholdsError }}</p>
+                <p v-if="!strongholds.length && !strongholdsError" class="field__hint">暂无据点</p>
+                <ul v-else class="admin-slug__list">
+                  <li v-for="s in strongholds" :key="s.id" class="admin-slug__item">
+                    <span class="admin-slug__name">{{ s.name }}</span>
+                    <template v-if="editingSlugId === s.id">
+                      <div class="field admin-slug__edit">
+                        <input v-model="editingSlugValue" type="text" maxlength="32" @keyup.enter="saveSlug(s)" @keyup.escape="cancelEditSlug" />
+                        <p v-if="slugError" class="field__error">{{ slugError }}</p>
+                      </div>
+                      <WinButton Style="AccentButtonStyle" :IsEnabled="!slugBusy" @Click="saveSlug(s)">保存</WinButton>
+                      <WinButton Style="SubtleButtonStyle" :IsEnabled="!slugBusy" @Click="cancelEditSlug">取消</WinButton>
+                    </template>
+                    <template v-else>
+                      <code class="admin-slug__value">{{ s.slug }}</code>
+                      <WinButton Style="SubtleButtonStyle" @Click="startEditSlug(s)">改名</WinButton>
+                    </template>
+                  </li>
+                </ul>
               </section>
 
               <section v-if="config?.stronghold_creation_policy === 'application'" class="admin-card">
@@ -968,6 +1047,47 @@ watch(
 
 .admin-invite__status--used {
   color: var(--SystemFillColorCriticalBrush);
+}
+
+.admin-slug__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.admin-slug__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: var(--radius-xs);
+  background: var(--ctrl-fill-secondary);
+}
+
+.admin-slug__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-slug__value {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.admin-slug__edit {
+  flex: 1 1 160px;
+  min-width: 0;
+  margin: 0;
 }
 
 .admin-pack__create {
