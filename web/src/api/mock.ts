@@ -976,7 +976,7 @@ export const mockApi = {
     return delay(undefined)
   },
 
-  // ---- topics (据点共用话题池, task 052) ------------------------------------
+  // ---- topics (据点共用话题池) --------------------------------------------
 
   async listTopics(token: string | null, nodeId: string): Promise<Topic[]> {
     const state = strongholds.get(nodeId)
@@ -993,7 +993,7 @@ export const mockApi = {
     if (!state) throw new ApiRequestError('NOT_FOUND', 404)
     const name = validateTopicName(payload.name)
     if (state.topics.some((t) => t.name === name)) throw new ApiRequestError('ALREADY_EXISTS', 409)
-    if (state.topics.length >= TOPIC_LIMIT) throw new ApiRequestError('TOPIC_LIMIT', 400)
+    if (state.topics.length >= TOPIC_LIMIT) throw new ApiRequestError('TOPIC_LIMIT', 409)
     const topic: Topic = {
       id: `topic-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
       name,

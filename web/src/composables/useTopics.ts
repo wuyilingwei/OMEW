@@ -7,8 +7,11 @@ import { useStronghold } from './useStronghold'
 const topics = ref<Topic[]>([])
 const topicsLoading = ref(false)
 let loadedForNodeId = ''
-// single-flight, mirrors useStronghold's inflight guard
+// single-flight per nodeId - a request for a different node chains after the
+// in-flight one instead of being dropped, so rapid stronghold switching still
+// ends up loading the last-selected node's topics.
 let inflight: Promise<void> | null = null
+let inflightNodeId = ''
 
 function loadTopics(nodeId: string, force = false): Promise<void> {
   if (!nodeId) {
@@ -17,8 +20,12 @@ function loadTopics(nodeId: string, force = false): Promise<void> {
     return Promise.resolve()
   }
   if (loadedForNodeId === nodeId && !force) return Promise.resolve()
-  if (inflight) return inflight
+  if (inflight) {
+    if (inflightNodeId === nodeId) return inflight
+    return inflight.then(() => loadTopics(nodeId, force))
+  }
   topicsLoading.value = true
+  inflightNodeId = nodeId
   const auth = useAuth()
   inflight = (async () => {
     try {
@@ -29,6 +36,7 @@ function loadTopics(nodeId: string, force = false): Promise<void> {
     } finally {
       topicsLoading.value = false
       inflight = null
+      inflightNodeId = ''
     }
   })()
   return inflight

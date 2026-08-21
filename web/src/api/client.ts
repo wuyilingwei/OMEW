@@ -322,7 +322,7 @@ export const realApi = {
       headers: authHeaders(token),
     }),
 
-  // ---- topics (据点共用话题池, task 052) ----------------------------------
+  // ---- topics (据点共用话题池) --------------------------------------------
 
   listTopics: (token: string | null, nodeId: string) =>
     request<Topic[]>(`/api/stronghold/${nodeId}/topics`, { headers: optionalAuthHeaders(token) }),
