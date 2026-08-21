@@ -218,10 +218,13 @@ export interface RoomSummary {
   id: string
   name: string
   type: RoomType
+  description: string | null
+  post_count?: number
 }
 
 export interface RoomPatch {
   name?: string
+  description?: string | null
   position?: number
   restricted?: boolean
 }
@@ -230,18 +233,22 @@ export interface Topic {
   id: string
   name: string
   color: string | null
+  description: string | null
   position: number
+  post_count: number
 }
 
 export interface TopicPayload {
   name: string
   color?: string | null
+  description?: string | null
 }
 
 export interface StrongholdSummary {
   id: string
   name: string
   cover: string | null
+  slug: string
   rooms: RoomSummary[]
 }
 
@@ -253,6 +260,7 @@ export interface DirectoryEntry {
   name: string
   description: string | null
   cover: string | null
+  slug: string
   member_count: number
 }
 
