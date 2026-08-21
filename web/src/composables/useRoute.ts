@@ -21,6 +21,10 @@ const route = ref<RouteState | null>(null)
 // the state->address watchers below - without it every selection made while
 // restoring from a URL would immediately push a competing history entry.
 let applyingLocation = false
+// true only while a post-detail entry that this app pushed is on the stack.
+// A deep link straight to /p/<seq> never pushed one, so closing the modal
+// there has to rewrite the address instead of walking out of the app.
+let postEntryPushed = false
 
 function buildAddress(state: RouteState): string {
   if (!state.server || !state.slug) return '/'
@@ -101,8 +105,21 @@ function installWatchers() {
     )
   }
 
+  // guest mode fetches a stronghold's rooms lazily on selection, so a deep link
+  // to a specific room arrives before the room list does. Give it a moment
+  // rather than immediately rewriting the address to the default room.
+  async function waitForRooms(): Promise<void> {
+    for (let i = 0; i < 20; i++) {
+      if (stronghold.currentNode.value?.rooms.length) return
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+  }
+
   async function applyAddress() {
     applyingLocation = true
+    // after a popstate we can no longer tell whether the entry now showing is
+    // one we pushed - assume not, so a later close rewrites instead of leaving.
+    postEntryPushed = false
     try {
       const parsed = parseAddress()
       let nodeId = ''
@@ -116,6 +133,7 @@ function installWatchers() {
       }
       if (!nodeId) nodeId = stronghold.nodes.value[0]?.id ?? ''
       if (nodeId) stronghold.selectNode(nodeId)
+      if (parsed?.kind && parsed.room) await waitForRooms()
 
       if (parsed?.kind === 'c') {
         const room = channel.channelRooms.value.find((r) => r.id === parsed.room)
@@ -149,8 +167,17 @@ function installWatchers() {
     // entry that existed before it opened - keeps the back button meaningful.
     watch(postModal.openPostSeq, (seq, prevSeq) => {
       if (applyingLocation) return
-      if (seq != null) reconcileFromLiveState(false)
-      else if (prevSeq != null) history.back()
+      if (seq != null) {
+        reconcileFromLiveState(false)
+        postEntryPushed = true
+      } else if (prevSeq != null) {
+        if (postEntryPushed) {
+          postEntryPushed = false
+          history.back()
+        } else {
+          reconcileFromLiveState(true)
+        }
+      }
     })
 
     window.addEventListener('popstate', () => {

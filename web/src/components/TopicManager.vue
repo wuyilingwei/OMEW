@@ -147,12 +147,13 @@ async function remove(topic: Topic) {
 // ---- create ----
 const newName = ref('')
 const newColor = ref<string | null>(null)
+const newDescription = ref('')
 const createError = ref('')
 const creating = ref(false)
 
 async function create() {
   if (!auth.token.value) return
-  createError.value = requiredMaxLengthError(newName.value, 16, '话题名称')
+  createError.value = requiredMaxLengthError(newName.value, 16, '话题名称') || maxLengthError(newDescription.value, 64, '描述')
   if (createError.value) return
   if (topics.value.length >= TOPIC_LIMIT) {
     createError.value = '话题数量已达上限'
@@ -160,10 +161,15 @@ async function create() {
   }
   creating.value = true
   try {
-    await api.createTopic(auth.token.value, selectedNodeId.value, { name: newName.value.trim(), color: newColor.value })
+    await api.createTopic(auth.token.value, selectedNodeId.value, {
+      name: newName.value.trim(),
+      color: newColor.value,
+      description: newDescription.value.trim() || null,
+    })
     await reloadTopics()
     newName.value = ''
     newColor.value = null
+    newDescription.value = ''
   } catch (err) {
     if (err instanceof ApiRequestError && err.code === 'ALREADY_EXISTS') createError.value = '话题名称已存在'
     else if (err instanceof ApiRequestError && err.code === 'TOPIC_LIMIT') createError.value = '话题数量已达上限'
@@ -293,6 +299,13 @@ async function create() {
       <div class="topic-create__row">
         <div class="field topic-create__field">
           <input v-model="newName" type="text" maxlength="16" placeholder="新建话题名称" @keyup.enter="create" />
+          <input
+            v-model="newDescription"
+            type="text"
+            maxlength="64"
+            placeholder="话题描述（可选，≤64 字）"
+            @keyup.enter="create"
+          />
           <p v-if="createError" class="field__error">{{ createError }}</p>
         </div>
         <WinButton Style="DefaultButtonStyle" :IsEnabled="!creating" @Click="create">
