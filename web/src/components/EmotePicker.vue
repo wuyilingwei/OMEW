@@ -5,8 +5,8 @@ import { useEmotes } from '../composables/useEmotes'
 const emit = defineEmits<{ pick: [code: string]; close: [] }>()
 const { packs, loading } = useEmotes()
 
-// built-in pack always shows first ("官方" heading) regardless of load order,
-// instance-defined packs follow in whatever order the API returned them.
+// built-in pack always shows first regardless of load order, instance-defined
+// packs follow in whatever order the API returned them.
 const groups = computed(() => {
   const builtin = packs.value.filter((pack) => pack.id === 'builtin-mew')
   const custom = packs.value.filter((pack) => pack.id !== 'builtin-mew')
@@ -22,7 +22,7 @@ const isEmpty = computed(() => !loading.value && groups.value.length === 0)
       <p v-else-if="isEmpty" class="emote-picker__notice">暂无表情包</p>
       <div v-else class="emote-picker__groups">
         <section v-for="pack in groups" :key="pack.id" class="emote-picker__group">
-          <h3 class="emote-picker__group-title">{{ pack.id === 'builtin-mew' ? '官方' : (pack.display ?? pack.name) }}</h3>
+          <h3 class="emote-picker__group-title">{{ pack.display ?? pack.name }}</h3>
           <div class="emote-picker__grid">
             <button
               v-for="emote in pack.emotes"

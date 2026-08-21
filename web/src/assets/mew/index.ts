@@ -1,5 +1,5 @@
-// central re-export of the bundled Mew illustration subset - see NOTICE.md
-// for licensing. Vite resolves these imports to hashed build URLs.
+// central re-export of the bundled Mew asset subset - see NOTICE.md for
+// licensing. Vite resolves these imports to hashed build URLs.
 import azUrl from './az.webp'
 import comfortUrl from './comfort.webp'
 import defaultAvatar0Url from './default-avatar-0.png'
@@ -9,11 +9,6 @@ import helpfulUrl from './helpful.webp'
 import kusaUrl from './kusa.webp'
 import lanceUrl from './lance.webp'
 import likeUrl from './like.webp'
-import mAliceUrl from './m-alice.webp'
-import mAngryUrl from './m-angry.webp'
-import mSadUrl from './m-sad.webp'
-import mSuccessUrl from './m-success.webp'
-import mWarningUrl from './m-warning.webp'
 import memberSearchUrl from './member-search.webp'
 import niubiUrl from './niubi.webp'
 import noMsgUrl from './no-msg.webp'
@@ -21,13 +16,20 @@ import noThoughtUrl from './no-thought.webp'
 import okashiiUrl from './okashii.webp'
 import questionUrl from './question.webp'
 import saluteUrl from './salute.webp'
+import stampAzUrl from './stamp-az.webp'
+import stampComfortUrl from './stamp-comfort.webp'
+import stampHelpfulUrl from './stamp-helpful.webp'
+import stampKusaUrl from './stamp-kusa.webp'
+import stampLanceUrl from './stamp-lance.webp'
+import stampLikeUrl from './stamp-like.webp'
+import stampNiubiUrl from './stamp-niubi.webp'
+import stampOkashiiUrl from './stamp-okashii.webp'
+import stampQuestionUrl from './stamp-question.webp'
+import stampSaluteUrl from './stamp-salute.webp'
+import stampTearUrl from './stamp-tear.webp'
+import stampUhhuhUrl from './stamp-uhhuh.webp'
 import tearUrl from './tear.webp'
 import uhhuhUrl from './uhhuh.webp'
-import wAliceUrl from './w-alice.webp'
-import wDoNotUrl from './w-do-not.webp'
-import wEllipsisUrl from './w-ellipsis.webp'
-import wErrorUrl from './w-error.webp'
-import wLetMeSeeUrl from './w-let-me-see.webp'
 
 export const DEFAULT_AVATARS = [defaultAvatar0Url, defaultAvatar1Url]
 export const DEFAULT_NODE_PAGE_BG = defaultNodePageBgUrl
@@ -39,25 +41,27 @@ export const EMPTY_STATE = {
   onboarding: azUrl,
 }
 
-// chibi twin-character illustrations (m-* pink-haired / w-* dark-haired) - sent
-// as standalone stamp cards in chat, keyed the same way the seed script names
-// emotes (filename minus extension). Drives the built-in stamp pack, see mew-emotes.ts.
+// the forum's standard sticker set (4x3) - full-bleed pictures sent as their
+// own card in chat. Drives the built-in pack, see mew-emotes.ts. Same twelve
+// semantic names as REACTION_SET below but a completely different set of
+// pictures, hence the stamp- prefix on the files.
 export const STAMP_EMOTES: Record<string, string> = {
-  'm-alice': mAliceUrl,
-  'm-angry': mAngryUrl,
-  'm-sad': mSadUrl,
-  'm-success': mSuccessUrl,
-  'm-warning': mWarningUrl,
-  'w-alice': wAliceUrl,
-  'w-do-not': wDoNotUrl,
-  'w-ellipsis': wEllipsisUrl,
-  'w-error': wErrorUrl,
-  'w-let-me-see': wLetMeSeeUrl,
+  az: stampAzUrl,
+  comfort: stampComfortUrl,
+  helpful: stampHelpfulUrl,
+  kusa: stampKusaUrl,
+  lance: stampLanceUrl,
+  like: stampLikeUrl,
+  niubi: stampNiubiUrl,
+  okashii: stampOkashiiUrl,
+  question: stampQuestionUrl,
+  salute: stampSaluteUrl,
+  tear: stampTearUrl,
+  uhhuh: stampUhhuhUrl,
 }
 
-// flat thick-outline mascot glyphs - small reactions meant to attach to a
-// message/post rather than be sent as their own card. Not wired into any
-// EmotePack yet; reserved for the upcoming reaction feature.
+// flat thick-outline glyphs - small reactions meant to attach to a message or
+// post rather than be sent as their own card.
 export const REACTION_SET: Record<string, string> = {
   az: azUrl,
   comfort: comfortUrl,

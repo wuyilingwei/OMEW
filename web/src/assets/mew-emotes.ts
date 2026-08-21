@@ -7,7 +7,7 @@ import { REACTION_SET, STAMP_EMOTES } from './mew'
 export const BUILTIN_EMOTE_PACK: EmotePack = {
   id: 'builtin-mew',
   name: 'mew',
-  display: '双子',
+  display: '标准表情',
   emotes: Object.entries(STAMP_EMOTES).map(([name, url]) => ({
     id: `builtin-${name}`,
     name,
@@ -17,5 +17,5 @@ export const BUILTIN_EMOTE_PACK: EmotePack = {
 }
 
 // Reaction glyph set - not part of any EmotePack, consumed directly by the
-// upcoming message/post reaction feature (name -> bundled asset URL).
+// message/post reaction picker (name -> bundled asset URL).
 export const BUILTIN_REACTION_SET = REACTION_SET
