@@ -287,6 +287,19 @@ export interface ItemBody {
   topics?: string[]
 }
 
+// m0-protocol §3.2a: absolute per-name count for one item, plus the
+// requester's own reaction names (`mine`) - read endpoints project both,
+// never a delta.
+export interface ReactionEntry {
+  name: string
+  count: number
+}
+
+export interface ItemReactions {
+  entries: ReactionEntry[]
+  mine: string[]
+}
+
 export interface RoomItem {
   seq: number
   parent_seq: number | null
@@ -296,6 +309,7 @@ export interface RoomItem {
   ts: number
   body: ItemBody
   edited_at?: number
+  reactions?: ItemReactions
 }
 
 export interface RoomTokenResponse {
@@ -323,6 +337,7 @@ export interface PostSummary {
   last_reply_seq: number
   reply_count: number
   bumped_at: number
+  reactions?: ItemReactions
 }
 
 export interface PostPage {
@@ -340,6 +355,7 @@ export interface PostReply {
   actor: string
   ts: number
   body: ItemBody
+  reactions?: ItemReactions
 }
 
 export interface PostThread {

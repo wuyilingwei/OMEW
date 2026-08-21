@@ -5,21 +5,33 @@ import { useAuth } from '../composables/useAuth'
 import { useAuthModal } from '../composables/useAuthModal'
 import { useChatRoom } from '../composables/useChatRoom'
 import { useImageAttachments } from '../composables/useImageAttachments'
-import { useStrongholdConfig } from '../composables/useStrongholdConfig'
+import { useItemPermissions } from '../composables/useItemPermissions'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
 import { actorLocalpart } from '../utils/actor'
 import { WinButton, WinInfoBar } from '../vendor/winui'
 import EmotePicker from './EmotePicker.vue'
 import EmptyState from './EmptyState.vue'
 import AppIcon from './icons/AppIcon.vue'
+import ItemContextMenu from './ItemContextMenu.vue'
 import MessageBubble, { type MessageVM } from './MessageBubble.vue'
 
 const auth = useAuth()
 const { openAuthModal } = useAuthModal()
-const { config } = useStrongholdConfig()
+const { canEdit, canRetract } = useItemPermissions()
 const { members } = useStrongholdMembers()
-const { items, pending, historyLoading, hasMoreHistory, muted, loadOlder, sendText, resend, editMessage, retractMessage } =
-  useChatRoom()
+const {
+  items,
+  pending,
+  historyLoading,
+  hasMoreHistory,
+  muted,
+  loadOlder,
+  sendText,
+  resend,
+  editMessage,
+  retractMessage,
+  toggleReaction,
+} = useChatRoom()
 const attachments = useImageAttachments()
 
 const draft = ref('')
@@ -29,24 +41,17 @@ const scrollEl = ref<HTMLElement | null>(null)
 const showEmotePicker = ref(false)
 const imageInput = ref<HTMLInputElement | null>(null)
 
+// one shared context-menu instance for every message row (rather than one per
+// row) - activeMessage tracks which row's right-click/long-press opened it.
+const menuRef = ref<InstanceType<typeof ItemContextMenu> | null>(null)
+const activeMessage = ref<MessageVM | null>(null)
+
 function displayName(actor: string): string {
   return members.value.find((m) => m.actor === actor)?.display_name ?? actorLocalpart(actor)
 }
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-}
-
-function canEdit(actor: string, ts: number): boolean {
-  if (actor !== auth.user.value?.actor || !config.value?.allow_message_edit) return false
-  const windowSecs = config.value.edit_window_secs
-  return windowSecs <= 0 || (Date.now() - ts) / 1000 <= windowSecs
-}
-
-function canRetract(actor: string, ts: number): boolean {
-  if (actor !== auth.user.value?.actor || !config.value?.allow_message_retract) return false
-  const windowSecs = config.value.edit_window_secs
-  return windowSecs <= 0 || (Date.now() - ts) / 1000 <= windowSecs
 }
 
 const messages = computed<MessageVM[]>(() => {
@@ -64,6 +69,8 @@ const messages = computed<MessageVM[]>(() => {
     retractable: canRetract(item.actor, item.ts),
     pending: false,
     failed: false,
+    reactions: item.reactions,
+    canReact: auth.isAuthenticated.value,
   }))
   const optimistic: MessageVM[] = pending.value.map((p) => ({
     key: `p${p.clientId}`,
@@ -79,6 +86,8 @@ const messages = computed<MessageVM[]>(() => {
     pending: p.status === 'sending',
     failed: p.status === 'failed',
     failReason: p.failReason,
+    // no seq yet - nothing to attach a reaction to until the ack lands.
+    canReact: false,
   }))
   return [...confirmed, ...optimistic]
 })
@@ -166,6 +175,28 @@ function onResend(message: MessageVM) {
   if (clientId) resend(clientId)
 }
 
+function onToggleReaction(message: MessageVM, name: string) {
+  if (message.seq == null) return
+  toggleReaction(message.seq, name)
+}
+
+function onOpenMessageMenu(message: MessageVM, x: number, y: number) {
+  activeMessage.value = message
+  menuRef.value?.openAt(x, y)
+}
+
+function onMenuEdit() {
+  if (activeMessage.value) startEdit(activeMessage.value)
+}
+
+function onMenuRetract() {
+  if (activeMessage.value) void onRetract(activeMessage.value)
+}
+
+function onMenuAddReaction(name: string) {
+  if (activeMessage.value) onToggleReaction(activeMessage.value, name)
+}
+
 watch(
   () => messages.value.length,
   async () => {
@@ -191,11 +222,21 @@ watch(
         :grouped="entry.grouped"
         :editing="entry.message.seq !== null && editingSeq === entry.message.seq"
         v-model:editing-text="editingText"
-        @edit="startEdit(entry.message)"
         @cancel-edit="cancelEdit"
         @submit-edit="submitEdit"
-        @retract="onRetract(entry.message)"
         @resend="onResend(entry.message)"
+        @toggle-reaction="onToggleReaction(entry.message, $event)"
+        @open-menu="(x, y) => onOpenMessageMenu(entry.message, x, y)"
+      />
+      <ItemContextMenu
+        ref="menuRef"
+        :can-react="activeMessage?.canReact ?? false"
+        :can-edit="activeMessage?.editable ?? false"
+        :can-retract="activeMessage?.retractable ?? false"
+        :mine="activeMessage?.reactions?.mine"
+        @add-reaction="onMenuAddReaction"
+        @edit="onMenuEdit"
+        @retract="onMenuRetract"
       />
     </div>
     <div v-if="auth.isAuthenticated.value" class="chat-pane__compose-wrap" @dragover.prevent @drop="onDrop">

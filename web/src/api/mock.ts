@@ -19,6 +19,7 @@ import type {
   EmotePack,
   InviteCode,
   ItemBody,
+  ItemReactions,
   LoginPayload,
   MediaUploadResult,
   MemberGroupRef,
@@ -276,6 +277,9 @@ interface MockRoomState {
   tombstoned: Set<number>
   postIndex: Map<number, { last_reply_seq: number; reply_count: number; bumped_at: number }>
   nextSeq: number
+  // m0-protocol §3.2a: side table, target_seq -> name -> reacting actors.
+  // Never touches items/tombstoned - deleting an item doesn't clear this.
+  reactions: Map<number, Map<string, Set<string>>>
 }
 
 interface MockStrongholdState {
@@ -331,7 +335,23 @@ function makeRoom(resId: string, type: RoomType, name: string, position = 0): Mo
     tombstoned: new Set(),
     postIndex: new Map(),
     nextSeq: 1,
+    reactions: new Map(),
   }
+}
+
+// m0-protocol §3.2a: absolute per-name counts plus the requester's own
+// reaction names - the server always projects this shape, even with no
+// reactions at all ({entries: [], mine: []}), so the mock matches that
+// instead of omitting the field.
+function reactionsFor(room: MockRoomState, seq: number, actor: string | null): ItemReactions {
+  const byName = room.reactions.get(seq)
+  if (!byName) return { entries: [], mine: [] }
+  const entries = [...byName.entries()]
+    .map(([name, actors]) => ({ name, count: actors.size }))
+    .filter((entry) => entry.count > 0)
+    .sort((a, b) => a.name.localeCompare(b.name))
+  const mine = actor ? [...byName.entries()].filter(([, actors]) => actors.has(actor)).map(([name]) => name) : []
+  return { entries, mine }
 }
 
 function appendItem(
@@ -515,7 +535,7 @@ function requireManager(token: string, nodeId: string): { user: MockUser; member
   return { user, member }
 }
 
-function toPost(room: MockRoomState, item: RoomItem) {
+function toPost(room: MockRoomState, item: RoomItem, actor: string | null) {
   const idx = room.postIndex.get(item.seq)
   return {
     post_seq: item.seq,
@@ -529,6 +549,7 @@ function toPost(room: MockRoomState, item: RoomItem) {
     last_reply_seq: idx?.last_reply_seq ?? item.seq,
     reply_count: idx?.reply_count ?? 0,
     bumped_at: idx?.bumped_at ?? item.ts,
+    reactions: reactionsFor(room, item.seq, actor),
   }
 }
 
@@ -589,6 +610,52 @@ export class MockRoomTransport implements RoomTransport {
     if (!room) return false
     room.tombstoned.add(targetSeq)
     queueMicrotask(() => this.handlers.onDelete?.({ seq: targetSeq, target_seq: targetSeq, reason, by_role: 'author' }))
+    return true
+  }
+
+  // m0-protocol §3.2a: idempotent per-(actor,target,name) toggle, broadcasts
+  // the absolute count snapshot - a single in-memory client has no separate
+  // "sender" vs "bystander" path to simulate, so the one handlers object just
+  // gets the snapshot directly (mirrors the real sender-direct delivery).
+  // A rejection is still an accepted send (mirrors the real socket: app-level
+  // validation happens after the frame is on the wire) - it comes back as an
+  // async error frame carrying target_seq + name rather than a `false` return.
+  toggleReaction(targetSeq: number, name: string, op: 'add' | 'remove'): boolean {
+    const room = strongholds.get(this.nodeId)?.rooms.get(this.resId)
+    if (!room) return false
+    const sendError = (code: string, message: string) => {
+      queueMicrotask(() => this.handlers.onError?.({ code, message, target_seq: targetSeq, name }))
+    }
+    const item = room.items.find((i) => i.seq === targetSeq)
+    if (!item) {
+      sendError('OMEW_TARGET_NOT_FOUND', 'target item not found')
+      return true
+    }
+    if (room.tombstoned.has(targetSeq)) {
+      sendError('OMEW_ITEM_DELETED', 'item has been retracted')
+      return true
+    }
+    if (!name || name.length > 64 || !/^[\x20-\x7e]+$/.test(name)) {
+      sendError('OMEW_MALFORMED', 'invalid reaction name')
+      return true
+    }
+    let byName = room.reactions.get(targetSeq)
+    if (!byName) {
+      byName = new Map()
+      room.reactions.set(targetSeq, byName)
+    }
+    let actors = byName.get(name)
+    if (!actors) {
+      actors = new Set()
+      byName.set(name, actors)
+    }
+    if (op === 'add') actors.add(this.actor)
+    else actors.delete(this.actor)
+    const entries = [...byName.entries()]
+      .map(([n, a]) => ({ name: n, count: a.size }))
+      .filter((e) => e.count > 0)
+      .sort((a, b) => a.name.localeCompare(b.name))
+    queueMicrotask(() => this.handlers.onReaction?.({ target_seq: targetSeq, entries, actor: this.actor, name, op }))
     return true
   }
 }
@@ -1058,11 +1125,17 @@ export const mockApi = {
   },
 
   async getRoomHistory(token: string | null, nodeId: string, resId: string, before?: number | null, limit = 50): Promise<RoomItem[]> {
-    requireUserOrGuest(token, nodeId)
+    const requester = requireUserOrGuest(token, nodeId)
     const room = requireRoom(nodeId, resId)
+    const requesterActor = requester?.actor ?? null
     const visible = room.items.filter((i) => !room.tombstoned.has(i.seq))
     const filtered = before == null ? visible : visible.filter((i) => i.seq < before)
-    return delay(filtered.slice(-limit).reverse())
+    return delay(
+      filtered
+        .slice(-limit)
+        .reverse()
+        .map((item) => ({ ...item, reactions: reactionsFor(room, item.seq, requesterActor) })),
+    )
   },
 
   async editItem(token: string, nodeId: string, resId: string, seq: number, content: unknown): Promise<EditRetractResult> {
@@ -1098,11 +1171,11 @@ export const mockApi = {
     limit = 20,
     topic?: string | null,
   ): Promise<PostPage> {
-    requireUserOrGuest(token, nodeId)
+    const requester = requireUserOrGuest(token, nodeId)
     const room = requireRoom(nodeId, resId)
     const posts = room.items
       .filter((i) => i.parent_seq == null && !room.tombstoned.has(i.seq))
-      .map((i) => toPost(room, i))
+      .map((i) => toPost(room, i, requester?.actor ?? null))
       .filter((p) => !topic || p.topics?.includes(topic))
       .sort((a, b) => b.bumped_at - a.bumped_at || b.post_seq - a.post_seq)
     let startIndex = 0
@@ -1120,11 +1193,12 @@ export const mockApi = {
   },
 
   async getPost(token: string | null, nodeId: string, resId: string, seq: number, before?: number | null, limit = 50): Promise<PostThread> {
-    requireUserOrGuest(token, nodeId)
+    const requester = requireUserOrGuest(token, nodeId)
     const room = requireRoom(nodeId, resId)
     const postItem = room.items.find((i) => i.seq === seq && i.parent_seq == null)
     if (!postItem || room.tombstoned.has(seq)) throw new ApiRequestError('NOT_FOUND', 404)
-    const summary = toPost(room, postItem)
+    const requesterActor = requester?.actor ?? null
+    const summary = toPost(room, postItem, requesterActor)
     const allReplies = room.items
       .filter((i) => i.root_seq === seq && i.parent_seq != null && !room.tombstoned.has(i.seq))
       .sort((a, b) => b.seq - a.seq)
@@ -1132,7 +1206,7 @@ export const mockApi = {
     const page = filtered.slice(0, limit)
     return delay({
       post: { ...summary, text: postItem.body.text ?? '' },
-      replies: page.map((r) => ({ seq: r.seq, actor: r.actor, ts: r.ts, body: r.body })),
+      replies: page.map((r) => ({ seq: r.seq, actor: r.actor, ts: r.ts, body: r.body, reactions: reactionsFor(room, r.seq, requesterActor) })),
       next_before: page.length === limit ? page[page.length - 1]!.seq : null,
     })
   },

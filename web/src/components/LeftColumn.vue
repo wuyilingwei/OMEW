@@ -13,7 +13,7 @@ import PostCard from './PostCard.vue'
 
 const auth = useAuth()
 const { openAuthModal } = useAuthModal()
-const { posts, postsLoading, hasMorePosts, loadMorePosts, postRoom } = useSectionRoom()
+const { posts, postsLoading, hasMorePosts, loadMorePosts, postRoom, toggleReaction } = useSectionRoom()
 const { sectionRooms, selectedSection, selectSection, topicFilter, setTopicFilter } = useSection()
 const { topics } = useTopics()
 
@@ -87,7 +87,12 @@ function closeCompose() {
     <ComposePostModal :open="showCompose" @close="closeCompose" />
 
     <div class="left-column__feed">
-      <PostCard v-for="post in posts" :key="post.post_seq" :post="post" />
+      <PostCard
+        v-for="post in posts"
+        :key="post.post_seq"
+        :post="post"
+        @toggle-reaction="toggleReaction(post.post_seq, $event)"
+      />
       <EmptyState v-if="!posts.length && !postsLoading" :image="EMPTY_STATE.posts" text="暂无帖子" />
       <div v-if="hasMorePosts" class="left-column__more">
         <WinButton Style="SubtleButtonStyle" :IsEnabled="!postsLoading" @Click="loadMorePosts">

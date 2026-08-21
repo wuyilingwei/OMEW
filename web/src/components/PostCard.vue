@@ -1,17 +1,21 @@
 <script setup lang="ts">
 import type { PostSummary } from '../api/types'
+import { useAuth } from '../composables/useAuth'
 import { usePostModal } from '../composables/usePostModal'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
 import { useTopics } from '../composables/useTopics'
 import { actorLocalpart } from '../utils/actor'
 import AvatarBadge from './AvatarBadge.vue'
 import AppIcon from './icons/AppIcon.vue'
+import ReactionChips from './ReactionChips.vue'
 import TopicChips from './TopicChips.vue'
 
 const props = defineProps<{ post: PostSummary }>()
+const emit = defineEmits<{ 'toggle-reaction': [name: string] }>()
 const { open } = usePostModal()
 const { members } = useStrongholdMembers()
 const { topics } = useTopics()
+const auth = useAuth()
 
 const authorName = () => members.value.find((m) => m.actor === props.post.actor)?.display_name ?? actorLocalpart(props.post.actor)
 
@@ -35,6 +39,9 @@ function formatTime(ts: number): string {
       <h3 class="post-card__title">{{ post.title }}</h3>
       <p class="post-card__preview">{{ post.preview }}</p>
       <TopicChips v-if="post.topics?.length" :topics="topics" :ids="post.topics" class="post-card__topics" />
+      <div v-if="post.reactions?.entries.length" class="post-card__reactions" @click.stop>
+        <ReactionChips :reactions="post.reactions" :can-toggle="auth.isAuthenticated.value" @toggle="emit('toggle-reaction', $event)" />
+      </div>
       <div class="post-card__meta">
         <span class="post-card__author-group">
           <AvatarBadge :seed="authorName()" :size="24" />
