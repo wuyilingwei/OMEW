@@ -9,6 +9,8 @@ endorsed by Microsoft.
 - License: GPL-3.0 (verified via `GET /repos/Furry-Xiyi/WinUIonWeb` -> `license.spdx_id`)
 - Snapshot: `master` branch, commit `06027b62ece0` (latest commit touching
   `WinUIonWeb/src/components` at the time of vendoring)
+- Snapshot for the 2026-08-21 addition (`WinComboBox.vue`, `WinTextBox.vue`,
+  `useFlyoutAnimation.ts`): `master` branch, commit `6b1e65d5101e`
 - Files copied verbatim, no modifications:
   - `components/WinButton.vue`
   - `components/WinDropDownButton.vue`
@@ -26,16 +28,23 @@ endorsed by Microsoft.
   - `components/WinSelectorBar.vue` (added 2026-08-19; zero dependencies
     beyond `vue` itself — `WinSelectorBarItem.vue` is not vendored since this
     project only uses the `:Items` array API, never the slot-children form)
+  - `components/WinComboBox.vue` (added 2026-08-21; replaces native `<select>`
+    for real select-a-value fields)
+  - `components/WinTextBox.vue` (added 2026-08-21; transitive dep of
+    `WinComboBox` for its `IsEditable` mode — this project never sets
+    `IsEditable`, so `WinTextBox` never mounts)
+  - `components/useFlyoutAnimation.ts` (added 2026-08-21; transitive dep of
+    `WinComboBox` and `WinTextBox`, self-contained beyond `vue`)
   - `styles/theme.css` (full Fluent token layer, light + dark)
   - `styles/animations.css` (needed for `WinDropDownButton`'s chevron
     animation and `WinMenuFlyout`'s open/close motion — not optional here,
     contrary to the common case where a control's `<style>` block is
     self-contained)
 
-`WinButton`, `WinDropDownButton`, `WinToggleSwitch`, `WinInfoBar` and
-`WinSelectorBar` are re-exported from `index.ts` for consumption; the rest is
-internal plumbing pulled in by the dependency closure and is not meant to be
-imported directly.
+`WinButton`, `WinDropDownButton`, `WinToggleSwitch`, `WinInfoBar`,
+`WinSelectorBar` and `WinComboBox` are re-exported from `index.ts` for
+consumption; the rest is internal plumbing pulled in by the dependency
+closure and is not meant to be imported directly.
 
 ## Licensing compatibility
 
@@ -72,6 +81,15 @@ they're used in this project:
   never passes `Icon` on any item, so that path is never reached either. If a
   future change adds icons to a selector item, add the same escape hatch
   instead of shipping a missing-glyph box.
+- `WinComboBox`'s own chevron is the same CSS-drawn glyph as
+  `WinDropDownButton`'s — no icon-font dependency.
+- `WinTextBox` builds a cut/copy/paste/undo/redo context menu with
+  icon-font codepoints (U+E8C6, U+E8C8, U+E77F, U+E7A7, U+E7A6, U+E8B3), but
+  that menu only renders while `WinTextBox` itself is mounted, which only
+  happens when a `WinComboBox` has `IsEditable="true"`. This project never
+  sets `IsEditable` on `WinComboBox`, so `WinTextBox` never mounts and that
+  code path is never reached. If a future change makes a combo box
+  editable, add the same icon-font escape hatch before doing so.
 
 ## Not vendored
 

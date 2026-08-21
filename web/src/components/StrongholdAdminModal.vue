@@ -8,7 +8,7 @@ import { useStorageUsage } from '../composables/useStorageUsage'
 import { useStronghold } from '../composables/useStronghold'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
 import { formatBytes, nonNegativeIntError, requiredMaxLengthError } from '../utils/validate'
-import { WinButton, WinInfoBar, WinSelectorBar, WinToggleSwitch } from '../vendor/winui'
+import { WinButton, WinComboBox, WinInfoBar, WinSelectorBar, WinToggleSwitch } from '../vendor/winui'
 import AvatarBadge from './AvatarBadge.vue'
 import CoverUploader from './CoverUploader.vue'
 import EmptyState from './EmptyState.vue'
@@ -32,6 +32,10 @@ const ROLE_LABEL: Record<string, string> = { owner: '领主', mod: '管理员', 
 const MEMBER_SUBTABS: { Text: string; value: 'all' | 'restricted' }[] = [
   { Text: '全部', value: 'all' },
   { Text: '受限', value: 'restricted' },
+]
+const VISIBILITY_OPTIONS = [
+  { Text: '公开', Value: 'public' },
+  { Text: '私密', Value: 'private' },
 ]
 
 type PanelTab = 'members' | 'banned' | 'sections' | 'topics' | 'settings'
@@ -361,11 +365,13 @@ watch(
                   <CoverUploader v-if="auth.token.value" v-model="form.cover" :token="auth.token.value" />
                 </div>
                 <div class="field">
-                  <label class="field__label" for="sh-visibility">可见性</label>
-                  <select id="sh-visibility" v-model="form.visibility" :disabled="!isOwner">
-                    <option value="public">公开</option>
-                    <option value="private">私密</option>
-                  </select>
+                  <span class="field__label">可见性</span>
+                  <WinComboBox
+                    :ItemsSource="VISIBILITY_OPTIONS"
+                    SelectedValuePath="Value"
+                    v-model:SelectedValue="form.visibility"
+                    :IsEnabled="isOwner"
+                  />
                   <p v-if="!isOwner" class="field__hint">仅领主可修改可见性</p>
                 </div>
                 <WinToggleSwitch v-model="form.allow_message_edit">允许编辑消息</WinToggleSwitch>

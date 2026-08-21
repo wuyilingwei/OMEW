@@ -5,7 +5,7 @@ import type { StrongholdApplication, StrongholdCreationPolicy } from '../api/typ
 import { useAuth } from '../composables/useAuth'
 import { useStronghold } from '../composables/useStronghold'
 import { requiredMaxLengthError } from '../utils/validate'
-import { WinButton, WinInfoBar } from '../vendor/winui'
+import { WinButton, WinComboBox, WinInfoBar } from '../vendor/winui'
 
 const emit = defineEmits<{ created: [] }>()
 
@@ -25,6 +25,10 @@ const error = ref('')
 const submittedApplication = ref(false)
 
 const STATE_LABEL: Record<string, string> = { pending: '审核中', approved: '已通过', rejected: '已拒绝' }
+const VISIBILITY_OPTIONS = [
+  { Text: '公开', Value: 'public' },
+  { Text: '私密', Value: 'private' },
+]
 
 async function loadPolicy() {
   policyLoading.value = true
@@ -117,11 +121,12 @@ async function submit() {
           <textarea id="cs-desc" v-model="form.description" rows="3" placeholder="这个据点是做什么的？"></textarea>
         </div>
         <div class="field">
-          <label class="field__label" for="cs-visibility">可见性</label>
-          <select id="cs-visibility" v-model="form.visibility">
-            <option value="public">公开</option>
-            <option value="private">私密</option>
-          </select>
+          <span class="field__label">可见性</span>
+          <WinComboBox
+            :ItemsSource="VISIBILITY_OPTIONS"
+            SelectedValuePath="Value"
+            v-model:SelectedValue="form.visibility"
+          />
         </div>
         <p v-if="error" class="field__error">{{ error }}</p>
         <WinButton Style="AccentButtonStyle" type="submit" :IsEnabled="!busy" class="create-stronghold__submit">
