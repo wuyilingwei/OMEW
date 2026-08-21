@@ -25,7 +25,7 @@ const props = withDefaults(defineProps<{ open: boolean; initialTab?: 'members' |
 const emit = defineEmits<{ close: [] }>()
 
 const auth = useAuth()
-const { currentNode, selectedNodeId } = useStronghold()
+const { currentNode, selectedNodeId, loadStrongholds } = useStronghold()
 const { myRole } = useStrongholdMembers()
 
 const ROLE_LABEL: Record<string, string> = { owner: '领主', mod: '管理员', member: '成员' }
@@ -207,6 +207,9 @@ async function saveSettings() {
   if (isOwner.value) patch.visibility = form.visibility
   try {
     await api.patchStrongholdConfig(auth.token.value, selectedNodeId.value, patch)
+    // the rail, the stronghold home card and the tab title all read the name
+    // off the cached stronghold list - refetch it so a rename shows up at once
+    await loadStrongholds(true)
     settingsSaveOk.value = true
   } catch {
     settingsError.value = '保存失败，请稍后重试'
