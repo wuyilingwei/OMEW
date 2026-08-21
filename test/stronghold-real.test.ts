@@ -168,12 +168,16 @@ describe("GET /api/me/strongholds", () => {
 
     const res = await apiRequest("/api/me/strongholds", { headers: { Authorization: `Bearer ${token}` } });
     expect(res.status).toBe(200);
-    const list = (await res.json()) as Array<{ id: string; name: string; rooms: Array<{ id: string; name: string; type: string }> }>;
+    const list = (await res.json()) as Array<{
+      id: string;
+      name: string;
+      rooms: Array<{ id: string; name: string; type: string; description: string | null }>;
+    }>;
     const mine = list.find((s) => s.id === config.id);
     expect(mine).toBeTruthy();
     expect(mine!.name).toBe("Mine");
-    expect(mine!.rooms).toContainEqual({ id: "lobby", name: "大厅", type: "channel" });
-    expect(mine!.rooms).toContainEqual({ id: "posts", name: "帖子", type: "section" });
+    expect(mine!.rooms).toContainEqual({ id: "lobby", name: "大厅", type: "channel", description: null });
+    expect(mine!.rooms).toContainEqual({ id: "posts", name: "帖子", type: "section", description: null });
     expect(list.find((s) => s.name === "Not Mine")).toBeUndefined();
   });
 

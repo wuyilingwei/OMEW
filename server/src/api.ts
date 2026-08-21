@@ -1888,7 +1888,10 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
           name: config.name,
           cover: config.cover,
           slug: config.slug,
-          rooms: rooms.map((room) => ({ id: room.res_id, name: room.name, type: room.type })),
+          // post_count is deliberately absent here: it costs one DO call per
+          // section and this list loads on every app start. The by-id rooms
+          // endpoint carries it for the places that actually show counts.
+          rooms: rooms.map((room) => ({ id: room.res_id, name: room.name, type: room.type, description: room.description })),
         };
       })
     );

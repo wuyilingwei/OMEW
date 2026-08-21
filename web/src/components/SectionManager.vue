@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { api, ApiRequestError } from '../api'
 import type { RoomSummary } from '../api/types'
 import { useAuth } from '../composables/useAuth'
@@ -10,12 +10,28 @@ import AppIcon from './icons/AppIcon.vue'
 
 // 据点管理面板「分区」tab：section 型房间的增删改名排序（StrongholdAdminModal 内嵌）。
 const auth = useAuth()
-const { currentNode, selectedNodeId, loadStrongholds } = useStronghold()
-
-const sections = computed(() => (currentNode.value?.rooms ?? []).filter((r) => r.type === 'section'))
+const { selectedNodeId, loadStrongholds } = useStronghold()
 
 const busy = ref(false)
 const listError = ref('')
+
+// the by-id rooms endpoint is the only one carrying post_count - the cached
+// stronghold list deliberately skips it, so load rooms here rather than
+// deriving them from currentNode.
+const sections = ref<RoomSummary[]>([])
+
+async function loadSections() {
+  if (!selectedNodeId.value) return
+  try {
+    const rooms = await api.getStrongholdRooms(auth.token.value, selectedNodeId.value)
+    sections.value = rooms.filter((r) => r.type === 'section')
+  } catch {
+    listError.value = '加载分区失败'
+  }
+}
+
+onMounted(loadSections)
+watch(selectedNodeId, loadSections)
 
 const editingId = ref<string | null>(null)
 const editingName = ref('')
@@ -48,7 +64,7 @@ async function saveEdit(room: RoomSummary) {
       name: editingName.value.trim(),
       description: editingDescription.value.trim() || null,
     })
-    await loadStrongholds(true)
+    await Promise.all([loadStrongholds(true), loadSections()])
     editingId.value = null
   } catch {
     editError.value = '保存失败，请稍后重试'
@@ -66,7 +82,7 @@ async function reorder(list: RoomSummary[]) {
     // 房间的 position 可以为空（建房间时不设），只改被交换/拖动的两项会让它们排到未设过的
     // 房间之后，所以每次排序都按下标重写整列。
     await Promise.all(list.map((r, i) => api.patchRoom(token, selectedNodeId.value, r.id, { position: i })))
-    await loadStrongholds(true)
+    await Promise.all([loadStrongholds(true), loadSections()])
   } catch {
     listError.value = '排序失败，请稍后重试'
   } finally {
@@ -129,7 +145,7 @@ async function remove(room: RoomSummary) {
   listError.value = ''
   try {
     await api.deleteRoom(auth.token.value, selectedNodeId.value, room.id)
-    await loadStrongholds(true)
+    await Promise.all([loadStrongholds(true), loadSections()])
   } catch (err) {
     listError.value = err instanceof ApiRequestError && err.code === 'LAST_ROOM_OF_TYPE' ? '至少保留一个分区' : '删除失败，请稍后重试'
   } finally {
@@ -149,7 +165,7 @@ async function create() {
   creating.value = true
   try {
     await api.createRoom(auth.token.value, selectedNodeId.value, { name: newName.value.trim(), type: 'section' })
-    await loadStrongholds(true)
+    await Promise.all([loadStrongholds(true), loadSections()])
     newName.value = ''
   } catch {
     createError.value = '创建失败，请稍后重试'

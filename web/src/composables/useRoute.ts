@@ -3,6 +3,7 @@ import { api } from '../api'
 import { useChannel } from './useChannel'
 import { usePostModal } from './usePostModal'
 import { useSection } from './useSection'
+import { useSectionRoom } from './useSectionRoom'
 import { useShellView } from './useShellView'
 import { useStronghold } from './useStronghold'
 
@@ -25,6 +26,10 @@ let applyingLocation = false
 // A deep link straight to /p/<seq> never pushed one, so closing the modal
 // there has to rewrite the address instead of walking out of the app.
 let postEntryPushed = false
+// the address is authoritative until the first restore finishes: the default
+// stronghold/room selections that arrive with the initial list would otherwise
+// overwrite a deep link before it has been read.
+let restored = false
 
 function buildAddress(state: RouteState): string {
   if (!state.server || !state.slug) return '/'
@@ -81,11 +86,14 @@ function installWatchers() {
   const postModal = usePostModal()
   const shellView = useShellView()
 
+  // On desktop the chat and post columns are visible at once, so the shell's
+  // mobile tab can't say which one the address is about - it never leaves its
+  // default there. Track the pane the user last acted in instead.
+  const pane = ref<'c' | 's'>(shellView.activeView.value === 'posts' ? 's' : 'c')
+
   function currentKind(): 'c' | 's' | null {
     if (postModal.openPostSeq.value != null) return 's'
-    if (shellView.activeView.value === 'posts') return 's'
-    if (shellView.activeView.value === 'chat') return 'c'
-    return null
+    return pane.value
   }
 
   function reconcileFromLiveState(replace: boolean) {
@@ -115,6 +123,17 @@ function installWatchers() {
     }
   }
 
+  // Selecting a stronghold/section kicks off watchers that clear the topic
+  // filter and reload the post list. Let them run to completion before the
+  // address's own filter and open-post are applied, or they wipe them again.
+  async function waitForSelectionSettled(): Promise<void> {
+    const { postsLoading } = useSectionRoom()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    for (let i = 0; i < 40 && postsLoading.value; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+  }
+
   async function applyAddress() {
     applyingLocation = true
     // after a popstate we can no longer tell whether the entry now showing is
@@ -138,15 +157,22 @@ function installWatchers() {
       if (parsed?.kind === 'c') {
         const room = channel.channelRooms.value.find((r) => r.id === parsed.room)
         if (room) channel.selectChannel(room)
+        pane.value = 'c'
         shellView.setView('chat')
         postModal.close()
       } else if (parsed?.kind === 's') {
         const room = section.sectionRooms.value.find((r) => r.id === parsed.room)
         if (room) section.selectSection(room)
-        section.setTopicFilter(parsed.topic ?? null)
+        pane.value = 's'
         shellView.setView('posts')
-        if (parsed.postSeq != null) postModal.open(parsed.postSeq)
-        else postModal.close()
+        await waitForSelectionSettled()
+        section.setTopicFilter(parsed.topic ?? null)
+        if (parsed.postSeq != null) {
+          await waitForSelectionSettled()
+          postModal.open(parsed.postSeq)
+        } else {
+          postModal.close()
+        }
       } else {
         postModal.close()
       }
@@ -159,14 +185,32 @@ function installWatchers() {
 
   const scope = effectScope(true)
   scope.run(() => {
-    watch([stronghold.selectedNodeId, channel.selectedChannel, section.selectedSection, section.topicFilter], () => {
-      if (!applyingLocation) reconcileFromLiveState(false)
+    watch(stronghold.selectedNodeId, () => {
+      if (restored && !applyingLocation) reconcileFromLiveState(false)
+    })
+
+    // each pane's own state claims the address when the user touches it
+    watch(channel.selectedChannel, () => {
+      if (!restored || applyingLocation) return
+      pane.value = 'c'
+      reconcileFromLiveState(false)
+    })
+    watch([section.selectedSection, section.topicFilter], () => {
+      if (!restored || applyingLocation) return
+      pane.value = 's'
+      reconcileFromLiveState(false)
+    })
+    // the mobile shell tab is an explicit pane switch when it is in play
+    watch(shellView.activeView, (view) => {
+      if (!restored || applyingLocation || view === 'stronghold') return
+      pane.value = view === 'posts' ? 's' : 'c'
+      reconcileFromLiveState(false)
     })
 
     // post modal open/close: open pushes a new entry, close walks back to the
     // entry that existed before it opened - keeps the back button meaningful.
     watch(postModal.openPostSeq, (seq, prevSeq) => {
-      if (applyingLocation) return
+      if (!restored || applyingLocation) return
       if (seq != null) {
         reconcileFromLiveState(false)
         postEntryPushed = true
@@ -190,7 +234,9 @@ function installWatchers() {
     function trySettle() {
       if (settled) return
       settled = true
-      void applyAddress()
+      void applyAddress().finally(() => {
+        restored = true
+      })
     }
     watch(stronghold.loading, (isLoading, wasLoading) => {
       if (!isLoading && wasLoading) trySettle()
@@ -202,9 +248,11 @@ function installWatchers() {
       },
       { immediate: true },
     )
-    void Promise.resolve().then(() => {
-      if (!stronghold.loading.value) trySettle()
-    })
+    // backstop for the case where nothing ever loads (no session and guest
+    // browsing off) - the address still needs normalizing. Deliberately not a
+    // microtask: firing before the list arrives would resolve the URL against
+    // an empty node list and fall back to "no stronghold".
+    setTimeout(trySettle, 3000)
   })
 }
 
