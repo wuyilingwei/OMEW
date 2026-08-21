@@ -1688,7 +1688,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     return new Response(null, { status: 204, headers: cors() });
   }
 
-  // ---- topics (task 052: stronghold-wide post-tag pool, shared across sections) ----
+  // ---- topics (stronghold-wide post-tag pool, shared across sections) ----
 
   m = match("/api/stronghold/:id/topics", path);
   if (m && method === "GET") {

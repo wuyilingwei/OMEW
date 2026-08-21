@@ -10,8 +10,8 @@ import {
   sessionToken,
 } from "./helpers";
 
-// Task 052: stronghold-wide topic pool (post tags) + room management (rename/
-// delete) + topic-filtered post listing. Mirrors stronghold-management.test.ts /
+// stronghold-wide topic pool (post tags) + room management (rename/delete) +
+// topic-filtered post listing. Mirrors stronghold-management.test.ts /
 // section-posts.test.ts helpers and conventions.
 
 beforeAll(async () => {

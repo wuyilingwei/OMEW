@@ -8,7 +8,7 @@ import { domainOfActor, localpartOfActor } from "./users";
 // table + persisted tips aggregate, with a WS fan-out for tip.update pushes.
 
 const TIP_FLUSH_MS = 1_500; // m0-protocol S3.3: tip.update coalesced, not per-message.
-const TOPIC_LIMIT = 32; // task 052: per-stronghold topic pool cap.
+const TOPIC_LIMIT = 32; // per-stronghold topic pool cap.
 
 export type TopicMutationResult =
   | { ok: true; topic: TopicRow }
@@ -359,7 +359,7 @@ export class StrongholdDO extends DurableObject<Env> {
     this.ctx.storage.sql.exec("DELETE FROM tip WHERE room_ref LIKE ?", `%/${resId}`);
   }
 
-  // ---- topics (task 052: stronghold-wide post-tag pool, shared across sections) ----
+  // ---- topics (stronghold-wide post-tag pool, shared across sections) ----
 
   async listTopics(): Promise<TopicRow[]> {
     return this.ctx.storage.sql.exec<TopicRow>("SELECT * FROM topic ORDER BY position, created_at").toArray();
