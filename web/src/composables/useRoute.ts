@@ -1,0 +1,187 @@
+import { effectScope, ref, watch } from 'vue'
+import { api } from '../api'
+import { useChannel } from './useChannel'
+import { usePostModal } from './usePostModal'
+import { useSection } from './useSection'
+import { useShellView } from './useShellView'
+import { useStronghold } from './useStronghold'
+
+export interface RouteState {
+  server: string
+  slug: string
+  room: string | null
+  kind: 'c' | 's' | null
+  postSeq: number | null
+  topic: string | null
+}
+
+const route = ref<RouteState | null>(null)
+
+// applyingLocation guards address->state application against re-triggering
+// the state->address watchers below - without it every selection made while
+// restoring from a URL would immediately push a competing history entry.
+let applyingLocation = false
+
+function buildAddress(state: RouteState): string {
+  if (!state.server || !state.slug) return '/'
+  let path = `/${state.server}/${state.slug}`
+  if (state.kind && state.room) {
+    path += `/${state.kind}/${state.room}`
+    if (state.kind === 's' && state.postSeq != null) path += `/p/${state.postSeq}`
+  }
+  const params = new URLSearchParams()
+  if (state.kind === 's' && state.topic) params.set('topic', state.topic)
+  const qs = params.toString()
+  return qs ? `${path}?${qs}` : path
+}
+
+function parseAddress(): RouteState | null {
+  const segments = location.pathname.split('/').filter(Boolean)
+  if (segments.length < 2) return null
+  const [server, slug, kindSeg, room, pSeg, seqSeg] = segments
+  const kind = (kindSeg === 'c' || kindSeg === 's') && room ? kindSeg : null
+  const seqNum = kind === 's' && pSeg === 'p' && seqSeg ? Number(seqSeg) : NaN
+  return {
+    server: server!,
+    slug: slug!,
+    kind,
+    room: kind ? room ?? null : null,
+    postSeq: Number.isFinite(seqNum) ? seqNum : null,
+    topic: kind === 's' ? new URLSearchParams(location.search).get('topic') : null,
+  }
+}
+
+function writeAddress(state: RouteState, replace: boolean) {
+  const address = buildAddress(state)
+  const current = location.pathname + location.search
+  if (address !== current) {
+    if (replace) history.replaceState(null, '', address)
+    else history.pushState(null, '', address)
+  }
+  route.value = state
+}
+
+function navigate(next: Partial<RouteState>, opts?: { replace?: boolean }) {
+  const base: RouteState = route.value ?? { server: '', slug: '', room: null, kind: null, postSeq: null, topic: null }
+  writeAddress({ ...base, ...next }, opts?.replace ?? false)
+}
+
+let watchersInstalled = false
+function installWatchers() {
+  if (watchersInstalled) return
+  watchersInstalled = true
+
+  const stronghold = useStronghold()
+  const channel = useChannel()
+  const section = useSection()
+  const postModal = usePostModal()
+  const shellView = useShellView()
+
+  function currentKind(): 'c' | 's' | null {
+    if (postModal.openPostSeq.value != null) return 's'
+    if (shellView.activeView.value === 'posts') return 's'
+    if (shellView.activeView.value === 'chat') return 'c'
+    return null
+  }
+
+  function reconcileFromLiveState(replace: boolean) {
+    const node = stronghold.currentNode.value
+    const kind = currentKind()
+    const room = kind === 'c' ? channel.selectedChannel.value : kind === 's' ? section.selectedSection.value : null
+    navigate(
+      {
+        server: node ? 'a' : '',
+        slug: node?.slug ?? '',
+        kind: room ? kind : null,
+        room: room ? room.id : null,
+        postSeq: kind === 's' ? postModal.openPostSeq.value : null,
+        topic: kind === 's' ? section.topicFilter.value : null,
+      },
+      { replace },
+    )
+  }
+
+  async function applyAddress() {
+    applyingLocation = true
+    try {
+      const parsed = parseAddress()
+      let nodeId = ''
+      if (parsed) {
+        try {
+          const res = await api.resolveStronghold(parsed.server, parsed.slug)
+          nodeId = res.stronghold_id
+        } catch {
+          nodeId = ''
+        }
+      }
+      if (!nodeId) nodeId = stronghold.nodes.value[0]?.id ?? ''
+      if (nodeId) stronghold.selectNode(nodeId)
+
+      if (parsed?.kind === 'c') {
+        const room = channel.channelRooms.value.find((r) => r.id === parsed.room)
+        if (room) channel.selectChannel(room)
+        shellView.setView('chat')
+        postModal.close()
+      } else if (parsed?.kind === 's') {
+        const room = section.sectionRooms.value.find((r) => r.id === parsed.room)
+        if (room) section.selectSection(room)
+        section.setTopicFilter(parsed.topic ?? null)
+        shellView.setView('posts')
+        if (parsed.postSeq != null) postModal.open(parsed.postSeq)
+        else postModal.close()
+      } else {
+        postModal.close()
+      }
+
+      reconcileFromLiveState(true)
+    } finally {
+      applyingLocation = false
+    }
+  }
+
+  const scope = effectScope(true)
+  scope.run(() => {
+    watch([stronghold.selectedNodeId, channel.selectedChannel, section.selectedSection, section.topicFilter], () => {
+      if (!applyingLocation) reconcileFromLiveState(false)
+    })
+
+    // post modal open/close: open pushes a new entry, close walks back to the
+    // entry that existed before it opened - keeps the back button meaningful.
+    watch(postModal.openPostSeq, (seq, prevSeq) => {
+      if (applyingLocation) return
+      if (seq != null) reconcileFromLiveState(false)
+      else if (prevSeq != null) history.back()
+    })
+
+    window.addEventListener('popstate', () => {
+      void applyAddress()
+    })
+
+    // first restore only after the stronghold list has settled - before that
+    // a room id in the URL can't be validated against anything.
+    let settled = false
+    function trySettle() {
+      if (settled) return
+      settled = true
+      void applyAddress()
+    }
+    watch(stronghold.loading, (isLoading, wasLoading) => {
+      if (!isLoading && wasLoading) trySettle()
+    })
+    watch(
+      stronghold.nodes,
+      (list) => {
+        if (list.length) trySettle()
+      },
+      { immediate: true },
+    )
+    void Promise.resolve().then(() => {
+      if (!stronghold.loading.value) trySettle()
+    })
+  })
+}
+
+export function useRoute() {
+  installWatchers()
+  return { route, navigate }
+}

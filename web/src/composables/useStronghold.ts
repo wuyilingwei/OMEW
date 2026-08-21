@@ -52,7 +52,7 @@ function loadGuestDirectory(force = false): Promise<void> {
   inflight = (async () => {
     try {
       const entries = await api.getDirectory()
-      nodes.value = entries.map((e) => ({ id: e.id, name: e.name, cover: e.cover, rooms: [] }))
+      nodes.value = entries.map((e) => ({ id: e.id, name: e.name, cover: e.cover, slug: e.slug, rooms: [] }))
       if (!nodes.value.some((n) => n.id === selectedNodeId.value)) {
         selectedNodeId.value = nodes.value[0]?.id ?? ''
       }
