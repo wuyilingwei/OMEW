@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { apiRequest, ensureMigrated, sessionToken } from "./helpers";
 
-// Task 059: stronghold URL short-name (slug) - derivation + dedup on create,
+// stronghold URL short-name (slug) - derivation + dedup on create,
 // GET /api/resolve/:server/:slug, and the server-admin-only PATCH endpoint.
 
 beforeAll(async () => {

@@ -52,7 +52,7 @@ export type RoomRow = {
   created_at: number;
 };
 
-// Task 059: URL short-name derivation, shared by direct creation and
+// URL short-name derivation, shared by direct creation and
 // application approval. Lowercase, non [a-z0-9] folds to '-', collapses runs,
 // trims edges, caps at 32 - an all-non-ASCII name collapses to empty, which
 // falls back to a random short string rather than an empty slug.
@@ -199,7 +199,7 @@ export class StrongholdDO extends DurableObject<Env> {
     }
   }
 
-  // task 059: strongholds created before the slug column existed have
+  // strongholds created before the slug column existed have
   // slug = NULL - backfill with the stronghold's own id (already globally
   // unique) and best-effort mirror that into the D1 reverse index so
   // GET /api/resolve/:server/:slug finds them too. Runs every wake-up but is
@@ -250,7 +250,7 @@ export class StrongholdDO extends DurableObject<Env> {
     };
   }
 
-  // task 059: server admin-only slug rename (api.ts holds the D1-index
+  // server admin-only slug rename (api.ts holds the D1-index
   // uniqueness check + gate; this just applies the already-resolved value).
   async updateSlug(newSlug: string): Promise<ConfigRow | null> {
     const current = await this.getConfig();

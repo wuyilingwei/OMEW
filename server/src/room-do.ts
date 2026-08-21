@@ -911,7 +911,7 @@ export class RoomDO extends DurableObject<Env> {
     return { posts, next_cursor };
   }
 
-  // task 059: section room post_count for the rooms list - a plain count, not
+  // section room post_count for the rooms list - a plain count, not
   // listPosts's full page (avoids pulling the whole post_index + item join).
   async countPosts(): Promise<number> {
     return this.ctx.storage.sql
@@ -921,7 +921,7 @@ export class RoomDO extends DurableObject<Env> {
       .one().n;
   }
 
-  // task 059: per-topic post_count for the topics list - api.ts calls this once
+  // per-topic post_count for the topics list - api.ts calls this once
   // per section room in the stronghold and sums the per-topic counts itself.
   async countPostsByTopic(topicIds: string[]): Promise<Record<string, number>> {
     if (topicIds.length === 0) return {};

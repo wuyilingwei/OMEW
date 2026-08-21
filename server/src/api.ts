@@ -326,7 +326,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     return json({ strongholds: await listPublicDirectory(env) });
   }
 
-  // task 059: URL short-name resolution, e.g. /a/<slug> - "a" is this instance's
+  // URL short-name resolution, e.g. /a/<slug> - "a" is this instance's
   // own reserved server-id segment; every other value is a federated instance,
   // not yet implemented (M6-era), so it 404s rather than guessing. No auth -
   // a guest following a public stronghold's address needs this to work too.
@@ -1634,7 +1634,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     return json({ id: application.id, state: "approved", stronghold: toApiConfig(created) });
   }
 
-  // task 059: rename a stronghold's URL short-name. Server owner/admin only -
+  // rename a stronghold's URL short-name. Server owner/admin only -
   // same gate as every other /api/admin/* route in this file, deliberately not
   // the per-stronghold owner/mod effectiveRole (a stronghold's own owner/mod
   // MUST NOT be able to hijack another stronghold's slug or grief their own).
@@ -2540,7 +2540,7 @@ function generateResId(): string {
   return crypto.randomUUID().replace(/-/g, "").slice(0, 20);
 }
 
-// task 059: claims a globally-unique slug for a brand-new stronghold id.
+// claims a globally-unique slug for a brand-new stronghold id.
 // The D1 index table's PRIMARY KEY on slug does the actual race-safe claim -
 // this just retries with a numeric suffix on conflict, same idiom as the rest
 // of this codebase's conflict-then-retry writes (e.g. invite code generation).
@@ -2621,7 +2621,7 @@ function toApiRoom(row: RoomRow, postCount?: number) {
   };
 }
 
-// task 059: PATCH /api/admin/strongholds/:id/slug format gate.
+// PATCH /api/admin/strongholds/:id/slug format gate.
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
 // ---- server groups helpers (task 048, m0-protocol §7.10a) ------------------------
@@ -2665,7 +2665,7 @@ function parseOptionalColor(v: unknown): string | null | typeof INVALID_COLOR {
   return v;
 }
 
-// task 059: topic/room description - trimmed, <=64 chars, absent/null/empty clears it.
+// topic/room description - trimmed, <=64 chars, absent/null/empty clears it.
 const INVALID_DESCRIPTION = Symbol("invalid_description");
 const DESCRIPTION_MAX = 64;
 
@@ -2677,7 +2677,7 @@ function asOptionalDescription(v: unknown): string | null | typeof INVALID_DESCR
   return trimmed || null;
 }
 
-// task 059: sums each section room's per-topic post_count (RoomDO.countPostsByTopic)
+// sums each section room's per-topic post_count (RoomDO.countPostsByTopic)
 // across the whole stronghold - topics are stronghold-wide, posts live per-room.
 async function topicPostCounts(
   env: Env,
