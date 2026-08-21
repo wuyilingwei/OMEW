@@ -31,6 +31,7 @@ import {
   type WebauthnAuthChallengeClaims,
   type WebauthnRegChallengeClaims,
 } from "./types";
+import { isReservedUsername } from "./reserved-usernames";
 import {
   domainOfActor,
   generateInviteCode,
@@ -334,6 +335,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
     const username = normalizeUsername(String(body.username ?? ""));
     if (!isValidUsername(username)) return apiError(400, "USERNAME_INVALID");
+    // Only new registrations are filtered - accounts predating the blocklist keep their name.
+    if (isReservedUsername(username)) return apiError(400, "USERNAME_RESERVED");
 
     const ownershipPubkey = typeof body.ownership_pubkey === "string" ? body.ownership_pubkey : "";
     const ownershipCiphertext = typeof body.ownership_ciphertext === "string" ? body.ownership_ciphertext : "";
@@ -1836,8 +1839,13 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if ("visibility" in body && eff.role !== "owner") return apiError(403, "FORBIDDEN");
 
     const patch: Partial<
-      Pick<ConfigRow, "description" | "visibility" | "cover" | "allow_message_edit" | "allow_message_retract" | "edit_window_secs">
+      Pick<ConfigRow, "name" | "description" | "visibility" | "cover" | "allow_message_edit" | "allow_message_retract" | "edit_window_secs">
     > = {};
+    if ("name" in body) {
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      if (!name || name.length > 32) return apiError(400, "CONFIG_INVALID");
+      patch.name = name;
+    }
     if ("description" in body) {
       if (body.description !== null && typeof body.description !== "string") return apiError(400, "CONFIG_INVALID");
       patch.description = body.description as string | null;

@@ -3,6 +3,7 @@
 // data path in practice since USE_MOCK is false by default.
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/browser'
 import { STAMP_EMOTES } from '../assets/mew'
+import { isReservedUsername } from '../utils/reservedUsernames'
 import { ApiRequestError } from './errors'
 import type { RoomSocketHandlers, RoomTransport } from './roomSocket'
 import type {
@@ -641,6 +642,9 @@ export const mockApi = {
     if (config.root_requirements.includes('phone')) throw new ApiRequestError('PHONE_UNSUPPORTED', 400)
     if (!USERNAME_RE.test(payload.username) || users.some((u) => u.username === payload.username)) {
       throw new ApiRequestError('USERNAME_INVALID', 400)
+    }
+    if (isReservedUsername(payload.username.toLowerCase())) {
+      throw new ApiRequestError('USERNAME_RESERVED', 400)
     }
     if (config.root_requirements.includes('code')) {
       const invite = inviteCodes.find((c) => c.code === payload.code && c.used_by == null)

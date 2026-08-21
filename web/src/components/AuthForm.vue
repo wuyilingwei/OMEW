@@ -161,6 +161,8 @@ function registerErrorMessage(err: unknown): string {
         return '本实例暂不支持手机注册'
       case 'USERNAME_INVALID':
         return '用户名不可用，请更换后重试'
+      case 'USERNAME_RESERVED':
+        return '该用户名为系统保留，请换一个'
       default:
         return '注册失败，请稍后重试'
     }

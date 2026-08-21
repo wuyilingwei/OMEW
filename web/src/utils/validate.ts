@@ -3,6 +3,8 @@
 // plausibly succeed - the server independently re-validates everything here,
 // this layer only exists to give inline feedback before a round trip.
 
+import { isReservedUsername } from './reservedUsernames'
+
 export const USERNAME_RE = /^[a-z0-9_-]{2,32}$/
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 // trusted_identity_servers: domain or "*" wildcard (server's DOMAIN_OR_WILDCARD_RE)
@@ -17,6 +19,7 @@ export const MIN_PASSWORD_LENGTH = 10
 export function usernameError(value: string): string {
   if (!value) return '用户名不能为空'
   if (!USERNAME_RE.test(value)) return '用户名需为 2-32 位小写字母、数字、下划线或短横线'
+  if (isReservedUsername(value)) return '该用户名为系统保留，请换一个'
   return ''
 }
 
