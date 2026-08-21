@@ -15,7 +15,7 @@ import { getInstanceConfig } from "./config";
 import { handleInbox } from "./inbox";
 import type { EffectivePermissions } from "./permissions";
 import { synthesizeEffectivePermissions } from "./permissions";
-import { fetchServerGroupsForLocalpart, type ConfigRow, type MemberRow } from "./stronghold-do";
+import { fetchServerGroupsForLocalpart, type ConfigRow, type MemberRow, type TopicRow } from "./stronghold-do";
 import { generateTotpSecret, totpOtpauthUrl, verifyTotpCode } from "./totp";
 import {
   HOME_DOMAIN,
@@ -1646,6 +1646,114 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     return json(visible.map((r) => ({ id: r.res_id, name: r.name, type: r.type })));
   }
 
+  m = match("/api/stronghold/:id/rooms/:resId", path);
+  if (m && method === "PATCH") {
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
+    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
+    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    const patch: { name?: string; restricted?: boolean; position?: number } = {};
+    if ("name" in body) {
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      if (!name) return apiError(400, "MALFORMED");
+      patch.name = name;
+    }
+    if ("restricted" in body) {
+      if (typeof body.restricted !== "boolean") return apiError(400, "MALFORMED");
+      patch.restricted = body.restricted;
+    }
+    if ("position" in body) {
+      if (typeof body.position !== "number") return apiError(400, "MALFORMED");
+      patch.position = body.position;
+    }
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const updated = await stub.updateRoom(m.resId!, patch);
+    if (!updated) return apiError(404, "NOT_FOUND");
+    return json({ id: updated.res_id, name: updated.name, type: updated.type });
+  }
+  if (m && method === "DELETE") {
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
+    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
+    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const room = await stub.getRoom(m.resId!);
+    if (!room) return apiError(404, "NOT_FOUND");
+    const rooms = await stub.listRooms();
+    const sameType = rooms.filter((r) => r.type === room.type);
+    if (sameType.length <= 1) return apiError(409, "LAST_ROOM_OF_TYPE");
+    await stub.deleteRoom(m.resId!);
+    return new Response(null, { status: 204, headers: cors() });
+  }
+
+  // ---- topics (task 052: stronghold-wide post-tag pool, shared across sections) ----
+
+  m = match("/api/stronghold/:id/topics", path);
+  if (m && method === "GET") {
+    const gate = await resolveGuestOrMember(request, env, m.id!);
+    if (gate instanceof Response) return gate;
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const topics = await stub.listTopics();
+    return json(topics.map(toApiTopic));
+  }
+  if (m && method === "POST") {
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
+    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
+    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!name || name.length > 16) return apiError(400, "MALFORMED");
+    const color = parseOptionalColor(body.color);
+    if (color === INVALID_COLOR) return apiError(400, "MALFORMED");
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const result = await stub.createTopic(generateResId(), name, color);
+    if (!result.ok) return apiError(409, result.code);
+    return json(toApiTopic(result.topic), 201);
+  }
+
+  m = match("/api/stronghold/:id/topics/:topicId", path);
+  if (m && method === "PATCH") {
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
+    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
+    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    const patch: { name?: string; color?: string | null; position?: number } = {};
+    if ("name" in body) {
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      if (!name || name.length > 16) return apiError(400, "MALFORMED");
+      patch.name = name;
+    }
+    if ("color" in body) {
+      const color = parseOptionalColor(body.color);
+      if (color === INVALID_COLOR) return apiError(400, "MALFORMED");
+      patch.color = color;
+    }
+    if ("position" in body) {
+      if (typeof body.position !== "number") return apiError(400, "MALFORMED");
+      patch.position = body.position;
+    }
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const result = await stub.updateTopic(m.topicId!, patch);
+    if (!result.ok) return apiError(result.code === "NOT_FOUND" ? 404 : 409, result.code);
+    return json(toApiTopic(result.topic));
+  }
+  if (m && method === "DELETE") {
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
+    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
+    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const deleted = await stub.deleteTopic(m.topicId!);
+    if (!deleted) return apiError(404, "NOT_FOUND");
+    return new Response(null, { status: 204, headers: cors() });
+  }
+
   m = match("/api/stronghold/:id/join", path);
   if (m && method === "POST") {
     const actor = await requireActor(request, env);
@@ -2100,7 +2208,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const roomStub = env.ROOM_DO.getByName(roomRef);
     const after = url.searchParams.get("after");
     const limit = url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined;
-    return json(await roomStub.listPosts(after, limit));
+    const topic = url.searchParams.get("topic");
+    return json(await roomStub.listPosts(after, limit, topic));
   }
 
   m = match("/api/stronghold/:id/rooms/:resId/posts/:seq", path);
@@ -2381,6 +2490,10 @@ function toApiConfig(row: ConfigRow) {
     owner_actor: row.owner_actor,
     created_at: row.created_at,
   };
+}
+
+function toApiTopic(row: TopicRow) {
+  return { id: row.id, name: row.name, color: row.color, position: row.position };
 }
 
 // ---- server groups helpers (task 048, m0-protocol §7.10a) ------------------------

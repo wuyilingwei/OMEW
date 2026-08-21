@@ -111,6 +111,12 @@ export class RoomDO extends DurableObject<Env> {
         bumped_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_post_index_bumped ON post_index(bumped_at DESC, post_seq DESC);
+      CREATE TABLE IF NOT EXISTS post_topic (
+        post_seq INTEGER NOT NULL,
+        topic_id TEXT NOT NULL,
+        PRIMARY KEY (post_seq, topic_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_post_topic_topic ON post_topic(topic_id, post_seq DESC);
     `);
     sql.exec(`INSERT OR IGNORE INTO meta (key, value) VALUES ('next_seq', 1)`);
   }
@@ -349,6 +355,20 @@ export class RoomDO extends DurableObject<Env> {
       return;
     }
 
+    const isSectionPost = roomKind === "sec" && isTopLevel;
+    let topics: string[] = [];
+    if (isSectionPost && b.topics !== undefined) {
+      if (!Array.isArray(b.topics) || !b.topics.every((t) => typeof t === "string")) {
+        this.sendError(ws, "OMEW_MALFORMED", "topics must be a string array");
+        return;
+      }
+      topics = Array.from(new Set(b.topics as string[]));
+      if (topics.length > 5) {
+        this.sendError(ws, "OMEW_MALFORMED", "at most 5 topics per post");
+        return;
+      }
+    }
+
     const requiredBit = parentSeq != null
       ? DENY_SECTION_REPLY
       : roomKind === "sec"
@@ -398,8 +418,9 @@ export class RoomDO extends DurableObject<Env> {
 
     // Section post: preview is derived server-side and folded into the stored
     // body (proposal S4.5) so list reads never need to recompute it.
-    const isSectionPost = roomKind === "sec" && isTopLevel;
-    const finalBody: unknown = isSectionPost ? { ...b, preview: (b.text as string).slice(0, PREVIEW_LEN) } : body;
+    const finalBody: unknown = isSectionPost
+      ? { ...b, preview: (b.text as string).slice(0, PREVIEW_LEN), topics }
+      : body;
     const bodyJson = JSON.stringify(finalBody);
     this.ctx.storage.sql.exec(
       "INSERT INTO item (seq, parent_seq, root_seq, actor, origin, client_id, kind, ts, body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -415,6 +436,12 @@ export class RoomDO extends DurableObject<Env> {
         "INSERT INTO post_index (post_seq, last_reply_seq, reply_count, bumped_at) VALUES (?, ?, 0, ?)",
         seq, seq, ts
       );
+      for (const topicId of topics) {
+        this.ctx.storage.sql.exec(
+          "INSERT INTO post_topic (post_seq, topic_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
+          seq, topicId
+        );
+      }
     } else if (roomKind === "sec" && !isTopLevel) {
       // Sort/bump index updates synchronously and always (absolute, idempotent);
       // only the broadcast of that state is throttled, in scheduleBump below.
@@ -827,7 +854,7 @@ export class RoomDO extends DurableObject<Env> {
   // Sorted by bumped_at desc (most recently active thread first), composite
   // (bumped_at, post_seq) cursor so a tie at the same millisecond still paginates
   // deterministically.
-  async listPosts(after: string | null, limit?: number): Promise<{ posts: unknown[]; next_cursor: string | null }> {
+  async listPosts(after: string | null, limit?: number, topicId?: string | null): Promise<{ posts: unknown[]; next_cursor: string | null }> {
     const cappedLimit = Math.max(1, Math.min(limit || POSTS_DEFAULT_LIMIT, POSTS_MAX_LIMIT));
     let cursorBumpedAt = Number.MAX_SAFE_INTEGER;
     let cursorSeq = Number.MAX_SAFE_INTEGER;
@@ -841,22 +868,30 @@ export class RoomDO extends DurableObject<Env> {
       }
     }
 
+    const params: unknown[] = [];
+    let query = `SELECT p.post_seq, p.last_reply_seq, p.reply_count, p.bumped_at, i.actor, i.ts, i.body
+                 FROM post_index p
+                 JOIN item i ON i.seq = p.post_seq`;
+    if (topicId) {
+      query += ` JOIN post_topic pt ON pt.post_seq = p.post_seq AND pt.topic_id = ?`;
+      params.push(topicId);
+    }
+    query += ` LEFT JOIN tombstone t ON t.seq = p.post_seq
+               WHERE t.seq IS NULL AND (p.bumped_at < ? OR (p.bumped_at = ? AND p.post_seq < ?))
+               ORDER BY p.bumped_at DESC, p.post_seq DESC LIMIT ?`;
+    params.push(cursorBumpedAt, cursorBumpedAt, cursorSeq, cappedLimit + 1);
+
     const rows = this.ctx.storage.sql
       .exec<{ post_seq: number; last_reply_seq: number; reply_count: number; bumped_at: number; actor: string; ts: number; body: string }>(
-        `SELECT p.post_seq, p.last_reply_seq, p.reply_count, p.bumped_at, i.actor, i.ts, i.body
-         FROM post_index p
-         JOIN item i ON i.seq = p.post_seq
-         LEFT JOIN tombstone t ON t.seq = p.post_seq
-         WHERE t.seq IS NULL AND (p.bumped_at < ? OR (p.bumped_at = ? AND p.post_seq < ?))
-         ORDER BY p.bumped_at DESC, p.post_seq DESC LIMIT ?`,
-        cursorBumpedAt, cursorBumpedAt, cursorSeq, cappedLimit + 1
+        query,
+        ...params
       )
       .toArray();
 
     const hasMore = rows.length > cappedLimit;
     const page = rows.slice(0, cappedLimit);
     const posts = page.map((r) => {
-      const body = JSON.parse(r.body) as { title?: string; cover?: string; preview?: string; media?: unknown };
+      const body = JSON.parse(r.body) as { title?: string; cover?: string; preview?: string; media?: unknown; topics?: string[] };
       return {
         post_seq: r.post_seq,
         actor: r.actor,
@@ -865,6 +900,7 @@ export class RoomDO extends DurableObject<Env> {
         cover: body.cover ?? null,
         preview: body.preview ?? "",
         media: body.media ?? [],
+        topics: body.topics ?? [],
         last_reply_seq: r.last_reply_seq,
         reply_count: r.reply_count,
         bumped_at: r.bumped_at,
@@ -892,7 +928,7 @@ export class RoomDO extends DurableObject<Env> {
         "SELECT last_reply_seq, reply_count, bumped_at FROM post_index WHERE post_seq = ?", postSeq
       )
       .toArray()[0];
-    const body = JSON.parse(postRow.body) as { title?: string; text?: string; cover?: string; preview?: string; media?: unknown };
+    const body = JSON.parse(postRow.body) as { title?: string; text?: string; cover?: string; preview?: string; media?: unknown; topics?: string[] };
     const post = {
       post_seq: postSeq,
       actor: postRow.actor,
@@ -902,6 +938,7 @@ export class RoomDO extends DurableObject<Env> {
       cover: body.cover ?? null,
       preview: body.preview ?? "",
       media: body.media ?? [],
+      topics: body.topics ?? [],
       last_reply_seq: idx?.last_reply_seq ?? postSeq,
       reply_count: idx?.reply_count ?? 0,
       bumped_at: idx?.bumped_at ?? postRow.ts,
