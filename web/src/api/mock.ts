@@ -312,8 +312,13 @@ function uniqueSlug(name: string): string {
   const taken = new Set([...strongholds.values()].map((s) => s.slug))
   if (!taken.has(base)) return base
   let i = 2
-  while (taken.has(`${base}-${i}`.slice(0, 32))) i++
-  return `${base}-${i}`.slice(0, 32)
+  let candidate: string
+  do {
+    const suffix = `-${i}`
+    candidate = `${base.slice(0, 32 - suffix.length)}${suffix}`
+    i++
+  } while (taken.has(candidate))
+  return candidate
 }
 
 const strongholds = new Map<string, MockStrongholdState>()
