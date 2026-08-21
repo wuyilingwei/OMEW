@@ -426,7 +426,7 @@ function seedDemoStronghold(): void {
     ['rin', '早上好，今天的同步会议改到下午三点', 60],
     ['admin', '收到，我把文档链接放这里', 58],
     ['rin', '看到了，辛苦', 57],
-    ['aki', '频道下拉切换起来顺手多了', 40],
+    ['aki', '话题下拉切换起来顺手多了', 40],
     ['admin', '对，之前那条横向标签栏确实别扭', 38],
     ['rin', '进度已经同步到看板了', 20],
     ['admin', '看到了，稍后过一遍', 12],
@@ -1145,7 +1145,7 @@ export const mockApi = {
     return delay(undefined)
   },
 
-  // ---- topics (据点共用话题池) --------------------------------------------
+  // ---- topics (据点共用标签池；UI 文案叫「标签」，线上格式仍是 topic) ------
 
   async listTopics(token: string | null, nodeId: string): Promise<Topic[]> {
     const state = strongholds.get(nodeId)

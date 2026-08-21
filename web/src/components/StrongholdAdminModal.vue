@@ -54,7 +54,7 @@ const panelTabOptions = computed(() => {
   if (canManage.value) {
     opts.push({ Text: '黑名单', value: 'banned' })
     opts.push({ Text: '分区', value: 'sections' })
-    opts.push({ Text: '话题', value: 'topics' })
+    opts.push({ Text: '标签', value: 'topics' })
     opts.push({ Text: '设置', value: 'settings' })
   }
   return opts

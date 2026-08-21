@@ -2,8 +2,8 @@
 import { computed } from 'vue'
 import type { Topic } from '../api/types'
 
-// 展示态：只读渲染一组话题 chip（id 匹配不到话题池的直接跳过）
-// 可选态：传 selectable 时渲染整套话题池供多选/单选，selected 控制高亮
+// 展示态：只读渲染一组标签 chip（id 匹配不到标签池的直接跳过）
+// 可选态：传 selectable 时渲染整套标签池供多选/单选，selected 控制高亮
 const props = withDefaults(
   defineProps<{
     topics: Topic[]

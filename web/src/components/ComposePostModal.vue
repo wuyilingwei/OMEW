@@ -153,7 +153,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               <p v-if="attachments.error.value" class="field__error">{{ attachments.error.value }}</p>
             </div>
             <div v-if="topics.length" class="field">
-              <span class="field__label">话题（最多 5 个，可选）</span>
+              <span class="field__label">标签（最多 5 个，可选）</span>
               <TopicChips :topics="topics" selectable :selected="selectedTopics" :max="TOPIC_LIMIT" @toggle="toggleTopic" />
               <p v-if="selectedTopics.length >= TOPIC_LIMIT" class="field__hint">已达上限，取消一个再选新的</p>
             </div>

@@ -142,11 +142,11 @@ async function save() {
             </div>
 
             <div class="field">
-              <span class="field__label">发言（频道）</span>
+              <span class="field__label">发言（话题）</span>
               <WinSelectorBar class="group-perm-bar" :Items="PERM_OPTIONS" :SelectedItem="speakSelected" @update:SelectedItem="onSpeakSelect" />
             </div>
             <div class="field">
-              <span class="field__label">发帖（话题区）</span>
+              <span class="field__label">发帖（分区）</span>
               <WinSelectorBar class="group-perm-bar" :Items="PERM_OPTIONS" :SelectedItem="postSelected" @update:SelectedItem="onPostSelect" />
             </div>
             <div class="field">

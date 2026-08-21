@@ -10,7 +10,9 @@ import { maxLengthError, requiredMaxLengthError } from '../utils/validate'
 import { WinButton } from '../vendor/winui'
 import AppIcon from './icons/AppIcon.vue'
 
-// 据点管理面板「话题」tab：据点共用话题池的增删改名配色排序（StrongholdAdminModal 内嵌）。
+// 据点管理面板「标签」tab：据点共用标签池的增删改名配色排序（StrongholdAdminModal 内嵌）。
+// 线上格式与 API 路径仍写作 topic（帖子 body.topics 已持久化，改名会让存量标签失联），
+// 只有面向用户的文案叫「标签」。
 const TOPIC_LIMIT = 32
 
 const auth = useAuth()
@@ -44,7 +46,7 @@ function cancelEdit() {
 
 async function saveEdit(topic: Topic) {
   if (!auth.token.value) return
-  editError.value = requiredMaxLengthError(editingName.value, 16, '话题名称')
+  editError.value = requiredMaxLengthError(editingName.value, 16, '标签名称')
   descError.value = maxLengthError(editingDescription.value, 64, '描述')
   if (editError.value || descError.value) return
   busy.value = true
@@ -57,7 +59,7 @@ async function saveEdit(topic: Topic) {
     await reloadTopics()
     editingId.value = null
   } catch (err) {
-    editError.value = err instanceof ApiRequestError && err.code === 'ALREADY_EXISTS' ? '话题名称已存在' : '保存失败，请稍后重试'
+    editError.value = err instanceof ApiRequestError && err.code === 'ALREADY_EXISTS' ? '标签名称已存在' : '保存失败，请稍后重试'
   } finally {
     busy.value = false
   }
@@ -131,7 +133,7 @@ async function onDrop(idx: number, ev: DragEvent) {
 
 async function remove(topic: Topic) {
   if (!auth.token.value) return
-  if (!confirm(`删除话题「${topic.name}」？已发布帖子上的该标签将不再显示。`)) return
+  if (!confirm(`删除标签「${topic.name}」？已发布帖子上的该标签将不再显示。`)) return
   busy.value = true
   listError.value = ''
   try {
@@ -153,10 +155,10 @@ const creating = ref(false)
 
 async function create() {
   if (!auth.token.value) return
-  createError.value = requiredMaxLengthError(newName.value, 16, '话题名称') || maxLengthError(newDescription.value, 64, '描述')
+  createError.value = requiredMaxLengthError(newName.value, 16, '标签名称') || maxLengthError(newDescription.value, 64, '描述')
   if (createError.value) return
   if (topics.value.length >= TOPIC_LIMIT) {
-    createError.value = '话题数量已达上限'
+    createError.value = '标签数量已达上限'
     return
   }
   creating.value = true
@@ -171,8 +173,8 @@ async function create() {
     newColor.value = null
     newDescription.value = ''
   } catch (err) {
-    if (err instanceof ApiRequestError && err.code === 'ALREADY_EXISTS') createError.value = '话题名称已存在'
-    else if (err instanceof ApiRequestError && err.code === 'TOPIC_LIMIT') createError.value = '话题数量已达上限'
+    if (err instanceof ApiRequestError && err.code === 'ALREADY_EXISTS') createError.value = '标签名称已存在'
+    else if (err instanceof ApiRequestError && err.code === 'TOPIC_LIMIT') createError.value = '标签数量已达上限'
     else createError.value = '创建失败，请稍后重试'
   } finally {
     creating.value = false
@@ -184,7 +186,7 @@ async function create() {
   <div class="topic-manager">
     <p v-if="listError" class="field__error">{{ listError }}</p>
     <div v-if="topicsLoading" class="admin-modal__loading">加载中…</div>
-    <p v-else-if="!topics.length" class="field__hint">暂无话题</p>
+    <p v-else-if="!topics.length" class="field__hint">暂无标签</p>
 
     <ul v-else class="topic-list">
       <li
@@ -234,7 +236,7 @@ async function create() {
               v-model="editingDescription"
               type="text"
               maxlength="64"
-              placeholder="话题描述（可选，≤64 字）"
+              placeholder="标签描述（可选，≤64 字）"
               @keyup.enter="saveEdit(topic)"
               @keyup.escape="cancelEdit"
             />
@@ -298,18 +300,18 @@ async function create() {
       </div>
       <div class="topic-create__row">
         <div class="field topic-create__field">
-          <input v-model="newName" type="text" maxlength="16" placeholder="新建话题名称" @keyup.enter="create" />
+          <input v-model="newName" type="text" maxlength="16" placeholder="新建标签名称" @keyup.enter="create" />
           <input
             v-model="newDescription"
             type="text"
             maxlength="64"
-            placeholder="话题描述（可选，≤64 字）"
+            placeholder="标签描述（可选，≤64 字）"
             @keyup.enter="create"
           />
           <p v-if="createError" class="field__error">{{ createError }}</p>
         </div>
         <WinButton Style="DefaultButtonStyle" :IsEnabled="!creating" @Click="create">
-          {{ creating ? '创建中…' : '新建话题' }}
+          {{ creating ? '创建中…' : '新建标签' }}
         </WinButton>
       </div>
     </div>

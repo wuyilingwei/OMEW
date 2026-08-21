@@ -38,7 +38,7 @@ function installWatchers() {
       topicFilter.value = null
     })
 
-    // 正在筛选的话题被删掉后回到全部，否则帖子列表会一直空着
+    // 正在筛选的标签被删掉后回到全部，否则帖子列表会一直空着
     watch(topics, (list) => {
       if (topicFilter.value && !list.some((t) => t.id === topicFilter.value)) topicFilter.value = null
     })

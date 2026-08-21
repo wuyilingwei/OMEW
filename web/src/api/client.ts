@@ -342,7 +342,9 @@ export const realApi = {
       headers: authHeaders(token),
     }),
 
-  // ---- topics (据点共用话题池) --------------------------------------------
+  // ---- topics (据点共用标签池) --------------------------------------------
+  // UI 文案叫「标签」；路径与字段名保持 topic —— 帖子 body.topics 是已持久化的
+  // 线上格式，改名会让存量帖子的标签失联。
 
   listTopics: (token: string | null, nodeId: string) =>
     request<Topic[]>(`/api/stronghold/${nodeId}/topics`, { headers: optionalAuthHeaders(token) }),
