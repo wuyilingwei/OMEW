@@ -286,6 +286,19 @@ export const realApi = {
   joinStronghold: (token: string, nodeId: string) =>
     request<unknown>(`/api/stronghold/${nodeId}/join`, { method: 'POST', headers: authHeaders(token) }),
 
+  // 'a' = this instance; other server ids currently always 404 (federation TBD).
+  resolveStronghold: (server: string, slug: string) =>
+    request<{ stronghold_id: string }>(
+      `/api/resolve/${encodeURIComponent(server)}/${encodeURIComponent(slug)}`,
+    ),
+
+  patchStrongholdSlug: (token: string, nodeId: string, slug: string) =>
+    request<{ id: string; slug: string }>(`/api/admin/strongholds/${nodeId}/slug`, {
+      method: 'PATCH',
+      headers: authHeaders(token),
+      body: JSON.stringify({ slug }),
+    }),
+
   createRoom: (token: string, nodeId: string, payload: CreateRoomPayload) =>
     request<RoomSummary>(`/api/stronghold/${nodeId}/rooms`, {
       method: 'POST',

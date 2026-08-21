@@ -272,6 +272,7 @@ interface MockRoomState {
   res_id: string
   type: RoomType
   name: string
+  description: string | null
   position: number
   restricted: boolean
   items: RoomItem[] // seq ascending
@@ -286,6 +287,7 @@ interface MockRoomState {
 interface MockStrongholdState {
   id: string
   name: string
+  slug: string
   description: string
   cover: string
   visibility: StrongholdConfig['visibility']
@@ -295,6 +297,32 @@ interface MockStrongholdState {
   owner_actor: string
   rooms: Map<string, MockRoomState>
   topics: Topic[]
+}
+
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,31}$/
+
+function slugify(name: string): string {
+  const base = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 32)
+  return base || `s${Math.random().toString(36).slice(2, 8)}`
+}
+
+function uniqueSlug(name: string): string {
+  const base = slugify(name)
+  const taken = new Set([...strongholds.values()].map((s) => s.slug))
+  if (!taken.has(base)) return base
+  let i = 2
+  let candidate: string
+  do {
+    const suffix = `-${i}`
+    candidate = `${base.slice(0, 32 - suffix.length)}${suffix}`
+    i++
+  } while (taken.has(candidate))
+  return candidate
 }
 
 const strongholds = new Map<string, MockStrongholdState>()
@@ -325,11 +353,12 @@ function minutesAgo(mins: number): number {
   return Date.now() - mins * 60_000
 }
 
-function makeRoom(resId: string, type: RoomType, name: string, position = 0): MockRoomState {
+function makeRoom(resId: string, type: RoomType, name: string, position = 0, description: string | null = null): MockRoomState {
   return {
     res_id: resId,
     type,
     name,
+    description,
     position,
     restricted: false,
     items: [],
@@ -416,6 +445,7 @@ function seedDemoStronghold(): void {
   strongholds.set(id, {
     id,
     name: '主据点',
+    slug: 'main',
     description: '综合讨论与公告的默认据点，日常消息大多汇聚在这里。',
     cover: '',
     visibility: 'public',
@@ -428,8 +458,8 @@ function seedDemoStronghold(): void {
       [posts.res_id, posts],
     ]),
     topics: [
-      { id: 'topic-announce', name: '公告', color: '#4b9dd7', position: 0 },
-      { id: 'topic-chat', name: '闲聊', color: '#af5d3e', position: 1 },
+      { id: 'topic-announce', name: '公告', color: '#4b9dd7', description: '重要通知与维护公告', position: 0, post_count: 0 },
+      { id: 'topic-chat', name: '闲聊', color: '#af5d3e', description: null, position: 1, post_count: 0 },
     ],
   })
 
@@ -499,11 +529,38 @@ function toStrongholdConfig(state: MockStrongholdState): StrongholdConfig {
   }
 }
 
+function roomPostCount(room: MockRoomState): number | undefined {
+  if (room.type !== 'section') return undefined
+  return [...room.postIndex.keys()].filter((seq) => !room.tombstoned.has(seq)).length
+}
+
+function toRoomSummary(r: MockRoomState): RoomSummary {
+  const post_count = roomPostCount(r)
+  return { id: r.res_id, name: r.name, type: r.type, description: r.description, ...(post_count !== undefined ? { post_count } : {}) }
+}
+
+function topicPostCount(state: MockStrongholdState, topicId: string): number {
+  let count = 0
+  for (const room of state.rooms.values()) {
+    if (room.type !== 'section') continue
+    for (const seq of room.postIndex.keys()) {
+      if (room.tombstoned.has(seq)) continue
+      const item = room.items.find((i) => i.seq === seq)
+      if (item?.body.topics?.includes(topicId)) count++
+    }
+  }
+  return count
+}
+
+function toTopicOut(state: MockStrongholdState, topic: Topic): Topic {
+  return { ...topic, post_count: topicPostCount(state, topic.id) }
+}
+
 function toStrongholdSummary(state: MockStrongholdState): StrongholdSummary {
   const rooms: RoomSummary[] = [...state.rooms.values()]
     .sort((a, b) => a.position - b.position)
-    .map((r) => ({ id: r.res_id, name: r.name, type: r.type }))
-  return { id: state.id, name: state.name, cover: state.cover || null, rooms }
+    .map(toRoomSummary)
+  return { id: state.id, name: state.name, cover: state.cover || null, slug: state.slug, rooms }
 }
 
 function requireTopic(state: MockStrongholdState, topicId: string): Topic {
@@ -681,6 +738,7 @@ export const mockApi = {
           name: s.name,
           description: s.description || null,
           cover: s.cover || null,
+          slug: s.slug,
           member_count: strongholdMembers.get(s.id)?.length ?? 0,
         }),
       )
@@ -952,6 +1010,7 @@ export const mockApi = {
     const state: MockStrongholdState = {
       id,
       name: payload.name,
+      slug: uniqueSlug(payload.name),
       description: payload.description ?? '',
       cover: '',
       visibility: payload.visibility ?? 'public',
@@ -984,6 +1043,25 @@ export const mockApi = {
     return delay(toStrongholdConfig(state))
   },
 
+  async resolveStronghold(server: string, slug: string): Promise<{ stronghold_id: string }> {
+    if (server !== 'a') throw new ApiRequestError('NOT_FOUND', 404)
+    const state = [...strongholds.values()].find((s) => s.slug === slug)
+    if (!state) throw new ApiRequestError('NOT_FOUND', 404)
+    return delay({ stronghold_id: state.id })
+  },
+
+  async patchStrongholdSlug(token: string, nodeId: string, slug: string): Promise<{ id: string; slug: string }> {
+    requireAdmin(token)
+    const state = strongholds.get(nodeId)
+    if (!state) throw new ApiRequestError('NOT_FOUND', 404)
+    if (!SLUG_RE.test(slug)) throw new ApiRequestError('MALFORMED', 400)
+    if ([...strongholds.values()].some((s) => s.id !== nodeId && s.slug === slug)) {
+      throw new ApiRequestError('ALREADY_EXISTS', 409)
+    }
+    state.slug = slug
+    return delay({ id: state.id, slug: state.slug })
+  },
+
   async joinStronghold(token: string, nodeId: string): Promise<StrongholdMember> {
     const user = requireUser(token)
     const state = strongholds.get(nodeId)
@@ -1014,7 +1092,7 @@ export const mockApi = {
     const resId = `room-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
     const room = makeRoom(resId, payload.type, payload.name)
     state.rooms.set(resId, room)
-    return delay({ id: room.res_id, name: room.name, type: room.type })
+    return delay(toRoomSummary(room))
   },
 
   async getStrongholdRooms(token: string | null, nodeId: string): Promise<RoomSummary[]> {
@@ -1024,7 +1102,7 @@ export const mockApi = {
     return delay(
       [...state.rooms.values()]
         .sort((a, b) => a.position - b.position)
-        .map((r) => ({ id: r.res_id, name: r.name, type: r.type })),
+        .map(toRoomSummary),
     )
   },
 
@@ -1032,9 +1110,14 @@ export const mockApi = {
     requireManager(token, nodeId)
     const room = requireRoom(nodeId, resId)
     if (patch.name !== undefined) room.name = patch.name
+    if (patch.description !== undefined) {
+      const trimmed = patch.description?.trim() ?? ''
+      if (trimmed.length > 64) throw new ApiRequestError('MALFORMED', 400)
+      room.description = trimmed || null
+    }
     if (patch.position !== undefined) room.position = patch.position
     if (patch.restricted !== undefined) room.restricted = patch.restricted
-    return delay({ id: room.res_id, name: room.name, type: room.type })
+    return delay(toRoomSummary(room))
   },
 
   async deleteRoom(token: string, nodeId: string, resId: string): Promise<void> {
@@ -1054,7 +1137,7 @@ export const mockApi = {
     if (!state) throw new ApiRequestError('NOT_FOUND', 404)
     requireUserOrGuest(token, nodeId)
     return delay(
-      [...state.topics].sort((a, b) => a.position - b.position),
+      [...state.topics].sort((a, b) => a.position - b.position).map((t) => toTopicOut(state, t)),
     )
   },
 
@@ -1065,11 +1148,15 @@ export const mockApi = {
     const name = validateTopicName(payload.name)
     if (state.topics.some((t) => t.name === name)) throw new ApiRequestError('ALREADY_EXISTS', 409)
     if (state.topics.length >= TOPIC_LIMIT) throw new ApiRequestError('TOPIC_LIMIT', 409)
+    const description = payload.description?.trim() ?? ''
+    if (description.length > 64) throw new ApiRequestError('MALFORMED', 400)
     const topic: Topic = {
       id: `topic-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
       name,
       color: payload.color ?? null,
+      description: description || null,
       position: state.topics.length ? Math.max(...state.topics.map((t) => t.position)) + 1 : 0,
+      post_count: 0,
     }
     state.topics.push(topic)
     return delay(topic, 120)
@@ -1091,8 +1178,13 @@ export const mockApi = {
       topic.name = name
     }
     if (patch.color !== undefined) topic.color = patch.color
+    if (patch.description !== undefined) {
+      const trimmed = patch.description?.trim() ?? ''
+      if (trimmed.length > 64) throw new ApiRequestError('MALFORMED', 400)
+      topic.description = trimmed || null
+    }
     if (patch.position !== undefined) topic.position = patch.position
-    return delay({ ...topic }, 120)
+    return delay(toTopicOut(state, topic), 120)
   },
 
   async deleteTopic(token: string, nodeId: string, topicId: string): Promise<void> {
@@ -1441,6 +1533,7 @@ export const mockApi = {
       strongholds.set(nodeId, {
         id: nodeId,
         name: application.name,
+        slug: uniqueSlug(application.name),
         description: application.description ?? '',
         cover: '',
         visibility: application.visibility,
