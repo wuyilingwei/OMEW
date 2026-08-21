@@ -132,6 +132,7 @@ const users: MockUser[] = [
   {
     actor: actorFor('admin'),
     username: 'admin',
+    display_name: 'admin',
     password: 'admin123',
     is_admin: true,
     server_role: 'owner',
@@ -146,6 +147,7 @@ const users: MockUser[] = [
   {
     actor: actorFor('mod2'),
     username: 'mod2',
+    display_name: 'mod2',
     password: 'mod2pass1',
     is_admin: true,
     server_role: 'admin',
@@ -757,6 +759,18 @@ export const mockApi = {
     return delay(undefined, 150)
   },
 
+  async setDisplayName(token: string, displayName: string): Promise<{ display_name: string }> {
+    const user = requireUser(token)
+    const trimmed = displayName.trim()
+    if (!trimmed || trimmed.length > 32) throw new ApiRequestError('DISPLAY_NAME_INVALID', 400)
+    user.display_name = trimmed
+    for (const members of strongholdMembers.values()) {
+      const row = members.find((m) => m.actor === user.actor)
+      if (row) row.display_name = trimmed
+    }
+    return delay({ display_name: trimmed }, 150)
+  },
+
   async getOwnership(token: string): Promise<OwnershipResponse> {
     const user = requireUser(token)
     return delay({ ownership_pubkey: user.ownership_pubkey, ownership_ciphertext: user.ownership_ciphertext })
@@ -780,6 +794,7 @@ export const mockApi = {
     const user: MockUser = {
       actor: actorFor(payload.username),
       username: payload.username,
+      display_name: payload.username,
       password: payload.password,
       is_admin: false,
       server_role: 'user',
@@ -1029,7 +1044,7 @@ export const mockApi = {
       {
         actor: user.actor,
         username: user.username,
-        display_name: user.username,
+        display_name: user.display_name,
         role: 'owner',
         deny_discussion: false,
         deny_idea: false,
@@ -1071,7 +1086,7 @@ export const mockApi = {
     const member: StrongholdMember = {
       actor: user.actor,
       username: user.username,
-      display_name: user.username,
+      display_name: user.display_name,
       role: 'member',
       deny_discussion: false,
       deny_idea: false,

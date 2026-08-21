@@ -7,7 +7,7 @@ import type { Passkey } from '../api/types'
 import { useAuth } from '../composables/useAuth'
 import { useTheme, type ThemeMode } from '../composables/useTheme'
 import { envelopeToCiphertextField, parseOwnershipEnvelope, resealOwnershipKey, unsealOwnershipKey } from '../crypto/ownershipKey'
-import { passwordError, requiredError } from '../utils/validate'
+import { passwordError, requiredError, requiredMaxLengthError } from '../utils/validate'
 import { WinButton, WinInfoBar, WinSelectorBar } from '../vendor/winui'
 import AppIcon from './icons/AppIcon.vue'
 
@@ -35,17 +35,54 @@ function formatDate(ms: number): string {
   return new Date(ms).toLocaleString()
 }
 
-// ---- top-level tabs: 安全 / 外观 ----
+// ---- top-level tabs: 资料 / 安全 / 外观 ----
 
-type PanelTab = 'security' | 'appearance'
+type PanelTab = 'profile' | 'security' | 'appearance'
 const PANEL_TAB_OPTIONS: { Text: string; value: PanelTab }[] = [
+  { Text: '资料', value: 'profile' },
   { Text: '安全', value: 'security' },
   { Text: '外观', value: 'appearance' },
 ]
-const panelTab = ref<PanelTab>('security')
+const panelTab = ref<PanelTab>('profile')
 const panelTabSelected = computed(() => PANEL_TAB_OPTIONS.find((o) => o.value === panelTab.value))
 function onPanelTabSelect(item: { value: PanelTab }) {
   panelTab.value = item.value
+}
+
+// ---- 资料: display name ----
+// The username (and the actor derived from it) is fixed at registration; this
+// only changes how the account is shown in member lists and message bylines.
+
+const displayName = ref('')
+const displayNameError = ref('')
+const displayNameSaving = ref(false)
+const displayNameSaved = ref(false)
+
+// called from the on-open reset below, alongside the other tabs' resets
+function resetDisplayNameForm() {
+  // a session stored before display_name existed carries only the username,
+  // which is also what the server seeds the display name with
+  displayName.value = auth.user.value?.display_name || auth.user.value?.username || ''
+  displayNameError.value = ''
+  displayNameSaved.value = false
+}
+
+async function submitDisplayName() {
+  if (!auth.token.value) return
+  displayNameError.value = requiredMaxLengthError(displayName.value, 32, '显示名称')
+  if (displayNameError.value) return
+  displayNameSaving.value = true
+  displayNameSaved.value = false
+  try {
+    const { display_name } = await api.setDisplayName(auth.token.value, displayName.value)
+    displayName.value = display_name
+    auth.updateUser({ display_name })
+    displayNameSaved.value = true
+  } catch {
+    displayNameError.value = '保存失败，请稍后重试'
+  } finally {
+    displayNameSaving.value = false
+  }
 }
 
 // ---- appearance ----
@@ -301,7 +338,8 @@ watch(
   () => props.open,
   (open) => {
     if (open) {
-      panelTab.value = 'security'
+      panelTab.value = 'profile'
+      resetDisplayNameForm()
       securityTab.value = 'password'
       resetPasswordForm()
       addingPasskey.value = false
@@ -330,7 +368,28 @@ watch(
           />
 
           <div class="personal-modal__scroll">
-            <div v-if="panelTab === 'security'" class="personal-modal__body">
+            <div v-if="panelTab === 'profile'" class="personal-modal__body">
+              <section class="settings-section">
+                <form class="profile-form" @submit.prevent="submitDisplayName">
+                  <div class="field">
+                    <label class="field__label" for="profile-display-name">显示名称</label>
+                    <input id="profile-display-name" v-model="displayName" type="text" maxlength="32" />
+                    <p class="field__hint">成员列表与消息署名显示这个名字。用户名 {{ auth.user.value?.username }} 不可更改。</p>
+                  </div>
+                  <WinInfoBar v-if="displayNameError" :IsOpen="true" :IsClosable="false" Severity="Error">
+                    {{ displayNameError }}
+                  </WinInfoBar>
+                  <WinInfoBar v-else-if="displayNameSaved" :IsOpen="true" :IsClosable="false" Severity="Success">
+                    已保存
+                  </WinInfoBar>
+                  <WinButton Style="AccentButtonStyle" :IsEnabled="!displayNameSaving" @Click="submitDisplayName">
+                    {{ displayNameSaving ? '保存中…' : '保存' }}
+                  </WinButton>
+                </form>
+              </section>
+            </div>
+
+            <div v-else-if="panelTab === 'security'" class="personal-modal__body">
               <WinSelectorBar
                 class="security-subtabs"
                 :Items="SECURITY_TAB_OPTIONS"
@@ -654,10 +713,15 @@ watch(
   color: var(--text-tertiary);
 }
 
+.profile-form,
 .password-form {
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
+}
+
+.profile-form :deep(.win-button) {
+  align-self: flex-start;
 }
 
 .password-form__submit {

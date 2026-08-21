@@ -36,6 +36,8 @@ export interface AdminInstanceConfig {
 export interface AuthUser {
   actor: string
   username: string
+  // renameable; `username` (and the actor derived from it) is not
+  display_name: string
   is_admin: boolean
   server_role: ServerRole
   email: string | null

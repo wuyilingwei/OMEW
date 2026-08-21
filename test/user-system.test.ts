@@ -204,3 +204,69 @@ describe("federation session trust list", () => {
     expect(res.status).toBe(501);
   });
 });
+
+// The localpart is immutable; display_name is the only renameable identity
+// field (POST /api/me/display-name).
+describe("display name", () => {
+  const OWNERSHIP_KEYS = { ownership_pubkey: "test-pubkey", ownership_ciphertext: "test-ciphertext-blob" };
+
+  async function freshUser(username: string): Promise<{ token: string; user: Record<string, unknown> }> {
+    const { status, json } = await registerUser({ username, password: "password123", ...OWNERSHIP_KEYS });
+    expect(status).toBe(200);
+    return { token: json.token as string, user: json.user as Record<string, unknown> };
+  }
+
+  function setName(token: string | null, displayName: unknown): Promise<Response> {
+    return apiRequest("/api/me/display-name", {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: JSON.stringify({ display_name: displayName }),
+    });
+  }
+
+  it("defaults to the localpart at registration", async () => {
+    const { user } = await freshUser("nameuser1");
+    expect(user.display_name).toBe("nameuser1");
+    expect(user.username).toBe("nameuser1");
+  });
+
+  it("renames without touching the username, and the new name survives a re-login", async () => {
+    const { token } = await freshUser("nameuser2");
+    const res = await setName(token, "  改过的名字  ");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ display_name: "改过的名字" });
+
+    const login = await apiRequest("/api/login", {
+      method: "POST",
+      body: JSON.stringify({ username: "nameuser2", password: "password123" }),
+    });
+    const body = (await login.json()) as { user: { username: string; display_name: string; actor: string } };
+    expect(body.user.display_name).toBe("改过的名字");
+    expect(body.user.username).toBe("nameuser2");
+    expect(body.user.actor).toBe("@nameuser2:local");
+  });
+
+  it("rejects an empty or whitespace-only name with 400", async () => {
+    const { token } = await freshUser("nameuser3");
+    for (const value of ["", "   "]) {
+      const res = await setName(token, value);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "DISPLAY_NAME_INVALID" });
+    }
+  });
+
+  it("rejects a name over 32 characters, accepting exactly 32", async () => {
+    const { token } = await freshUser("nameuser4");
+    const atLimit = "x".repeat(32);
+    expect((await setName(token, atLimit)).status).toBe(200);
+
+    const overLimit = await setName(token, "x".repeat(33));
+    expect(overLimit.status).toBe(400);
+    expect(await overLimit.json()).toEqual({ error: "DISPLAY_NAME_INVALID" });
+  });
+
+  it("requires auth", async () => {
+    const res = await setName(null, "anything");
+    expect(res.status).toBe(401);
+  });
+});

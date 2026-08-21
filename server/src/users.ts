@@ -51,11 +51,21 @@ export function isOriginTrusted(config: InstanceConfig, origin: string): boolean
 // derived, not read off a DB column - the users.is_admin column stopped being
 // read entirely once server_role (migration 0008) took over (m0-protocol §7.10).
 export function toPublicUser(
-  row: { localpart: string; server_role: ServerRole; email: string | null; email_verified: number; totp_enabled?: number },
+  row: {
+    localpart: string;
+    display_name?: string | null;
+    server_role: ServerRole;
+    email: string | null;
+    email_verified: number;
+    totp_enabled?: number;
+  },
   actor: string
 ): PublicUser {
   return {
     username: row.localpart,
+    // rows predating the display-name column, and the registration path (which
+    // writes the localpart as the initial display name), both fall back to it.
+    display_name: row.display_name || row.localpart,
     actor,
     server_role: row.server_role,
     is_admin: row.server_role === "owner" || row.server_role === "admin",

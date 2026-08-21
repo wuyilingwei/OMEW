@@ -133,6 +133,7 @@ export interface InstanceConfig {
 // read no longer exists as a source of truth, see users.ts's toPublicUser.
 export interface PublicUser {
   username: string;
+  display_name: string;
   actor: string;
   server_role: ServerRole;
   is_admin: boolean;

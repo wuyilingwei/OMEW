@@ -232,6 +232,13 @@ export const realApi = {
   changePassword: (token: string, payload: ChangePasswordPayload) =>
     request<void>('/api/me/password', { method: 'POST', headers: authHeaders(token), body: JSON.stringify(payload) }),
 
+  setDisplayName: (token: string, displayName: string) =>
+    request<{ display_name: string }>('/api/me/display-name', {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ display_name: displayName }),
+    }),
+
   getOwnership: (token: string) => request<OwnershipResponse>('/api/me/ownership', { headers: authHeaders(token) }),
 
   getAdminConfig: (token: string) =>

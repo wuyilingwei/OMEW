@@ -454,11 +454,12 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const password = String(body.password ?? "");
 
     const user = await env.DB.prepare(
-      "SELECT localpart, pw_hash, pw_salt, status, server_role, email, email_verified, totp_enabled FROM users WHERE localpart = ?"
+      "SELECT localpart, display_name, pw_hash, pw_salt, status, server_role, email, email_verified, totp_enabled FROM users WHERE localpart = ?"
     )
       .bind(username)
       .first<{
         localpart: string;
+        display_name: string;
         pw_hash: string | null;
         pw_salt: string | null;
         status: string;
@@ -507,11 +508,12 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (await totpRateLimited(env, localpart)) return apiError(429, "TOTP_RATE_LIMITED");
 
     const user = await env.DB.prepare(
-      "SELECT localpart, status, server_role, email, email_verified, totp_secret, totp_enabled FROM users WHERE localpart = ?"
+      "SELECT localpart, display_name, status, server_role, email, email_verified, totp_secret, totp_enabled FROM users WHERE localpart = ?"
     )
       .bind(localpart)
       .first<{
         localpart: string;
+        display_name: string;
         status: string;
         server_role: ServerRole;
         email: string | null;
@@ -542,6 +544,25 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     await recordTotpSuccess(env, localpart);
     const token = await issueSessionToken(claims.actor, user.server_role, env);
     return json({ token, user: toPublicUser(user, claims.actor) });
+  }
+
+  // ---- account: display name ---------------------------------------------------------
+  // The localpart (and therefore the actor) is immutable - this only renames how
+  // the account is shown in member lists, message bylines and profile cards.
+
+  if (method === "POST" && path === "/api/me/display-name") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+
+    const displayName = typeof body.display_name === "string" ? body.display_name.trim() : "";
+    if (!displayName || displayName.length > 32) return apiError(400, "DISPLAY_NAME_INVALID");
+
+    await env.DB.prepare("UPDATE users SET display_name = ? WHERE localpart = ?")
+      .bind(displayName, localpartOfActor(actor))
+      .run();
+    return json({ display_name: displayName });
   }
 
   // ---- account: change password ----------------------------------------------------
