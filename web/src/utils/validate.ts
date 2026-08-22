@@ -93,7 +93,7 @@ export function formatBytes(bytes: number): string {
 // the UI reject an oversized/over-quota file before spending a request on it.
 // Returns '' (no local check possible yet) when storage info hasn't loaded -
 // the upload still goes through and the server enforces the real limits.
-export function fileUploadError(file: File, storage: { used: number; quota: number; max_file: number } | null): string {
+export function fileUploadError(file: Blob, storage: { used: number; quota: number; max_file: number } | null): string {
   if (!storage) return ''
   if (file.size > storage.max_file) return `文件超过实例大小限制（${formatBytes(storage.max_file)}）`
   if (storage.used + file.size > storage.quota) return `存储配额不足（已用 ${formatBytes(storage.used)} / ${formatBytes(storage.quota)}）`
