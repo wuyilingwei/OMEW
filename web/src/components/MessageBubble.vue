@@ -74,7 +74,13 @@ function onTouchStart(event: TouchEvent) {
 </script>
 
 <template>
-  <div class="message-row" :class="{ 'message-row--mine': message.mine, 'message-row--grouped': grouped }">
+  <div
+    class="message-row"
+    :class="{
+      'message-row--mine': message.mine,
+      'message-row--grouped': grouped,
+    }"
+  >
     <AvatarBadge v-if="!grouped" class="message-row__avatar" :seed="message.displayName" :size="36" />
     <div v-else class="message-row__avatar-spacer" aria-hidden="true"></div>
     <div
@@ -102,32 +108,26 @@ function onTouchStart(event: TouchEvent) {
         </div>
       </template>
       <template v-else>
-        <div class="message-bubble__main">
-          <div class="message-bubble__payload">
-            <img
-              v-if="pureEmote"
-              class="message-bubble__big-emote"
-              :class="{ 'message-bubble__big-emote--compact': compactPureEmote }"
-              :src="pureEmote.url"
-              :alt="message.content"
-            />
-            <div v-else-if="message.content" class="message-bubble__content">
-              <template v-for="(segment, index) in segments" :key="index">
-                <img
-                  v-if="segment.type === 'emote'"
-                  class="message-bubble__inline-emote"
-                  :src="segment.token.url"
-                  :alt="`:${segment.token.pack}:${segment.token.name}:`"
-                />
-                <template v-else>{{ segment.value }}</template>
-              </template>
-            </div>
-            <MediaGrid v-if="message.media?.length" class="message-bubble__media" :media="message.media" />
+        <div class="message-bubble__payload">
+          <img
+            v-if="pureEmote"
+            class="message-bubble__big-emote"
+            :class="{ 'message-bubble__big-emote--compact': compactPureEmote }"
+            :src="pureEmote.url"
+            :alt="message.content"
+          />
+          <div v-else-if="message.content" class="message-bubble__content">
+            <template v-for="(segment, index) in segments" :key="index">
+              <img
+                v-if="segment.type === 'emote'"
+                class="message-bubble__inline-emote"
+                :src="segment.token.url"
+                :alt="`:${segment.token.pack}:${segment.token.name}:`"
+              />
+              <template v-else>{{ segment.value }}</template>
+            </template>
           </div>
-          <div v-if="!message.pending && !message.failed" class="message-bubble__meta message-bubble__meta--timestamp">
-            <span>{{ message.timestamp }}</span>
-            <span v-if="message.editedAt">（已编辑）</span>
-          </div>
+          <MediaGrid v-if="message.media?.length" class="message-bubble__media" :media="message.media" />
         </div>
         <ReactionChips
           :reactions="message.reactions"
@@ -143,6 +143,10 @@ function onTouchStart(event: TouchEvent) {
           </span>
         </div>
       </template>
+    </div>
+    <div v-if="!message.pending && !message.failed" class="message-row__timestamp">
+      <span>{{ message.timestamp }}</span>
+      <span v-if="message.editedAt">（已编辑）</span>
     </div>
   </div>
 </template>
@@ -172,6 +176,17 @@ function onTouchStart(event: TouchEvent) {
   flex-direction: row-reverse;
 }
 
+.message-row__timestamp {
+  flex: 0 0 auto;
+  align-self: flex-end;
+  padding-bottom: 0.05rem;
+  color: var(--text-tertiary);
+  font-size: 0.7rem;
+  line-height: 1;
+  white-space: nowrap;
+  opacity: 0.72;
+}
+
 .message-row__avatar {
   margin-bottom: 0.1rem;
 }
@@ -185,6 +200,7 @@ function onTouchStart(event: TouchEvent) {
 
 .message-bubble {
   max-width: 60%;
+  min-width: 0;
   padding: 0.5rem 0.75rem;
   border-radius: 8px;
   background: var(--card-bg);
@@ -214,13 +230,6 @@ function onTouchStart(event: TouchEvent) {
   padding: 0;
 }
 
-.message-bubble__main {
-  display: flex;
-  align-items: flex-end;
-  gap: 0.4rem;
-  min-width: 0;
-}
-
 .message-bubble__payload {
   min-width: 0;
 }
@@ -238,7 +247,7 @@ function onTouchStart(event: TouchEvent) {
 
 .message-bubble__big-emote--compact {
   width: auto;
-  height: 1.4rem;
+  height: calc(1.26rem + 1rem + 2px);
   max-width: 3rem;
 }
 
@@ -273,14 +282,6 @@ function onTouchStart(event: TouchEvent) {
   color: var(--text-tertiary);
   margin-top: 0.2rem;
   justify-content: flex-end;
-}
-
-.message-bubble__meta--timestamp {
-  flex: 0 0 auto;
-  margin-top: 0;
-  padding-bottom: 0.05rem;
-  white-space: nowrap;
-  opacity: 0.72;
 }
 
 .message-bubble--mine .message-bubble__meta {
@@ -325,10 +326,8 @@ function onTouchStart(event: TouchEvent) {
 @media (max-width: 768px) {
   .message-bubble {
     max-width: 80%;
+    min-width: 0;
   }
 
-  .message-bubble__main {
-    gap: 0.3rem;
-  }
 }
 </style>
