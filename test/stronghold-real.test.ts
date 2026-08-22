@@ -80,6 +80,71 @@ describe("POST /api/stronghold/:id/rooms", () => {
     expect(forbidden.status).toBe(403);
     expect(await forbidden.json()).toEqual({ error: "FORBIDDEN" });
   });
+
+  it("lets a moderator manage both room types while preserving the final room of each type", async () => {
+    const owner = "@roommanageowner:local";
+    const moderator = "@roommanagemod:local";
+    const member = "@roommanagemember:local";
+    const id = `roommanage${Date.now()}`;
+    const stub = env.STRONGHOLD_DO.getByName(id);
+    await stub.initConfig(id, "Room Management", "public", owner);
+    await stub.addMember(moderator, "mod");
+    await stub.addMember(member, "member");
+    const moderatorToken = await sessionToken(moderator);
+    const memberToken = await sessionToken(member);
+
+    const create = async (name: string, type: "channel" | "section") => {
+      const res = await apiRequest(`/api/stronghold/${id}/rooms`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${moderatorToken}` },
+        body: JSON.stringify({ name, type }),
+      });
+      expect(res.status).toBe(201);
+      return (await res.json()) as { id: string; name: string; type: string; description: string | null };
+    };
+
+    const channel = await create("Chat", "channel");
+    const secondChannel = await create("Updates", "channel");
+    const section = await create("Ideas", "section");
+    const secondSection = await create("Guides", "section");
+
+    const patch = await apiRequest(`/api/stronghold/${id}/rooms/${channel.id}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${moderatorToken}` },
+      body: JSON.stringify({ name: "Discussion", description: "Live chat", position: 3 }),
+    });
+    expect(patch.status).toBe(200);
+    expect(await patch.json()).toMatchObject({ id: channel.id, name: "Discussion", description: "Live chat", type: "channel" });
+
+    const listed = await apiRequest(`/api/stronghold/${id}/rooms`);
+    expect(listed.status).toBe(200);
+    const listedRooms = (await listed.json()) as Array<{ id: string; name: string; description: string | null }>;
+    expect(listedRooms).toContainEqual(expect.objectContaining({ id: channel.id, name: "Discussion", description: "Live chat" }));
+
+    const forbidden = await apiRequest(`/api/stronghold/${id}/rooms/${channel.id}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${memberToken}` },
+      body: JSON.stringify({ name: "Nope" }),
+    });
+    expect(forbidden.status).toBe(403);
+
+    for (const room of [secondChannel, secondSection]) {
+      const del = await apiRequest(`/api/stronghold/${id}/rooms/${room.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${moderatorToken}` },
+      });
+      expect(del.status).toBe(204);
+    }
+
+    for (const room of [channel, section]) {
+      const del = await apiRequest(`/api/stronghold/${id}/rooms/${room.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${moderatorToken}` },
+      });
+      expect(del.status).toBe(409);
+      expect(await del.json()).toEqual({ error: "LAST_ROOM_OF_TYPE" });
+    }
+  });
 });
 
 describe("POST /api/stronghold/:id/join", () => {

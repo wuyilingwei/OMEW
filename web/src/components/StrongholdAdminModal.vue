@@ -14,7 +14,7 @@ import AvatarBadge from './AvatarBadge.vue'
 import CoverUploader from './CoverUploader.vue'
 import EmptyState from './EmptyState.vue'
 import MemberInfoCard from './MemberInfoCard.vue'
-import SectionManager from './SectionManager.vue'
+import RoomManager from './SectionManager.vue'
 import TopicManager from './TopicManager.vue'
 
 // stronghold-scoped management only (members / blacklist / stronghold
@@ -40,7 +40,7 @@ const VISIBILITY_OPTIONS = [
   { Text: '私密', Value: 'private' },
 ]
 
-type PanelTab = 'members' | 'banned' | 'sections' | 'topics' | 'settings'
+type PanelTab = 'members' | 'banned' | 'channels' | 'sections' | 'topics' | 'settings'
 
 const panelTab = ref<PanelTab>(props.initialTab)
 // m0-protocol §7.10: a server owner/admin manages every stronghold with
@@ -53,7 +53,8 @@ const panelTabOptions = computed(() => {
   const opts: { Text: string; value: PanelTab }[] = [{ Text: '成员', value: 'members' }]
   if (canManage.value) {
     opts.push({ Text: '黑名单', value: 'banned' })
-    opts.push({ Text: '分区', value: 'sections' })
+    opts.push({ Text: '话题', value: 'channels' })
+    opts.push({ Text: '话题组', value: 'sections' })
     opts.push({ Text: '标签', value: 'topics' })
     opts.push({ Text: '设置', value: 'settings' })
   }
@@ -343,8 +344,12 @@ watch(
               </ul>
             </div>
 
+            <div v-else-if="panelTab === 'channels'" class="admin-modal__body">
+              <RoomManager type="channel" />
+            </div>
+
             <div v-else-if="panelTab === 'sections'" class="admin-modal__body">
-              <SectionManager />
+              <RoomManager type="section" />
             </div>
 
             <div v-else-if="panelTab === 'topics'" class="admin-modal__body">

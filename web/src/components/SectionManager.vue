@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { api, ApiRequestError } from '../api'
 import type { RoomSummary } from '../api/types'
 import { useAuth } from '../composables/useAuth'
@@ -8,7 +8,11 @@ import { maxLengthError, requiredMaxLengthError } from '../utils/validate'
 import { WinButton } from '../vendor/winui'
 import AppIcon from './icons/AppIcon.vue'
 
-// 据点管理面板「分区」tab：section 型房间的增删改名排序（StrongholdAdminModal 内嵌）。
+const props = withDefaults(defineProps<{ type?: 'channel' | 'section' }>(), { type: 'section' })
+
+const roomLabel = computed(() => (props.type === 'channel' ? '话题' : '话题组'))
+const roomCountLabel = computed(() => (props.type === 'channel' ? '' : '篇帖子'))
+
 const auth = useAuth()
 const { selectedNodeId, loadStrongholds } = useStronghold()
 
@@ -18,15 +22,15 @@ const listError = ref('')
 // the by-id rooms endpoint is the only one carrying post_count - the cached
 // stronghold list deliberately skips it, so load rooms here rather than
 // deriving them from currentNode.
-const sections = ref<RoomSummary[]>([])
+const rooms = ref<RoomSummary[]>([])
 
 async function loadSections() {
   if (!selectedNodeId.value) return
   try {
-    const rooms = await api.getStrongholdRooms(auth.token.value, selectedNodeId.value)
-    sections.value = rooms.filter((r) => r.type === 'section')
+    const loadedRooms = await api.getStrongholdRooms(auth.token.value, selectedNodeId.value)
+    rooms.value = loadedRooms.filter((r) => r.type === props.type)
   } catch {
-    listError.value = '加载分区失败'
+    listError.value = `加载${roomLabel.value}失败`
   }
 }
 
@@ -91,7 +95,7 @@ async function reorder(list: RoomSummary[]) {
 }
 
 async function move(room: RoomSummary, dir: -1 | 1) {
-  const list = [...sections.value]
+  const list = [...rooms.value]
   const idx = list.findIndex((r) => r.id === room.id)
   const swap = idx + dir
   if (idx < 0 || swap < 0 || swap >= list.length) return
@@ -131,7 +135,7 @@ async function onDrop(idx: number, ev: DragEvent) {
   dragFromIndex.value = null
   dragOverIndex.value = null
   if (from === null || from === idx) return
-  const list = [...sections.value]
+  const list = [...rooms.value]
   const [moved] = list.splice(from, 1)
   if (!moved) return
   list.splice(idx, 0, moved)
@@ -140,14 +144,15 @@ async function onDrop(idx: number, ev: DragEvent) {
 
 async function remove(room: RoomSummary) {
   if (!auth.token.value) return
-  if (!confirm(`删除分区「${room.name}」？其中的帖子将一并移除，此操作不可撤销。`)) return
+  const detail = props.type === 'channel' ? '其中的聊天记录将一并移除，此操作不可撤销。' : '其中的帖子将一并移除，此操作不可撤销。'
+  if (!confirm(`删除${roomLabel.value}「${room.name}」？${detail}`)) return
   busy.value = true
   listError.value = ''
   try {
     await api.deleteRoom(auth.token.value, selectedNodeId.value, room.id)
     await Promise.all([loadStrongholds(true), loadSections()])
   } catch (err) {
-    listError.value = err instanceof ApiRequestError && err.code === 'LAST_ROOM_OF_TYPE' ? '至少保留一个分区' : '删除失败，请稍后重试'
+    listError.value = err instanceof ApiRequestError && err.code === 'LAST_ROOM_OF_TYPE' ? `至少保留一个${roomLabel.value}` : '删除失败，请稍后重试'
   } finally {
     busy.value = false
   }
@@ -164,7 +169,7 @@ async function create() {
   if (createError.value) return
   creating.value = true
   try {
-    await api.createRoom(auth.token.value, selectedNodeId.value, { name: newName.value.trim(), type: 'section' })
+    await api.createRoom(auth.token.value, selectedNodeId.value, { name: newName.value.trim(), type: props.type })
     await Promise.all([loadStrongholds(true), loadSections()])
     newName.value = ''
   } catch {
@@ -178,11 +183,11 @@ async function create() {
 <template>
   <div class="section-manager">
     <p v-if="listError" class="field__error">{{ listError }}</p>
-    <p v-if="!sections.length" class="field__hint">暂无分区</p>
+    <p v-if="!rooms.length" class="field__hint">暂无{{ roomLabel }}</p>
 
     <ul v-else class="section-list">
       <li
-        v-for="(room, idx) in sections"
+        v-for="(room, idx) in rooms"
         :key="room.id"
         class="section-row"
         :class="{ 'section-row--drag-over': dragOverIndex === idx, 'section-row--dragging': dragFromIndex === idx }"
@@ -203,7 +208,7 @@ async function create() {
           <div class="field section-row__edit">
             <input v-model="editingName" type="text" maxlength="32" @keyup.enter="saveEdit(room)" @keyup.escape="cancelEdit" />
             <p v-if="editError" class="field__error">{{ editError }}</p>
-            <input v-model="editingDescription" type="text" maxlength="64" placeholder="分区描述（可选，≤64 字）" @keyup.enter="saveEdit(room)" @keyup.escape="cancelEdit" />
+            <input v-model="editingDescription" type="text" maxlength="64" :placeholder="`${roomLabel}描述（可选，≤64 字）`" @keyup.enter="saveEdit(room)" @keyup.escape="cancelEdit" />
             <p v-if="descError" class="field__error">{{ descError }}</p>
           </div>
           <div class="section-row__actions">
@@ -218,7 +223,7 @@ async function create() {
               {{ room.description || '暂无描述' }}
             </span>
           </div>
-          <span class="section-row__count">{{ room.post_count ?? 0 }} 篇帖子</span>
+          <span v-if="roomCountLabel" class="section-row__count">{{ room.post_count ?? 0 }} {{ roomCountLabel }}</span>
           <div class="section-row__actions">
             <button type="button" class="icon-btn only-mobile" title="上移" :disabled="busy || idx === 0" @click="move(room, -1)">
               <AppIcon name="chevron-right" :size="16" class="icon-btn__rotate-up" />
@@ -227,12 +232,12 @@ async function create() {
               type="button"
               class="icon-btn only-mobile"
               title="下移"
-              :disabled="busy || idx === sections.length - 1"
+              :disabled="busy || idx === rooms.length - 1"
               @click="move(room, 1)"
             >
               <AppIcon name="chevron-right" :size="16" class="icon-btn__rotate-down" />
             </button>
-            <WinButton Style="SubtleButtonStyle" :IsEnabled="!busy" @click="startEdit(room)">重命名</WinButton>
+            <WinButton Style="SubtleButtonStyle" :IsEnabled="!busy" @click="startEdit(room)">编辑</WinButton>
             <WinButton Style="SubtleButtonStyle" class="win-btn--danger" :IsEnabled="!busy" @click="remove(room)">删除</WinButton>
           </div>
         </template>
@@ -241,11 +246,11 @@ async function create() {
 
     <div class="section-create">
       <div class="field section-create__field">
-        <input v-model="newName" type="text" maxlength="32" placeholder="新建分区名称" @keyup.enter="create" />
+        <input v-model="newName" type="text" maxlength="32" :placeholder="`新建${roomLabel}名称`" @keyup.enter="create" />
         <p v-if="createError" class="field__error">{{ createError }}</p>
       </div>
       <WinButton Style="DefaultButtonStyle" :IsEnabled="!creating" @click="create">
-        {{ creating ? '创建中…' : '新建分区' }}
+        {{ creating ? '创建中…' : `新建${roomLabel}` }}
       </WinButton>
     </div>
   </div>
