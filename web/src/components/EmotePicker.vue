@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { BUILTIN_PACK_IDS } from '../assets/mew-emotes'
+import { BUILTIN_PACK_IDS, builtinEmotePackKind } from '../assets/mew-emotes'
 import { useEmotes } from '../composables/useEmotes'
 
 const emit = defineEmits<{ pick: [code: string]; close: [] }>()
@@ -14,6 +14,11 @@ const groups = computed(() => {
   return [...builtin, ...custom].filter((pack) => pack.emotes.length > 0)
 })
 const isEmpty = computed(() => !loading.value && groups.value.length === 0)
+
+function packGridClass(packId: string): string | undefined {
+  const kind = builtinEmotePackKind(packId)
+  return kind ? `emote-picker__grid--${kind}` : undefined
+}
 </script>
 
 <template>
@@ -24,7 +29,7 @@ const isEmpty = computed(() => !loading.value && groups.value.length === 0)
       <div v-else class="emote-picker__groups">
         <section v-for="pack in groups" :key="pack.id" class="emote-picker__group">
           <h3 class="emote-picker__group-title">{{ pack.display ?? pack.name }}</h3>
-          <div class="emote-picker__grid">
+          <div class="emote-picker__grid" :class="packGridClass(pack.id)">
             <button
               v-for="emote in pack.emotes"
               :key="`${pack.name}:${emote.name}`"
@@ -54,7 +59,7 @@ const isEmpty = computed(() => !loading.value && groups.value.length === 0)
   bottom: calc(100% + 0.5rem);
   left: 1rem;
   width: min(360px, calc(100% - 2rem));
-  max-height: 320px;
+  max-height: min(480px, calc(100dvh - 8rem));
   overflow-y: auto;
   padding: 0.6rem;
   border-radius: var(--radius-md);
@@ -88,19 +93,31 @@ const isEmpty = computed(() => !loading.value && groups.value.length === 0)
 
 .emote-picker__grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, 80px);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.4rem;
-  justify-content: center;
+}
+
+.emote-picker__grid--reaction {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.emote-picker__grid--standard {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .emote-picker__item {
-  width: 80px;
-  height: 80px;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
   padding: 0.4rem;
   border: none;
   border-radius: var(--radius-sm);
   background: var(--ctrl-fill-secondary);
   transition: background var(--fast-duration) var(--fast-out-slow-in);
+}
+
+.emote-picker__grid--reaction .emote-picker__item {
+  padding: 0.25rem;
 }
 
 .emote-picker__item:hover {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { ItemReactions, MediaAttachment } from '../api/types'
+import { isCompactStandaloneEmote } from '../assets/mew-emotes'
 import { useContextMenuGesture } from '../composables/useContextMenuGesture'
 import { useEmotes } from '../composables/useEmotes'
 import { buildEmoteLookup, parseMessageText, pureEmoteToken } from '../utils/emote'
@@ -44,6 +45,7 @@ const { packs } = useEmotes()
 const emoteLookup = computed(() => buildEmoteLookup(packs.value))
 const segments = computed(() => parseMessageText(props.message.content.trim(), emoteLookup.value))
 const pureEmote = computed(() => pureEmoteToken(segments.value))
+const compactPureEmote = computed(() => pureEmote.value !== null && isCompactStandaloneEmote(pureEmote.value.pack))
 
 // the shared context menu lives once in ChatPane (see useContextMenuGesture's
 // canOpen note - one instance per message would mean one set of global
@@ -73,6 +75,7 @@ function onTouchStart(event: TouchEvent) {
         'message-bubble--mine': message.mine,
         'message-bubble--failed': message.failed,
         'message-bubble--emote-only': !editing && pureEmote,
+        'message-bubble--compact-emote': !editing && compactPureEmote,
       }"
       @contextmenu="onContextMenu"
       @touchstart.passive="onTouchStart"
@@ -90,7 +93,13 @@ function onTouchStart(event: TouchEvent) {
         </div>
       </template>
       <template v-else>
-        <img v-if="pureEmote" class="message-bubble__big-emote" :src="pureEmote.url" :alt="message.content" />
+        <img
+          v-if="pureEmote"
+          class="message-bubble__big-emote"
+          :class="{ 'message-bubble__big-emote--compact': compactPureEmote }"
+          :src="pureEmote.url"
+          :alt="message.content"
+        />
         <div v-else-if="message.content" class="message-bubble__content">
           <template v-for="(segment, index) in segments" :key="index">
             <img
@@ -191,6 +200,12 @@ function onTouchStart(event: TouchEvent) {
   max-width: 128px;
   max-height: 128px;
   object-fit: contain;
+}
+
+.message-bubble__big-emote--compact {
+  width: auto;
+  height: 1.4rem;
+  max-width: 3rem;
 }
 
 .message-bubble__inline-emote {

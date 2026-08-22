@@ -16,6 +16,18 @@ import noThoughtUrl from './no-thought.webp'
 import okashiiUrl from './okashii.webp'
 import questionUrl from './question.webp'
 import saluteUrl from './salute.webp'
+import stampAzUrl from './stamp-az.webp'
+import stampComfortUrl from './stamp-comfort.webp'
+import stampHelpfulUrl from './stamp-helpful.webp'
+import stampKusaUrl from './stamp-kusa.webp'
+import stampLanceUrl from './stamp-lance.webp'
+import stampLikeUrl from './stamp-like.webp'
+import stampNiubiUrl from './stamp-niubi.webp'
+import stampOkashiiUrl from './stamp-okashii.webp'
+import stampQuestionUrl from './stamp-question.webp'
+import stampSaluteUrl from './stamp-salute.webp'
+import stampTearUrl from './stamp-tear.webp'
+import stampUhhuhUrl from './stamp-uhhuh.webp'
 import tearUrl from './tear.webp'
 import uhhuhUrl from './uhhuh.webp'
 
@@ -27,6 +39,23 @@ export const EMPTY_STATE = {
   posts: noThoughtUrl,
   members: memberSearchUrl,
   onboarding: azUrl,
+}
+
+// The forum's 4x3 standard sticker set. The semantic names intentionally
+// mirror REACTION_SET, while the `stamp-` files contain different artwork.
+export const STAMP_EMOTES: Record<string, string> = {
+  az: stampAzUrl,
+  comfort: stampComfortUrl,
+  helpful: stampHelpfulUrl,
+  kusa: stampKusaUrl,
+  lance: stampLanceUrl,
+  like: stampLikeUrl,
+  niubi: stampNiubiUrl,
+  okashii: stampOkashiiUrl,
+  question: stampQuestionUrl,
+  salute: stampSaluteUrl,
+  tear: stampTearUrl,
+  uhhuh: stampUhhuhUrl,
 }
 
 // flat thick-outline glyphs - small reactions meant to attach to a message or

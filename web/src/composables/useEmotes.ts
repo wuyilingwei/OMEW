@@ -1,7 +1,7 @@
 import { computed, ref, watch } from 'vue'
 import { api } from '../api'
 import type { EmotePack } from '../api/types'
-import { BUILTIN_REACTION_PACK } from '../assets/mew-emotes'
+import { BUILTIN_EMOTE_PACK, BUILTIN_REACTION_PACK } from '../assets/mew-emotes'
 import { useAuth } from './useAuth'
 
 const instancePacks = ref<EmotePack[]>([])
@@ -25,7 +25,7 @@ async function loadEmotes() {
 // built-in packs always present and listed last, so they win on a same-name
 // collision against the emote lookup (buildEmoteLookup keeps the last entry
 // written for a given "pack:name" key).
-const packs = computed<EmotePack[]>(() => [...instancePacks.value, BUILTIN_REACTION_PACK])
+const packs = computed<EmotePack[]>(() => [...instancePacks.value, BUILTIN_REACTION_PACK, BUILTIN_EMOTE_PACK])
 
 export function useEmotes() {
   const auth = useAuth()
