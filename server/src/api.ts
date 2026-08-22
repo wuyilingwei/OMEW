@@ -2625,7 +2625,8 @@ function stripGifMetadata(bytes: Uint8Array): Uint8Array | null {
       const packed = bytes[offset + 8]!;
       offset += 9 + gifColorTableBytes(packed);
       if (offset >= bytes.byteLength) return null;
-      offset += 1; // LZW minimum code size
+      const lzwMinimumCodeSize = bytes[offset++]!;
+      if (lzwMinimumCodeSize < 2 || lzwMinimumCodeSize > 8) return null;
       const end = gifSubBlocksEnd(bytes, offset);
       if (end < 0) return null;
       parts.push(bytes.subarray(start, end));

@@ -94,11 +94,19 @@ function animatedGifWithMetadata(): Uint8Array {
   return new Uint8Array([
     ...ascii("GIF89a"), 1, 0, 1, 0, 0x80, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff,
     0x21, 0xff, 11, ...ascii("NETSCAPE2.0"), 3, 1, 0, 0, 0,
+    0x21, 0xff, 11, ...ascii("CUSTOMAPP01"), 4, ...ascii("meta"), 0,
     0x21, 0xfe, 3, ...ascii("gps"), 0,
+    0x21, 0x01, 12, ...Array(12).fill(0), 5, ...ascii("plain"), 0,
+    0x21, 0xf9, 4, 0, 0, 0, 0, 0,
+    0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x4c, 1, 0,
     0x21, 0xf9, 4, 0, 0, 0, 0, 0,
     0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x4c, 1, 0,
     0x3b,
   ]);
+}
+
+function countByte(bytes: Uint8Array, value: number): number {
+  return bytes.reduce((count, byte) => count + Number(byte === value), 0);
 }
 
 function plainTextBytes(totalLen: number): Uint8Array {
@@ -237,15 +245,17 @@ describe("POST /api/media success + GET /media/:id", () => {
     const token = await freshUserToken();
     const body = animatedGifWithMetadata();
     const res = await mediaUploadRequest({ token, contentType: "image/gif", declaredLength: body.byteLength, body });
-    expect(res.status).toBe(201);
-    const created = (await res.json()) as { url: string; size: number; mime: string };
+    const created = (await res.json()) as { url: string; size: number; mime: string; error?: string };
+    expect(res.status, created.error).toBe(201);
     expect(created.mime).toBe("image/gif");
     const stored = new Uint8Array(await (await apiRequest(created.url)).arrayBuffer());
     expect(stored.byteLength).toBe(created.size);
     expect(includesAscii(stored, "NETSCAPE2.0")).toBe(true);
     expect(includesAscii(stored, "gps")).toBe(false);
-    expect(stored).toContain(0x2c);
-    expect(stored).toContain(0xf9);
+    expect(includesAscii(stored, "meta")).toBe(false);
+    expect(includesAscii(stored, "plain")).toBe(false);
+    expect(countByte(stored, 0x2c)).toBe(2);
+    expect(countByte(stored, 0xf9)).toBe(2);
     expect(stored[stored.byteLength - 1]).toBe(0x3b);
   });
 
@@ -257,6 +267,16 @@ describe("POST /api/media success + GET /media/:id", () => {
     expect(await res.json()).toEqual({ error: "IMAGE_PROCESSING_FAILED" });
     const storage = (await (await apiRequest("/api/me/storage", { headers: { Authorization: `Bearer ${token}` } })).json()) as { used: number };
     expect(storage.used).toBe(0);
+  });
+
+  it("rejects a GIF image descriptor with an invalid LZW minimum code size", async () => {
+    const token = await freshUserToken();
+    const body = animatedGifWithMetadata();
+    const imageDescriptor = body.indexOf(0x2c);
+    body[imageDescriptor + 10] = 1;
+    const res = await mediaUploadRequest({ token, contentType: "image/gif", declaredLength: body.byteLength, body });
+    expect(res.status).toBe(415);
+    expect(await res.json()).toEqual({ error: "IMAGE_PROCESSING_FAILED" });
   });
 
   it("uploads a valid PNG, returns {id, url, size, mime}, and serves it back with immutable cache headers", async () => {
