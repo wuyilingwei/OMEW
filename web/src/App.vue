@@ -58,8 +58,15 @@ watch(auth.isAuthenticated, (authenticated) => {
   <div class="shell">
     <AuthGate v-if="showAuthGate" />
 
-    <div v-else-if="auth.isAuthenticated.value && strongholdsLoading && !hasStrongholds" class="shell__loading">
-      正在加载据点…
+    <div
+      v-else-if="strongholdsLoading && !hasStrongholds"
+      class="shell__loading"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <span class="shell__loading-spinner" aria-hidden="true" />
+      <span>正在加载据点…</span>
     </div>
 
     <StrongholdOnboarding v-else-if="auth.isAuthenticated.value && !hasStrongholds" />
@@ -102,11 +109,34 @@ watch(auth.isAuthenticated, (authenticated) => {
 
 .shell__loading {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 0.75rem;
   height: 100%;
   color: var(--text-tertiary);
   font-size: 0.85rem;
+}
+
+.shell__loading-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--ctrl-border);
+  border-top-color: rgb(var(--colors-primary));
+  border-radius: 50%;
+  animation: shell-loading-spin 0.8s linear infinite;
+}
+
+@keyframes shell-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell__loading-spinner {
+    animation: none;
+  }
 }
 
 @media (max-width: 768px) {

@@ -53,11 +53,11 @@ function closeCompose() {
         v-if="postRoom && auth.isAuthenticated.value"
         Style="AccentButtonStyle"
         class="left-column__compose-btn"
-        @Click="openCompose"
+        @click="openCompose"
       >
         发帖
       </WinButton>
-      <WinButton v-else-if="postRoom" Style="DefaultButtonStyle" class="left-column__compose-btn" @Click="openAuthModal">
+      <WinButton v-else-if="postRoom" Style="DefaultButtonStyle" class="left-column__compose-btn" @click="openAuthModal">
         登录后发帖
       </WinButton>
     </div>
@@ -95,7 +95,7 @@ function closeCompose() {
       />
       <EmptyState v-if="!posts.length && !postsLoading" :image="EMPTY_STATE.posts" text="暂无帖子" />
       <div v-if="hasMorePosts" class="left-column__more">
-        <WinButton Style="SubtleButtonStyle" :IsEnabled="!postsLoading" @Click="loadMorePosts">
+        <WinButton Style="SubtleButtonStyle" :IsEnabled="!postsLoading" @click="loadMorePosts">
           {{ postsLoading ? '加载中…' : '加载更多' }}
         </WinButton>
       </div>

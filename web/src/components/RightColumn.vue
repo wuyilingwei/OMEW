@@ -64,10 +64,10 @@ function onUserMenuSelect(item: { Value: string }) {
         </WinDropDownButton>
       </template>
       <template v-else>
-        <WinButton Style="SubtleButtonStyle" class="right-column__theme-btn" @Click="cycleTheme">
+        <WinButton Style="SubtleButtonStyle" class="right-column__theme-btn" @click="cycleTheme">
           主题：{{ modeLabel[mode] }}
         </WinButton>
-        <WinButton Style="AccentButtonStyle" class="right-column__login-btn" @Click="openAuthModal">
+        <WinButton Style="AccentButtonStyle" class="right-column__login-btn" @click="openAuthModal">
           登录 / 注册
         </WinButton>
       </template>
@@ -83,19 +83,19 @@ function onUserMenuSelect(item: { Value: string }) {
 
     <div class="right-column__actions">
       <template v-if="!isGuestMode">
-        <WinButton Style="DefaultButtonStyle" class="right-column__action" @Click="emit('open-panel', 'members')">
+        <WinButton Style="DefaultButtonStyle" class="right-column__action" @click="emit('open-panel', 'members')">
           成员列表
         </WinButton>
         <WinButton
           v-if="canManage"
           Style="DefaultButtonStyle"
           class="right-column__action"
-          @Click="emit('open-panel', 'settings')"
+          @click="emit('open-panel', 'settings')"
         >
           据点设置
         </WinButton>
       </template>
-      <WinButton v-else Style="AccentButtonStyle" class="right-column__action" @Click="openAuthModal">
+      <WinButton v-else Style="AccentButtonStyle" class="right-column__action" @click="openAuthModal">
         登录以加入据点
       </WinButton>
     </div>

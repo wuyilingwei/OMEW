@@ -1,3 +1,4 @@
+import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { apiRequest, ensureMigrated, registerUser } from "./helpers";
 
@@ -240,6 +241,24 @@ describe("passkey login", () => {
     });
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ error: "AUTH_FAILED" });
+  });
+
+  it("reaps expired one-time challenges while consuming a fresh challenge", async () => {
+    await env.DB.prepare("INSERT INTO used_challenges (jti, exp) VALUES (?, ?)")
+      .bind(`expired-${crypto.randomUUID()}`, Math.floor(Date.now() / 1000) - 1)
+      .run();
+    const optionsRes = await apiRequest("/api/login/passkey/options", { method: "POST" });
+    const { challenge_token } = (await optionsRes.json()) as { challenge_token: string };
+    const res = await apiRequest("/api/login/passkey", {
+      method: "POST",
+      body: JSON.stringify({ challenge_token, response: { id: "no-such-credential-for-reap" } }),
+    });
+    expect(res.status).toBe(401);
+
+    const expired = await env.DB.prepare("SELECT COUNT(*) AS count FROM used_challenges WHERE exp < ?")
+      .bind(Math.floor(Date.now() / 1000))
+      .first<{ count: number }>();
+    expect(expired?.count).toBe(0);
   });
 
   it("issues a session on a verified assertion with counter advancing", async () => {

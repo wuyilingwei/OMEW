@@ -221,7 +221,7 @@ const replyCanRetract = computed(() => (activeReply.value ? canRetract(activeRep
     <Transition name="post-modal">
       <div v-if="openPostSeq != null" class="post-modal-overlay" @click.self="close">
         <div class="post-modal" role="dialog" aria-modal="true">
-          <WinButton Style="SubtleButtonStyle" class="post-modal__close" @Click="close">关闭</WinButton>
+          <WinButton Style="SubtleButtonStyle" class="post-modal__close" @click="close">关闭</WinButton>
 
           <div v-if="threadLoading && !thread" class="post-modal__loading">加载中…</div>
 
@@ -247,8 +247,8 @@ const replyCanRetract = computed(() => (activeReply.value ? canRetract(activeRep
                 <template v-if="editingSeq === thread.post.post_seq">
                   <textarea v-model="editingText" class="post-modal__edit-input" rows="4" @keydown.esc="cancelEdit"></textarea>
                   <div class="post-modal__edit-actions">
-                    <WinButton Style="SubtleButtonStyle" @Click="submitEdit">保存</WinButton>
-                    <WinButton Style="SubtleButtonStyle" @Click="cancelEdit">取消</WinButton>
+                    <WinButton Style="SubtleButtonStyle" @click="submitEdit">保存</WinButton>
+                    <WinButton Style="SubtleButtonStyle" @click="cancelEdit">取消</WinButton>
                   </div>
                 </template>
                 <template v-else>
@@ -298,8 +298,8 @@ const replyCanRetract = computed(() => (activeReply.value ? canRetract(activeRep
                       <template v-if="editingSeq === reply.seq">
                         <textarea v-model="editingText" class="post-modal__edit-input" rows="2" @keydown.esc="cancelEdit"></textarea>
                         <div class="post-modal__edit-actions">
-                          <WinButton Style="SubtleButtonStyle" @Click="submitEdit">保存</WinButton>
-                          <WinButton Style="SubtleButtonStyle" @Click="cancelEdit">取消</WinButton>
+                          <WinButton Style="SubtleButtonStyle" @click="submitEdit">保存</WinButton>
+                          <WinButton Style="SubtleButtonStyle" @click="cancelEdit">取消</WinButton>
                         </div>
                       </template>
                       <template v-else>
@@ -325,7 +325,7 @@ const replyCanRetract = computed(() => (activeReply.value ? canRetract(activeRep
                   @retract="onReplyRetract"
                 />
                 <div v-if="threadHasMore" class="post-modal__more">
-                  <WinButton Style="SubtleButtonStyle" :IsEnabled="!threadRepliesLoading" @Click="loadMoreReplies">
+                  <WinButton Style="SubtleButtonStyle" :IsEnabled="!threadRepliesLoading" @click="loadMoreReplies">
                     {{ threadRepliesLoading ? '加载中…' : '加载更多评论' }}
                   </WinButton>
                 </div>
@@ -333,11 +333,11 @@ const replyCanRetract = computed(() => (activeReply.value ? canRetract(activeRep
                 <div v-if="auth.isAuthenticated.value" class="post-modal__reply-form">
                   <textarea v-model="replyDraft" rows="2" placeholder="写评论…"></textarea>
                   <p v-if="replyError" class="field__error">{{ replyError }}</p>
-                  <WinButton Style="AccentButtonStyle" class="post-modal__reply-submit" @Click="submitReply">回复</WinButton>
+                  <WinButton Style="AccentButtonStyle" class="post-modal__reply-submit" @click="submitReply">回复</WinButton>
                 </div>
                 <div v-else class="post-modal__reply-form post-modal__reply-form--guest">
                   <p class="field__hint">登录后参与评论</p>
-                  <WinButton Style="AccentButtonStyle" @Click="openAuthModal">登录 / 注册</WinButton>
+                  <WinButton Style="AccentButtonStyle" @click="openAuthModal">登录 / 注册</WinButton>
                 </div>
               </div>
             </div>
@@ -360,7 +360,7 @@ const replyCanRetract = computed(() => (activeReply.value ? canRetract(activeRep
   align-items: center;
   justify-content: center;
   padding: 2rem;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--overlay-scrim);
 }
 
 .post-modal {
@@ -374,7 +374,7 @@ const replyCanRetract = computed(() => (activeReply.value ? canRetract(activeRep
   border-radius: var(--radius-md);
   background: var(--flyout-bg, var(--layer-default));
   border: 1px solid var(--card-stroke);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--shadow-dialog);
   backdrop-filter: blur(32px) saturate(160%);
   -webkit-backdrop-filter: blur(32px) saturate(160%);
   overflow: hidden;

@@ -22,6 +22,10 @@ export interface EffectivePermissions {
   deny: number;
 }
 
+export function canAccessRestrictedRoom(role: Role | null, room: { restricted: number }): boolean {
+  return !room.restricted || role === "owner" || role === "mod";
+}
+
 // baseRole/baseDeny MUST already reflect the server_role owner/admin overlay
 // (m0-protocol §7.10) and the built-in owner/mod roles - none of those are
 // touched by groups at all. Groups only ever act on a plain "member".

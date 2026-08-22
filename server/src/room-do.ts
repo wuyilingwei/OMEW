@@ -236,7 +236,11 @@ export class RoomDO extends DurableObject<Env> {
     }
     const token = protocolHeader.trim();
     const claims = await verifyToken<RoomTokenClaims>(token, this.env.DEV_TOKEN_SECRET);
-    if (!claims || claims.typ !== "room") {
+    if (
+      !claims ||
+      claims.typ !== "room" ||
+      !this.env.ROOM_DO.idFromName(claims.room).equals(this.ctx.id)
+    ) {
       return new Response("invalid token", { status: 401 });
     }
 

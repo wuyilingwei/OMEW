@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
-import { apiRequest, connectRoom, ensureMigrated, loginAs, nextMessage, postCreateFrame, registerUser } from "./helpers";
+import { apiRequest, connectRoom, connectTips, ensureMigrated, loginAs, nextMessage, postCreateFrame, registerUser, sessionToken } from "./helpers";
 
 // Task 034: unauthenticated guest reads on public strongholds, gated by the
 // allow_guest_browsing instance policy - env config as of task 035 (see
@@ -103,6 +103,49 @@ describe("guest read access matrix", () => {
 
     expect((await apiRequest(`/api/stronghold/${id}/rooms/secret/posts`)).status).toBe(404);
     expect((await apiRequest(`/stronghold/${id}/rooms/secret/history`)).status).toBe(404);
+  });
+
+  it("keeps restricted rooms owner/mod-only across lists, reads, and token minting", async () => {
+    await setGuestBrowsing(true);
+    const owner = "@restricted-owner:local";
+    const member = "@restricted-member:local";
+    const { id } = await freshStronghold(owner, "public");
+    const stub = env.STRONGHOLD_DO.getByName(id);
+    await stub.addMember(member, "member");
+    await stub.createRoom("secret-posts", "section", "Secret Posts", ["text"], true);
+    await stub.createRoom("secret-chat", "channel", "Secret Chat", ["text"], true);
+    const token = await sessionToken(member);
+    const headers = { Authorization: `Bearer ${token}` };
+
+    const roomsRes = await apiRequest(`/api/stronghold/${id}/rooms`, { headers });
+    expect(roomsRes.status).toBe(200);
+    const rooms = (await roomsRes.json()) as Array<{ id: string }>;
+    expect(rooms.some((room) => room.id === "secret-posts" || room.id === "secret-chat")).toBe(false);
+
+    const legacyRoomsRes = await apiRequest(`/stronghold/${id}/rooms`, { headers });
+    expect(legacyRoomsRes.status).toBe(200);
+    const legacyRooms = (await legacyRoomsRes.json()) as Array<{ res_id: string }>;
+    expect(legacyRooms.some((room) => room.res_id === "secret-posts" || room.res_id === "secret-chat")).toBe(false);
+
+    const mineRes = await apiRequest("/api/me/strongholds", { headers });
+    expect(mineRes.status).toBe(200);
+    const mine = (await mineRes.json()) as Array<{ id: string; rooms: Array<{ id: string }> }>;
+    const mineEntry = mine.find((entry) => entry.id === id);
+    expect(mineEntry?.rooms.some((room) => room.id === "secret-posts" || room.id === "secret-chat")).toBe(false);
+
+    expect((await apiRequest(`/api/stronghold/${id}/rooms/secret-posts/posts`, { headers })).status).toBe(404);
+    expect((await apiRequest(`/stronghold/${id}/rooms/secret-chat/history`, { headers })).status).toBe(404);
+    expect((await apiRequest(`/stronghold/${id}/rooms/secret-chat/token`, { method: "POST", headers })).status).toBe(404);
+
+    await stub.reportTip(`${id}/sec/secret-posts`, 42);
+    const { ws: memberTips, firstMessage: memberSnapshot } = await connectTips(id, member, "member");
+    const { ws: ownerTips, firstMessage: ownerSnapshot } = await connectTips(id, owner, "owner");
+    expect((await memberSnapshot).entries).toEqual([]);
+    expect((await ownerSnapshot).entries).toEqual([
+      expect.objectContaining({ room_ref: `${id}/sec/secret-posts`, latest_seq: 42 }),
+    ]);
+    memberTips.close();
+    ownerTips.close();
   });
 });
 

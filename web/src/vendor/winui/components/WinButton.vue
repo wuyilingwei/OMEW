@@ -52,7 +52,7 @@ const props = defineProps({
   CornerRadius: { type: [String, Number], default: '' }
 });
 
-const emit = defineEmits(['Click']);
+const emit = defineEmits(['click']);
 
 const attrs = useAttrs();
 
@@ -144,7 +144,7 @@ const buttonStyle = computed(() => {
 
 const onClick = (event) => {
   if (isDisabled.value) return;
-  emit('Click', event);
+  emit('click', event);
 };
 </script>
 <style>

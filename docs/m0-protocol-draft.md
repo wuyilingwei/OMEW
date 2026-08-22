@@ -235,7 +235,7 @@ function receive(raw_bytes, peer_ip):
 - `tip.update` MUST 先落 StrongholdDO 持久化存储再由 alarm 冲刷,MUST NOT 只驻留内存。各房间 DO MUST 在归档 alarm 上顺带重报 `latest_seq` 作对账。
 - `tip.digest` 由据点所在实例推送至用户注册实例,用于跨实例未读汇聚。丢失可由下一次 digest 自愈,不需重传保证。
 - **`tip.digest` 配额**:同一 `origin` 就同一据点 MUST NOT 发出多于 1 次 / 60 s 的 `tip.digest`。接收端对超出配额的部分 MUST 静默丢弃,MUST NOT 返回错误、MUST NOT 计入限流惩罚。
-- `restricted: true` 的房间(§3.6)MUST NOT 出现在任何 tip 汇总中。
+- `restricted: true` 的房间(§3.6)MUST NOT 出现在公开、宾客或普通成员的 tip 汇总中;本地 `owner` / `mod` 的据点级 tips MAY 包含其本就有权访问的受限房间。
 
 ### 3.4 `member.*`
 
@@ -296,7 +296,7 @@ function receive(raw_bytes, peer_ip):
 - `visibility` 枚举 `public` / `private`,语义见 §8.2。
 - `type` 枚举 `channel` / `section`。新房间形态经 `type` + `capabilities` 取值扩展,MUST NOT 通过新增事件类型或数据迁移引入。
 - `capabilities` 为字符串数组,作用域为**房间**。v1 定义 `text`(所有房间 MUST 含)、`attachments`、`voice`。未知能力值 MUST 忽略。房间能力与实例能力(§6.1)为两套独立注册表(§13.3);据点级 MUST NOT 承载能力宣告。
-- `restricted` 为布尔,缺省 `false`。`restricted: true` 的房间仅 `owner` 与 `mod` 可见可入(对齐 Mew `moderation_topic` 先例)。该类房间 MUST NOT 联邦——MUST NOT 出现在任何出站信封、订阅 fan-out 与历史回源响应中——且 MUST NOT 出现在目录、搜索结果与 tips 汇总中。v1 不提供逐房间可见性矩阵,`restricted` 是「房间继承据点 `visibility`」(§8.2)的唯一例外。
+- `restricted` 为布尔,缺省 `false`。`restricted: true` 的房间仅 `owner` 与 `mod` 可见可入(对齐 Mew `moderation_topic` 先例)。该类房间 MUST NOT 联邦——MUST NOT 出现在任何出站信封、订阅 fan-out 与历史回源响应中——且 MUST NOT 出现在目录、搜索结果或未授权角色的 tips 汇总中;本地 `owner` / `mod` MAY 接收。v1 不提供逐房间可见性矩阵,`restricted` 是「房间继承据点 `visibility`」(§8.2)的唯一例外。
 - `position` 为可选整数排序键,纯展示用途,MUST NOT 影响任何协议语义。
 - `stronghold.room.delete` 后,该房间 MUST 停止接受任何写事件,已注册的联邦订阅 MUST 全部作废并停止 fan-out;历史与 tombstone / revision 侧表(§9.1)MUST 整体保留可读,或按实例保留策略整体清除,MUST NOT 部分保留。`res-id` 在据点生命周期内 MUST NOT 复用,`next_seq` MUST NOT 重置。允许复用 `res-id` 会使 `(origin, room-ref)` 键在远端缓存中把新旧两个房间的内容混为一谈。
 
@@ -683,7 +683,7 @@ WebSocket 握手用的房间级 token MUST 另行签发,claims MUST 额外绑定
 
 **据点级 WS token**
 
-- 据点级 WS token 与房间级同构,claims 绑定 `stronghold`(及 StrongholdDO id)而非 `room`,`exp` MUST ≤ 300 s,MUST NOT 授予任何写权限。
+- 据点级 WS token 与房间级同构,claims 绑定 `stronghold`(及 StrongholdDO id)而非 `room`,并携带当前有效据点 `role` 以裁剪 `restricted` tips;`exp` MUST ≤ 300 s,MUST NOT 授予任何写权限。
 - StrongholdDO MUST 拒绝携带房间级 token 的握手,Room DO MUST 拒绝携带据点级 token 的握手;不匹配 MUST 返回 `OMEW_SESSION_INVALID`。该 token 用于 §10.6 的 tips 通道。
 
 **撤销传播**
@@ -866,7 +866,7 @@ claim_input = UTF8("openmew/migration-claim/v1") || 0x00 ||
 
 - server_owner 与 server_admin 在本实例**所有据点**默认持有据点管理身份:权限门 MUST 将其视同该据点 `owner`,**唯据点所有权转让除外**(仅真实据点 owner 或 server_owner 可发起);
 - 服务器级角色为实例本地治理,MUST NOT 随联邦事件传播;宾客身份不获得任何服务器级角色;
-- 会话 token MAY 携带 server_role claim 以免逐请求查库;其撤销遵循 §7.3 撤销传播。
+- 会话 token MAY 携带 `server_role` 快照供展示或非授权用途,但本地可变服务器角色用于授权时 MUST 重新读取权威状态,或使用等价的会话版本 / 撤销机制保证降级即时生效;其 WS 撤销遵循 §7.3 撤销传播。
 
 ### 7.10a 服务器级用户组
 
@@ -906,7 +906,7 @@ claim_input = UTF8("openmew/migration-claim/v1") || 0x00 ||
 ### 8.2 可见性
 
 - 可见性为**据点级**设置:`visibility: public | private`。房间继承所属据点的可见性,MUST NOT 单独覆盖。
-- 唯一例外是房间 flag `restricted: true`(§3.6):该类房间仅 `owner` / `mod` 可见可入,MUST NOT 联邦,MUST NOT 进入目录、搜索与 tips 汇总。v1 MUST NOT 实现逐房间可见性矩阵。
+- 唯一例外是房间 flag `restricted: true`(§3.6):该类房间仅 `owner` / `mod` 可见可入,MUST NOT 联邦,MUST NOT 进入目录、搜索或未授权角色的 tips 汇总;本地 `owner` / `mod` MAY 接收。v1 MUST NOT 实现逐房间可见性矩阵。
 - `public` 据点:历史读取 MAY 无鉴权,响应 SHOULD 带 `Cache-Control` 以吃边缘缓存。
 - `private` 据点:一切读路径 MUST 经鉴权代理,MUST 按成员关系授权。客户端 MUST NOT 获得对象存储的直连凭证。
 - 搜索端点与 tips 端点 MUST 按同一可见性规则裁剪结果。
@@ -1042,7 +1042,7 @@ peer 收到后 MUST 比对本地缓存的分片版本(§8.3 的分片元数据),
 - 在线客户端 MUST 向 StrongholdDO 建立一条休眠 WebSocket 接收 tips 推送,握手 MUST 使用 §7.3 的**据点级 WS token**。
 - HTTP 轮询 MUST 降级为离线兜底与首屏一次性 GET,间隔 SHOULD ≥ 20 s。轮询作为常态通道会打穿请求配额。
 - tips 状态 MUST 持久化于 StrongholdDO storage,冲刷由 alarm 兜底。
-- tips 汇总 MUST 按 §8.2 裁剪,`restricted` 房间 MUST NOT 出现在结果中。
+- tips 汇总 MUST 按 §8.2 与据点级 token 的当前有效 `role` 裁剪;`restricted` 房间 MUST NOT 发送给宾客或普通成员,本地 `owner` / `mod` MAY 接收。
 
 ---
 

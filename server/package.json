@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "deploy:check": "wrangler deploy --dry-run",
     "types": "wrangler types --strict-vars=false",
+    "types:check": "wrangler types --strict-vars=false --check",
     "typecheck": "tsc --noEmit",
     "db:migrate:local": "wrangler d1 migrations apply openmew --local",
     "db:migrate:remote": "wrangler d1 migrations apply openmew --remote"

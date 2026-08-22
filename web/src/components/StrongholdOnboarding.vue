@@ -36,7 +36,7 @@ import CreateStrongholdCard from './CreateStrongholdCard.vue'
   border: 1px solid var(--card-stroke);
   backdrop-filter: blur(24px) saturate(160%);
   -webkit-backdrop-filter: blur(24px) saturate(160%);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--shadow-card);
 }
 
 .onboarding-card__image {

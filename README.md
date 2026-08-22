@@ -15,4 +15,4 @@ M0(协议规范)草案完成,M1(单实例核心)开发中。
 
 ## License
 
-[AGPL-3.0](LICENSE)。表情包等媒体资产不随仓库分发,由部署者自行导入。
+代码采用 [AGPL-3.0](LICENSE)。`assets/mew/` 及前端使用的 Mew 官方插画子集采用独立授权依据，不属于 AGPL；来源与限制见 [资产 NOTICE](assets/mew/NOTICE.md)。未取得许可的第三方贴纸不随仓库或前端构建分发。

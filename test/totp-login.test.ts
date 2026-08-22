@@ -1,3 +1,4 @@
+import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import * as OTPAuth from "otpauth";
 import { apiRequest, ensureMigrated, registerUser } from "./helpers";
@@ -201,6 +202,37 @@ describe("two-step TOTP login", () => {
     });
     expect(locked.status).toBe(429);
     expect(await locked.json()).toEqual({ error: "TOTP_RATE_LIMITED" });
+  });
+
+  it("counts concurrent wrong codes atomically", async () => {
+    const username = "totplogin8";
+    const secret = await setupAndActivate(username);
+    const wrongCode = codeFor(secret) === "000000" ? "000001" : "000000";
+    const pendingTokens = await Promise.all(
+      Array.from({ length: 8 }, async () => {
+        const loginRes = await apiRequest("/api/login", {
+          method: "POST",
+          body: JSON.stringify({ username, password: "password123" }),
+        });
+        return ((await loginRes.json()) as { pending: string }).pending;
+      })
+    );
+
+    const attempts = await Promise.all(
+      pendingTokens.map((pending) =>
+        apiRequest("/api/login/totp", {
+          method: "POST",
+          body: JSON.stringify({ pending, code: wrongCode }),
+        })
+      )
+    );
+    expect(attempts.every((attempt) => attempt.status === 401)).toBe(true);
+
+    const row = await env.DB.prepare("SELECT fail_count, locked_until FROM totp_attempts WHERE localpart = ?")
+      .bind(username)
+      .first<{ fail_count: number; locked_until: number }>();
+    expect(row?.fail_count).toBe(8);
+    expect(row?.locked_until).toBeGreaterThan(Math.floor(Date.now() / 1000));
   });
 
   it("rejects a garbage pending token with 401 AUTH_FAILED", async () => {

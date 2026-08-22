@@ -250,7 +250,7 @@ watch(
         <div class="admin-modal" role="dialog" aria-modal="true" aria-label="据点管理">
           <div class="admin-modal__header">
             <h1 class="admin-modal__title">{{ currentNode?.name }}</h1>
-            <WinButton Style="SubtleButtonStyle" @Click="close">关闭</WinButton>
+            <WinButton Style="SubtleButtonStyle" @click="close">关闭</WinButton>
           </div>
 
           <WinSelectorBar
@@ -320,24 +320,24 @@ watch(
                     </div>
 
                     <div v-if="canManage && !isSelf(member) && member.role !== 'owner'" class="member-row__actions">
-                      <WinButton v-if="isOwner && member.role === 'member'" Style="SubtleButtonStyle" @Click="promote(member)">
+                      <WinButton v-if="isOwner && member.role === 'member'" Style="SubtleButtonStyle" @click="promote(member)">
                         任命管理员
                       </WinButton>
-                      <WinButton v-if="isOwner && member.role === 'mod'" Style="SubtleButtonStyle" @Click="demote(member)">
+                      <WinButton v-if="isOwner && member.role === 'mod'" Style="SubtleButtonStyle" @click="demote(member)">
                         撤销管理员
                       </WinButton>
                       <template v-if="isOwner || member.role !== 'mod'">
-                        <WinButton Style="SubtleButtonStyle" @Click="kick(member)">踢出</WinButton>
-                        <WinButton Style="AccentButtonStyle" class="win-btn--danger" @Click="ban(member)">拉黑</WinButton>
+                        <WinButton Style="SubtleButtonStyle" @click="kick(member)">踢出</WinButton>
+                        <WinButton Style="AccentButtonStyle" class="win-btn--danger" @click="ban(member)">拉黑</WinButton>
                       </template>
-                      <WinButton v-if="isOwner" Style="AccentButtonStyle" class="win-btn--danger" @Click="transfer(member)">
+                      <WinButton v-if="isOwner" Style="AccentButtonStyle" class="win-btn--danger" @click="transfer(member)">
                         转让领主
                       </WinButton>
                     </div>
                   </template>
 
                   <div v-else class="member-row__actions">
-                    <WinButton v-if="canManage" Style="SubtleButtonStyle" @Click="unban(member)">解除拉黑</WinButton>
+                    <WinButton v-if="canManage" Style="SubtleButtonStyle" @click="unban(member)">解除拉黑</WinButton>
                   </div>
                 </li>
               </ul>
@@ -389,7 +389,7 @@ watch(
 
                 <div class="admin-modal__save">
                   <p v-if="settingsSaveOk" class="admin-modal__save-ok">已保存</p>
-                  <WinButton Style="AccentButtonStyle" :IsEnabled="!settingsSaving" @Click="saveSettings">
+                  <WinButton Style="AccentButtonStyle" :IsEnabled="!settingsSaving" @click="saveSettings">
                     {{ settingsSaving ? '保存中…' : '保存设置' }}
                   </WinButton>
                 </div>
@@ -417,7 +417,7 @@ watch(
   align-items: center;
   justify-content: center;
   padding: 2rem;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--overlay-scrim);
 }
 
 .admin-modal {
@@ -431,7 +431,7 @@ watch(
   border-radius: var(--radius-md);
   background: var(--flyout-bg, var(--layer-default));
   border: 1px solid var(--card-stroke);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--shadow-dialog);
   backdrop-filter: blur(32px) saturate(160%);
   -webkit-backdrop-filter: blur(32px) saturate(160%);
   overflow: hidden;

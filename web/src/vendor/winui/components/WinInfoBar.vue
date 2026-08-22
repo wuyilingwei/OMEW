@@ -97,7 +97,7 @@
         :Style="CloseButtonStyle"
         :aria-label="t('control.infobar.close-button-name')"
         v-bind="{ 'tooltipservice.tooltip': t('control.infobar.close-button-tooltip') }"
-        @Click="onCloseButtonClick">
+        @click="onCloseButtonClick">
         <WinTextBlock
           class="win-infobar-close-glyph"
           Text="&#xE711;"

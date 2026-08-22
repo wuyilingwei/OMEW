@@ -85,6 +85,12 @@ describe("PATCH /api/admin/users/:localpart (server_owner only)", () => {
       .first<{ server_role: string }>();
     expect(row?.server_role).toBe("admin");
 
+    const promotedToken = await loginAs(target.username);
+    const beforeDemotion = await apiRequest("/api/admin/invite-codes", {
+      headers: { Authorization: `Bearer ${promotedToken}` },
+    });
+    expect(beforeDemotion.status).toBe(200);
+
     const demote = await apiRequest(`/api/admin/users/${target.username}`, {
       method: "PATCH",
       headers: { Authorization: `Bearer ${owner.token}` },
@@ -92,6 +98,12 @@ describe("PATCH /api/admin/users/:localpart (server_owner only)", () => {
     });
     expect(demote.status).toBe(200);
     expect(await demote.json()).toEqual({ localpart: target.username, server_role: "user" });
+
+    const afterDemotion = await apiRequest("/api/admin/invite-codes", {
+      headers: { Authorization: `Bearer ${promotedToken}` },
+    });
+    expect(afterDemotion.status).toBe(403);
+    expect(await afterDemotion.json()).toEqual({ error: "ADMIN_REQUIRED" });
   });
 
   it("cannot promote to owner - 400 ROLE_INVALID", async () => {

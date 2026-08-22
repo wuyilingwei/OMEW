@@ -50,6 +50,7 @@ export interface StrongholdTokenClaims {
   typ: "stronghold";
   actor: string;
   stronghold: string;
+  role: Role;
   exp: number;
   jti: string;
 }
@@ -61,9 +62,9 @@ export type ServerRole = "owner" | "admin" | "user";
 
 // Session claims (see auth.ts for the HMAC signing mechanism) - not a WS token,
 // used for HTTP bearer auth. Issued by /api/register and /api/login (users.ts).
-// Carries server_role so permission gates don't need a DB read per request
-// (§7.10) - a role change only takes effect for a session's holder once that
-// session's own 24h TTL expires, same as every other claim here.
+// Carries the role observed at issuance for client display/debugging. The API
+// re-resolves local users' current role from D1 before every authorization
+// decision, so a demotion takes effect immediately.
 export interface SessionTokenClaims {
   v: 1;
   typ: "session";

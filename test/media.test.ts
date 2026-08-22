@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
-import { apiRequest, ensureMigrated, loginAs, mediaUploadRequest, registerUser, streamOf } from "./helpers";
+import { apiRequest, ensureMigrated, loginAs, mediaUploadRequest, registerUser } from "./helpers";
 
 // Media upload pipeline: Worker-proxied streaming write into R2, with size/MIME/
 // quota enforced synchronously in the upload path (no presigned direct-to-R2
@@ -101,19 +101,29 @@ describe("POST /api/media rejections", () => {
     expect(await overRes.json()).toEqual({ error: "QUOTA_EXCEEDED" });
   });
 
-  it("aborts and deletes the object when actual bytes exceed the declared Content-Length, returning 400", async () => {
+  it("rejects a streaming upload without Content-Length before consuming the body", async () => {
     const token = await freshUserToken();
     await setMediaLimits({ max_file_bytes: 1_000_000, user_storage_quota_bytes: 1_000_000 });
-
-    const actual = pngBytes(64);
+    let pulls = 0;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          pulls += 1;
+          controller.enqueue(pngBytes(64));
+          controller.close();
+        },
+      },
+      { highWaterMark: 0 }
+    );
     const res = await mediaUploadRequest({
       token,
       contentType: "image/png",
-      declaredLength: 8, // lies: actual stream carries 64 bytes
-      body: streamOf(actual),
+      declaredLength: null,
+      body,
     });
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: "LENGTH_MISMATCH" });
+    expect(await res.json()).toEqual({ error: "PAYLOAD_INVALID" });
+    expect(pulls).toBe(0);
   });
 
   it("sniffs magic bytes, rejects a mismatched declared MIME with 415, and does not persist the object", async () => {

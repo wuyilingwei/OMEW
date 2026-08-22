@@ -2,7 +2,7 @@
 // server round trip and no instance seeding required. Always present alongside
 // whatever custom packs the instance's GET /api/emotes returns.
 import type { EmotePack } from '../api/types'
-import { REACTION_SET, STAMP_EMOTES } from './mew'
+import { REACTION_SET } from './mew'
 
 function toPack(id: string, name: string, display: string, source: Record<string, string>): EmotePack {
   return {
@@ -18,14 +18,11 @@ function toPack(id: string, name: string, display: string, source: Record<string
   }
 }
 
-// the two halves of the forum's emote set: the reaction glyphs, which double as
-// the reaction picker's vocabulary, and the 4x3 standard stickers. Both are
-// sendable as messages, so both are packs. Same twelve names on each side, but
-// the pack name keeps their :pack:name: codes apart.
+// The licensed reaction glyphs are both sendable emotes and the reaction
+// picker's vocabulary.
 export const BUILTIN_REACTION_PACK = toPack('builtin-reaction', 'reaction', '反应', REACTION_SET)
-export const BUILTIN_EMOTE_PACK = toPack('builtin-mew', 'mew', '标准表情', STAMP_EMOTES)
 
-export const BUILTIN_PACK_IDS = [BUILTIN_REACTION_PACK.id, BUILTIN_EMOTE_PACK.id]
+export const BUILTIN_PACK_IDS = [BUILTIN_REACTION_PACK.id]
 
 // name -> bundled asset URL, consumed directly by the reaction picker (which
 // attaches a reaction rather than sending an emote).

@@ -122,7 +122,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         <div class="compose-modal" role="dialog" aria-modal="true">
           <div class="compose-modal__header">
             <h1 class="compose-modal__title">发帖</h1>
-            <WinButton Style="SubtleButtonStyle" class="compose-modal__close" @Click="requestClose">关闭</WinButton>
+            <WinButton Style="SubtleButtonStyle" class="compose-modal__close" @click="requestClose">关闭</WinButton>
           </div>
 
           <div class="compose-modal__scroll">
@@ -146,7 +146,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                     <AppIcon name="close" :size="10" />
                   </button>
                 </div>
-                <WinButton Style="DefaultButtonStyle" :IsEnabled="!attachments.uploading.value" @Click="pickImages">
+                <WinButton Style="DefaultButtonStyle" :IsEnabled="!attachments.uploading.value" @click="pickImages">
                   {{ attachments.uploading.value ? '上传中…' : '添加图片' }}
                 </WinButton>
               </div>
@@ -163,8 +163,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           </div>
 
           <div class="compose-modal__actions">
-            <WinButton Style="SubtleButtonStyle" @Click="requestClose">取消</WinButton>
-            <WinButton Style="AccentButtonStyle" @Click="submitPost">发布</WinButton>
+            <WinButton Style="SubtleButtonStyle" @click="requestClose">取消</WinButton>
+            <WinButton Style="AccentButtonStyle" @click="submitPost">发布</WinButton>
           </div>
         </div>
       </div>
@@ -184,7 +184,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   align-items: center;
   justify-content: center;
   padding: 2rem;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--overlay-scrim);
 }
 
 .compose-modal {
@@ -198,7 +198,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   border-radius: var(--radius-md);
   background: var(--flyout-bg, var(--layer-default));
   border: 1px solid var(--card-stroke);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--shadow-dialog);
   backdrop-filter: blur(32px) saturate(160%);
   -webkit-backdrop-filter: blur(32px) saturate(160%);
   overflow: hidden;
@@ -310,8 +310,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   align-items: center;
   justify-content: center;
   border: none;
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
+  background: var(--overlay-scrim-strong);
+  color: var(--text-on-dark);
 }
 
 @media (max-width: 768px) {

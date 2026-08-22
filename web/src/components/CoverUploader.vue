@@ -60,7 +60,7 @@ async function onFileChange(event: Event) {
       <img v-if="modelValue" class="cover-uploader__preview" :src="modelValue" alt="" />
       <div class="cover-uploader__actions">
         <input ref="fileInput" class="cover-uploader__file-input" type="file" accept="image/*" @change="onFileChange" />
-        <WinButton Style="DefaultButtonStyle" :IsEnabled="!uploading" @Click="pickFile">
+        <WinButton Style="DefaultButtonStyle" :IsEnabled="!uploading" @click="pickFile">
           {{ uploading ? `上传中…${progress}%` : '上传文件' }}
         </WinButton>
       </div>

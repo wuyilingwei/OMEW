@@ -216,9 +216,8 @@ describe("member.revoke propagation (m0-protocol §7.3)", () => {
     const stub = env.STRONGHOLD_DO.getByName(id);
     await stub.addMember(target, "member");
 
-    // The first-frame tip.update snapshot each connection gets dispatches before
-    // a test-side listener can attach (same race family as nextClose's ordering
-    // note) - it's dropped unobserved here, this test only cares about close.
+    // connectTips captures the first snapshot before accepting the client socket;
+    // this test intentionally ignores it and only cares about close propagation.
     const { ws: targetTips } = await connectTips(id, target);
     const { ws: ownerTips } = await connectTips(id, owner);
 

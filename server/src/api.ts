@@ -14,7 +14,7 @@ import { base64UrlDecode, base64UrlEncode, dummyPasswordFields, hashPassword, ne
 import { getInstanceConfig } from "./config";
 import { handleInbox } from "./inbox";
 import type { EffectivePermissions } from "./permissions";
-import { synthesizeEffectivePermissions } from "./permissions";
+import { canAccessRestrictedRoom, synthesizeEffectivePermissions } from "./permissions";
 import { deriveSlugBase, fetchServerGroupsForLocalpart, type ConfigRow, type MemberRow, type RoomRow, type TopicRow } from "./stronghold-do";
 import { generateTotpSecret, totpOtpauthUrl, verifyTotpCode } from "./totp";
 import {
@@ -56,11 +56,11 @@ const WEBAUTHN_CHALLENGE_TTL_S = 300;
 const TOTP_MAX_ATTEMPTS = 8; // per-account, independent of how many pending tokens get minted
 const TOTP_LOCKOUT_S = 15 * 60;
 
-// Claims a signed challenge/pending jti for one-time use. Returns false if it
-// was already consumed (replay of a captured request). used_challenges rows
-// past their exp are never read again, so no reaper is needed here.
+// Claims a signed challenge/pending jti for one-time use. Expired rows are
+// reaped opportunistically before each insert so the replay table stays bounded.
 async function consumeChallengeOnce(env: Env, jti: string, exp: number): Promise<boolean> {
   try {
+    await env.DB.prepare("DELETE FROM used_challenges WHERE exp <= ?").bind(nowS()).run();
     await env.DB.prepare("INSERT INTO used_challenges (jti, exp) VALUES (?, ?)").bind(jti, exp).run();
     return true;
   } catch {
@@ -80,17 +80,16 @@ async function totpRateLimited(env: Env, localpart: string): Promise<boolean> {
 
 async function recordTotpFailure(env: Env, localpart: string): Promise<void> {
   const now = nowS();
-  const row = await env.DB.prepare("SELECT fail_count, locked_until FROM totp_attempts WHERE localpart = ?")
-    .bind(localpart)
-    .first<{ fail_count: number; locked_until: number }>();
-  const staleLock = !row || (row.locked_until > 0 && row.locked_until <= now);
-  const count = staleLock ? 1 : row.fail_count + 1;
-  const lockedUntil = count >= TOTP_MAX_ATTEMPTS ? now + TOTP_LOCKOUT_S : row?.locked_until ?? 0;
   await env.DB.prepare(
-    "INSERT INTO totp_attempts (localpart, fail_count, locked_until) VALUES (?, ?, ?) " +
-      "ON CONFLICT(localpart) DO UPDATE SET fail_count = excluded.fail_count, locked_until = excluded.locked_until"
+    "INSERT INTO totp_attempts (localpart, fail_count, locked_until) VALUES (?1, 1, 0) " +
+      "ON CONFLICT(localpart) DO UPDATE SET " +
+      "fail_count = CASE WHEN totp_attempts.locked_until BETWEEN 1 AND ?2 THEN 1 ELSE totp_attempts.fail_count + 1 END, " +
+      "locked_until = CASE " +
+      "WHEN (CASE WHEN totp_attempts.locked_until BETWEEN 1 AND ?2 THEN 1 ELSE totp_attempts.fail_count + 1 END) >= ?3 THEN ?4 " +
+      "WHEN totp_attempts.locked_until BETWEEN 1 AND ?2 THEN 0 " +
+      "ELSE totp_attempts.locked_until END"
   )
-    .bind(localpart, count, lockedUntil)
+    .bind(localpart, now, TOTP_MAX_ATTEMPTS, now + TOTP_LOCKOUT_S)
     .run();
 }
 
@@ -158,17 +157,23 @@ async function readJsonBody(request: Request): Promise<Record<string, unknown> |
   }
 }
 
-// Full session claims - used wherever the server-role overlay (m0-protocol
-// §7.10) matters. server_role rides in the token itself (types.ts) rather than
-// a per-request DB read, so a role change only takes effect for a session's
-// holder once that session's own TTL expires - same tradeoff v1 already makes
-// for every other session claim (see /api/me/password's note).
+// Full session claims. Local server roles are mutable authorization state, so
+// they are re-resolved from D1 instead of trusting the token's issuance-time
+// snapshot. Remote actors can never receive a local server-role overlay.
 async function requireSession(request: Request, env: Env): Promise<SessionTokenClaims | Response> {
   const header = request.headers.get("Authorization");
   if (!header?.startsWith("Bearer ")) return apiError(401, "AUTH_REQUIRED");
   const claims = await verifyToken<SessionTokenClaims>(header.slice(7), env.DEV_TOKEN_SECRET);
   if (!claims || claims.typ !== "session") return apiError(401, "AUTH_REQUIRED");
-  return claims;
+  if (domainOfActor(claims.actor) !== instanceDomain(env)) {
+    return { ...claims, server_role: "user" };
+  }
+  const localpart = localpartOfActor(claims.actor);
+  const current = await env.DB.prepare("SELECT server_role, status FROM users WHERE localpart = ?")
+    .bind(localpart)
+    .first<{ server_role: ServerRole; status: string }>();
+  if (!current || current.status !== "active") return apiError(401, "AUTH_REQUIRED");
+  return { ...claims, server_role: current.server_role };
 }
 
 // Thin actor-only wrapper over requireSession for the many routes that don't
@@ -987,10 +992,22 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     // a second one.
     if (userRoleMatch.localpart === localpartOfActor(gate.actor)) return apiError(400, "ROLE_INVALID");
 
+    const previous = await env.DB.prepare("SELECT server_role FROM users WHERE localpart = ?")
+      .bind(userRoleMatch.localpart!)
+      .first<{ server_role: ServerRole }>();
+    if (!previous || previous.server_role === "owner") return apiError(404, "NOT_FOUND");
     const result = await env.DB.prepare("UPDATE users SET server_role = ? WHERE localpart = ? AND server_role != 'owner'")
       .bind(body.server_role, userRoleMatch.localpart!)
       .run();
     if (result.meta.changes === 0) return apiError(404, "NOT_FOUND");
+    if (previous.server_role === "admin" && body.server_role === "user") {
+      const actor = `@${userRoleMatch.localpart}:${instanceDomain(env)}`;
+      const { results } = await env.DB.prepare("SELECT DISTINCT stronghold_id FROM stronghold_member_index")
+        .all<{ stronghold_id: string }>();
+      await Promise.all(
+        results.map((row) => env.STRONGHOLD_DO.getByName(row.stronghold_id).revokeServerRole(actor))
+      );
+    }
     return json({ localpart: userRoleMatch.localpart, server_role: body.server_role });
   }
 
@@ -1496,7 +1513,12 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
       const denied = await requireMembership(request, env, m.id!);
       if (denied) return denied;
     }
-    return json(await stub.listRooms());
+    const session = await requireSession(request, env);
+    const role = session instanceof Response
+      ? null
+      : (await effectiveRole(env, m.id!, session.server_role, session.actor))?.role ?? null;
+    const rooms = await stub.listRooms();
+    return json(rooms.filter((room) => canAccessRestrictedRoom(role, room)));
   }
 
   m = match("/stronghold/:id/rooms/:resId", path);
@@ -1720,7 +1742,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const strongholdId = m.id!;
     const stub = env.STRONGHOLD_DO.getByName(strongholdId);
     const rooms = await stub.listRooms();
-    const visible = gate.kind === "guest" ? rooms.filter((r) => !r.restricted) : rooms;
+    const visible = rooms.filter((room) => !roomBlockedForGate(gate, room));
     const projected = await Promise.all(
       visible.map(async (r) => {
         if (r.type !== "section") return toApiRoom(r);
@@ -1789,7 +1811,13 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const strongholdId = m.id!;
     const stub = env.STRONGHOLD_DO.getByName(strongholdId);
     const topics = await stub.listTopics();
-    const counts = await topicPostCounts(env, strongholdId, stub, topics.map((t) => t.id));
+    const counts = await topicPostCounts(
+      env,
+      strongholdId,
+      stub,
+      topics.map((t) => t.id),
+      gate.kind === "member" && canAccessRestrictedRoom(gate.role, { restricted: 1 })
+    );
     return json(topics.map((t) => toApiTopic(t, counts.get(t.id) ?? 0)));
   }
   if (m && method === "POST") {
@@ -1894,8 +1922,9 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   }
 
   if (method === "GET" && path === "/api/me/strongholds") {
-    const actor = await requireActor(request, env);
-    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return apiError(401, "AUTH_REQUIRED");
+    const actor = session.actor;
     const { results } = await env.DB.prepare("SELECT stronghold_id FROM stronghold_member_index WHERE actor = ?")
       .bind(actor)
       .all<{ stronghold_id: string }>();
@@ -1904,6 +1933,9 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
         const stub = env.STRONGHOLD_DO.getByName(row.stronghold_id);
         const [config, rooms] = await Promise.all([stub.getConfig(), stub.listRooms()]);
         if (!config) return null;
+        const eff = await effectiveRole(env, row.stronghold_id, session.server_role, actor);
+        if (!eff) return null;
+        const visibleRooms = rooms.filter((room) => canAccessRestrictedRoom(eff.role, room));
         return {
           id: config.id,
           name: config.name,
@@ -1912,7 +1944,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
           // post_count is deliberately absent here: it costs one DO call per
           // section and this list loads on every app start. The by-id rooms
           // endpoint carries it for the places that actually show counts.
-          rooms: rooms.map((room) => ({ id: room.res_id, name: room.name, type: room.type, description: room.description })),
+          rooms: visibleRooms.map((room) => ({ id: room.res_id, name: room.name, type: room.type, description: room.description })),
         };
       })
     );
@@ -2218,6 +2250,9 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (!eff) return errorResponse(403, "OMEW_BANNED", "not a member or banned");
     const room = await strongholdStub.getRoom(m.resId!);
     if (!room) return errorResponse(404, "OMEW_ROOM_NOT_FOUND", "room not found");
+    if (!canAccessRestrictedRoom(eff.role, room)) {
+      return errorResponse(404, "OMEW_ROOM_NOT_FOUND", "room not found");
+    }
     const roomRef = `${m.id!}/${typeToKind(room.type)}/${m.resId!}`;
     const claims: RoomTokenClaims = {
       v: 1, typ: "room", actor: session.actor, room: roomRef, role: eff.role, deny: eff.deny,
@@ -2232,10 +2267,11 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const session = await requireSession(request, env);
     if (session instanceof Response) return errorResponse(401, "OMEW_SESSION_INVALID", "auth required");
     const strongholdStub = env.STRONGHOLD_DO.getByName(m.id!);
-    const member = await strongholdStub.getMember(session.actor);
-    if (!overlayRole(session.server_role, member)) return errorResponse(403, "OMEW_BANNED", "not a member or banned");
+    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
+    if (!eff) return errorResponse(403, "OMEW_BANNED", "not a member or banned");
     const claims: StrongholdTokenClaims = {
-      v: 1, typ: "stronghold", actor: session.actor, stronghold: m.id!, exp: nowS() + ROOM_TOKEN_TTL_S, jti: newJti(),
+      v: 1, typ: "stronghold", actor: session.actor, stronghold: m.id!, role: eff.role,
+      exp: nowS() + ROOM_TOKEN_TTL_S, jti: newJti(),
     };
     const token = await signToken(claims, env.DEV_TOKEN_SECRET);
     return json({ token, stronghold: m.id!, exp: claims.exp });
@@ -2278,23 +2314,23 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (!config) return errorResponse(404, "OMEW_NOT_FOUND", "stronghold not found");
 
     const session = await requireSession(request, env);
-    let isGuest = false;
     let requester: string | null = null;
+    let role: Role | null = null;
     if (!(session instanceof Response)) {
-      const member = await strongholdStub.getMember(session.actor);
-      if (!overlayRole(session.server_role, member)) return errorResponse(403, "OMEW_BANNED", "not a member or banned");
+      const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
+      if (!eff) return errorResponse(403, "OMEW_BANNED", "not a member or banned");
       requester = session.actor;
+      role = eff.role;
     } else {
       const policy = await getInstanceConfig(env);
       if (!(policy.allow_guest_browsing && config.visibility === "public")) {
         return errorResponse(401, "OMEW_SESSION_INVALID", "auth required");
       }
-      isGuest = true;
     }
 
     const room = await strongholdStub.getRoom(m.resId!);
     if (!room) return errorResponse(404, "OMEW_ROOM_NOT_FOUND", "room not found");
-    if (isGuest && room.restricted) return errorResponse(404, "OMEW_ROOM_NOT_FOUND", "room not found");
+    if (!canAccessRestrictedRoom(role, room)) return errorResponse(404, "OMEW_ROOM_NOT_FOUND", "room not found");
     const roomRef = `${m.id!}/${typeToKind(room.type)}/${m.resId!}`;
     const before = url.searchParams.has("before") ? Number(url.searchParams.get("before")) : null;
     const limit = url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : 50;
@@ -2315,7 +2351,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const strongholdStub = env.STRONGHOLD_DO.getByName(m.id!);
     const room = await strongholdStub.getRoom(m.resId!);
     if (!room) return apiError(404, "NOT_FOUND");
-    if (guestBlockedFromRoom(gate, room)) return apiError(404, "NOT_FOUND");
+    if (roomBlockedForGate(gate, room)) return apiError(404, "NOT_FOUND");
     if (room.type !== "section") return apiError(400, "ROOM_NOT_SECTION");
 
     const roomRef = `${m.id!}/${typeToKind(room.type)}/${m.resId!}`;
@@ -2334,7 +2370,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const strongholdStub = env.STRONGHOLD_DO.getByName(m.id!);
     const room = await strongholdStub.getRoom(m.resId!);
     if (!room) return apiError(404, "NOT_FOUND");
-    if (guestBlockedFromRoom(gate, room)) return apiError(404, "NOT_FOUND");
+    if (roomBlockedForGate(gate, room)) return apiError(404, "NOT_FOUND");
     if (room.type !== "section") return apiError(400, "ROOM_NOT_SECTION");
     const seq = Number(m.seq);
     if (!Number.isFinite(seq)) return apiError(400, "MALFORMED");
@@ -2459,24 +2495,28 @@ async function handleMediaUpload(request: Request, env: Env): Promise<Response> 
   const r2Key = `media/${id}`;
   const hash = createHash("sha256");
   let totalBytes = 0;
+  let forwardedBytes = 0;
   let sniffLen = 0;
   const sniffChunks: Uint8Array[] = [];
-  let lengthExceeded = false;
 
   const counter = new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
       totalBytes += chunk.byteLength;
-      if (totalBytes > declaredLength) {
-        lengthExceeded = true;
-        controller.error(new Error("declared content-length exceeded"));
-        return;
-      }
-      hash.update(chunk);
+      // Never error/cancel the inbound request stream on an overrun. Workerd
+      // otherwise reports its internal request-body producer as an uncaught
+      // client disconnect. Forward only the declared prefix into the fixed-size
+      // R2 stream and keep draining the remainder; the object is deleted below.
+      const remaining = declaredLength - forwardedBytes;
+      if (remaining <= 0) return;
+      const forwarded = chunk.byteLength > remaining ? chunk.subarray(0, remaining) : chunk;
+      forwardedBytes += forwarded.byteLength;
+      hash.update(forwarded);
       if (sniffLen < MEDIA_SNIFF_BYTES) {
-        sniffChunks.push(chunk);
-        sniffLen += chunk.byteLength;
+        const prefix = forwarded.subarray(0, MEDIA_SNIFF_BYTES - sniffLen);
+        sniffChunks.push(prefix);
+        sniffLen += prefix.byteLength;
       }
-      controller.enqueue(chunk);
+      controller.enqueue(forwarded);
     },
   });
 
@@ -2495,10 +2535,15 @@ async function handleMediaUpload(request: Request, env: Env): Promise<Response> 
   } catch {
     await pump;
     await env.MEDIA.delete(r2Key).catch(() => {});
-    if (lengthExceeded) return apiError(400, "LENGTH_MISMATCH");
+    if (totalBytes !== declaredLength) return apiError(400, "LENGTH_MISMATCH");
     return apiError(400, "UPLOAD_FAILED");
   }
   await pump;
+
+  if (totalBytes !== declaredLength) {
+    await env.MEDIA.delete(r2Key).catch(() => {});
+    return apiError(400, "LENGTH_MISMATCH");
+  }
 
   const sniffed = sniffMediaMime(concatBytes(sniffChunks).subarray(0, MEDIA_SNIFF_BYTES));
   if (sniffed !== mime) {
@@ -2716,12 +2761,13 @@ async function topicPostCounts(
   env: Env,
   strongholdId: string,
   stub: DurableObjectStub<import("./stronghold-do").StrongholdDO>,
-  topicIds: string[]
+  topicIds: string[],
+  includeRestricted = true
 ): Promise<Map<string, number>> {
   const counts = new Map<string, number>(topicIds.map((id) => [id, 0]));
   if (topicIds.length === 0) return counts;
   const rooms = await stub.listRooms();
-  const sectionRooms = rooms.filter((r) => r.type === "section");
+  const sectionRooms = rooms.filter((r) => r.type === "section" && (includeRestricted || !r.restricted));
   await Promise.all(
     sectionRooms.map(async (room) => {
       const roomRef = `${strongholdId}/${typeToKind(room.type)}/${room.res_id}`;
@@ -2889,9 +2935,9 @@ async function resolveGuestOrMember(
   const session = await requireSession(request, env);
   if (!(session instanceof Response)) {
     const member = await stub.getMember(session.actor);
-    const role = overlayRole(session.server_role, member);
-    if (!role) return apiError(403, "FORBIDDEN");
-    return { kind: "member", actor: session.actor, member, role, config };
+    const eff = await effectiveRole(env, strongholdId, session.server_role, session.actor);
+    if (!eff) return apiError(403, "FORBIDDEN");
+    return { kind: "member", actor: session.actor, member, role: eff.role, config };
   }
 
   const policy = await getInstanceConfig(env);
@@ -2901,12 +2947,11 @@ async function resolveGuestOrMember(
   return apiError(401, "AUTH_REQUIRED");
 }
 
-// §8.2: a `restricted: true` room MUST stay owner/mod-only and MUST NOT enter
-// directory/search/tips summaries - a guest is never owner/mod, so this only ever
-// blocks the guest branch. Pre-existing authenticated-member behavior for
-// restricted rooms is unchanged by task 034 and out of this helper's scope.
-function guestBlockedFromRoom(gate: { kind: "member" | "guest" }, room: { restricted: number }): boolean {
-  return gate.kind === "guest" && Boolean(room.restricted);
+function roomBlockedForGate(
+  gate: { kind: "member"; role: Role } | { kind: "guest" },
+  room: { restricted: number }
+): boolean {
+  return !canAccessRestrictedRoom(gate.kind === "member" ? gate.role : null, room);
 }
 
 // Public stronghold directory (task 034), fanned out from the member index the

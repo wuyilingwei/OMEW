@@ -1,5 +1,8 @@
+import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { connectRoom, itemCreateFrame, nextMessage } from "./helpers";
+import { signToken } from "../server/src/auth";
+import type { RoomTokenClaims, StrongholdTokenClaims } from "../server/src/types";
+import { connectRoom, itemCreateFrame, nextMessage, TEST_SECRET } from "./helpers";
 
 // proposal S4.3 / m0-protocol S5.2: commit order MUST be SQLite commit -> immediate
 // single ack to the sender -> batched broadcast to everyone else within the merge
@@ -51,9 +54,49 @@ describe("RoomDO WS send -> ack -> broadcast", () => {
   });
 
   it("rejects a handshake without a token", async () => {
-    const { env } = await import("cloudflare:test");
     const stub = env.ROOM_DO.getByName("wstest/ch/no-token");
     const res = await stub.fetch("http://do/ws", { headers: { Upgrade: "websocket" } });
     expect(res.status).toBe(401);
+  });
+
+  it("rejects a room token replayed against a different RoomDO", async () => {
+    const claims: RoomTokenClaims = {
+      v: 1,
+      typ: "room",
+      actor: "@scope-room:local",
+      room: "wstest/ch/source",
+      role: "owner",
+      deny: 0,
+      exp: Math.floor(Date.now() / 1000) + 300,
+      jti: crypto.randomUUID(),
+    };
+    const token = await signToken(claims, TEST_SECRET);
+    const target = env.ROOM_DO.getByName("wstest/ch/target");
+    const res = await target.fetch("http://do/ws", {
+      headers: { Upgrade: "websocket", "Sec-WebSocket-Protocol": token },
+    });
+
+    expect(res.status).toBe(401);
+    expect(res.webSocket).toBeNull();
+  });
+
+  it("rejects a tips token replayed against a different StrongholdDO", async () => {
+    const claims: StrongholdTokenClaims = {
+      v: 1,
+      typ: "stronghold",
+      actor: "@scope-tips:local",
+      stronghold: "scope-source",
+      role: "member",
+      exp: Math.floor(Date.now() / 1000) + 300,
+      jti: crypto.randomUUID(),
+    };
+    const token = await signToken(claims, TEST_SECRET);
+    const target = env.STRONGHOLD_DO.getByName("scope-target");
+    const res = await target.fetch("http://do/ws", {
+      headers: { Upgrade: "websocket", "Sec-WebSocket-Protocol": token },
+    });
+
+    expect(res.status).toBe(401);
+    expect(res.webSocket).toBeNull();
   });
 });

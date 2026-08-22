@@ -14,15 +14,16 @@ const lightboxUrl = ref<string | null>(null)
       :key="item.id"
       type="button"
       class="media-grid__item"
+      :aria-label="`查看附件 ${item.id}`"
       @click="lightboxUrl = item.url"
     >
-      <img :src="item.url" alt="" loading="lazy" />
+      <img :src="item.url" alt="附件预览" loading="lazy" />
     </button>
   </div>
 
   <Teleport to="body">
     <div v-if="lightboxUrl" class="media-lightbox" @click="lightboxUrl = null">
-      <img :src="lightboxUrl" alt="" @click.stop />
+      <img :src="lightboxUrl" alt="附件大图" @click.stop />
     </div>
   </Teleport>
 </template>
@@ -59,7 +60,7 @@ const lightboxUrl = ref<string | null>(null)
   align-items: center;
   justify-content: center;
   padding: 3rem;
-  background: rgba(0, 0, 0, 0.75);
+  background: var(--overlay-scrim-media);
   cursor: zoom-out;
 }
 

@@ -465,7 +465,7 @@ watch(
         <div class="admin-modal" role="dialog" aria-modal="true" aria-label="服务器管理">
           <div class="admin-modal__header">
             <h1 class="admin-modal__title">服务器管理</h1>
-            <WinButton Style="SubtleButtonStyle" @Click="close">关闭</WinButton>
+            <WinButton Style="SubtleButtonStyle" @click="close">关闭</WinButton>
           </div>
 
           <WinSelectorBar class="admin-modal__tabs" :Items="TAB_OPTIONS" :SelectedItem="tabSelected" @update:SelectedItem="onTabSelect" />
@@ -507,7 +507,7 @@ watch(
                     <label class="field__label" for="invite-count">生成数量</label>
                     <input id="invite-count" v-model.number="inviteCount" type="number" min="1" max="50" />
                   </div>
-                  <WinButton Style="DefaultButtonStyle" :IsEnabled="!inviteBusy" @Click="generateInviteCodes">
+                  <WinButton Style="DefaultButtonStyle" :IsEnabled="!inviteBusy" @click="generateInviteCodes">
                     {{ inviteBusy ? '生成中…' : '生成邀请码' }}
                   </WinButton>
                 </div>
@@ -539,12 +539,12 @@ watch(
                         <input v-model="editingSlugValue" type="text" maxlength="32" @keyup.enter="saveSlug(s)" @keyup.escape="cancelEditSlug" />
                         <p v-if="slugError" class="field__error">{{ slugError }}</p>
                       </div>
-                      <WinButton Style="AccentButtonStyle" :IsEnabled="!slugBusy" @Click="saveSlug(s)">保存</WinButton>
-                      <WinButton Style="SubtleButtonStyle" :IsEnabled="!slugBusy" @Click="cancelEditSlug">取消</WinButton>
+                      <WinButton Style="AccentButtonStyle" :IsEnabled="!slugBusy" @click="saveSlug(s)">保存</WinButton>
+                      <WinButton Style="SubtleButtonStyle" :IsEnabled="!slugBusy" @click="cancelEditSlug">取消</WinButton>
                     </template>
                     <template v-else>
                       <code class="admin-slug__value">{{ s.slug }}</code>
-                      <WinButton Style="SubtleButtonStyle" @Click="startEditSlug(s)">改名</WinButton>
+                      <WinButton Style="SubtleButtonStyle" @click="startEditSlug(s)">改名</WinButton>
                     </template>
                   </li>
                 </ul>
@@ -563,10 +563,10 @@ watch(
                       <p v-if="app.description" class="admin-applications__desc">{{ app.description }}</p>
                     </div>
                     <div class="admin-applications__actions">
-                      <WinButton Style="AccentButtonStyle" :IsEnabled="!decidingId" @Click="decideApplication(app.id, 'approved')">
+                      <WinButton Style="AccentButtonStyle" :IsEnabled="!decidingId" @click="decideApplication(app.id, 'approved')">
                         批准
                       </WinButton>
-                      <WinButton Style="SubtleButtonStyle" :IsEnabled="!decidingId" @Click="decideApplication(app.id, 'rejected')">
+                      <WinButton Style="SubtleButtonStyle" :IsEnabled="!decidingId" @click="decideApplication(app.id, 'rejected')">
                         拒绝
                       </WinButton>
                     </div>
@@ -579,7 +579,7 @@ watch(
                 <p v-if="packsError" class="field__error">{{ packsError }}</p>
                 <div class="admin-pack__create">
                   <input v-model="newPackName" type="text" maxlength="32" placeholder="新表情包名称" />
-                  <WinButton Style="DefaultButtonStyle" :IsEnabled="!packBusy" @Click="createPack">
+                  <WinButton Style="DefaultButtonStyle" :IsEnabled="!packBusy" @click="createPack">
                     {{ packBusy ? '创建中…' : '新建表情包' }}
                   </WinButton>
                 </div>
@@ -588,13 +588,13 @@ watch(
                 <div v-for="pack in packs" :key="pack.id" class="admin-pack">
                   <div class="admin-pack__header">
                     <span class="admin-pack__name">{{ pack.display ?? pack.name }}</span>
-                    <WinButton Style="SubtleButtonStyle" class="win-btn--danger" @Click="deletePack(pack)">删除表情包</WinButton>
+                    <WinButton Style="SubtleButtonStyle" class="win-btn--danger" @click="deletePack(pack)">删除表情包</WinButton>
                   </div>
                   <ul v-if="pack.emotes.length" class="admin-pack__emotes">
                     <li v-for="emote in pack.emotes" :key="emote.id" class="admin-pack__emote">
                       <img :src="emote.url" :alt="emote.name" class="admin-pack__emote-img" />
                       <span class="admin-pack__emote-name">:{{ pack.name }}:{{ emote.name }}:</span>
-                      <WinButton Style="SubtleButtonStyle" @Click="deleteEmote(emote)">删除</WinButton>
+                      <WinButton Style="SubtleButtonStyle" @click="deleteEmote(emote)">删除</WinButton>
                     </li>
                   </ul>
                   <p v-else class="field__hint">此包暂无表情</p>
@@ -630,7 +630,7 @@ watch(
                           v-if="user.server_role === 'user'"
                           Style="SubtleButtonStyle"
                           :IsEnabled="!roleChangingLocalpart"
-                          @Click="setUserRole(user, 'admin')"
+                          @click="setUserRole(user, 'admin')"
                         >
                           设为管理员
                         </WinButton>
@@ -638,14 +638,14 @@ watch(
                           v-else-if="user.server_role === 'admin'"
                           Style="SubtleButtonStyle"
                           :IsEnabled="!roleChangingLocalpart"
-                          @Click="setUserRole(user, 'user')"
+                          @click="setUserRole(user, 'user')"
                         >
                           撤销管理员
                         </WinButton>
                         <span v-else class="field__hint">领主</span>
                         <WinButton
                           Style="SubtleButtonStyle"
-                          @Click="openGroupPickerFor = openGroupPickerFor === user.localpart ? '' : user.localpart"
+                          @click="openGroupPickerFor = openGroupPickerFor === user.localpart ? '' : user.localpart"
                         >
                           分组
                         </WinButton>
@@ -674,7 +674,7 @@ watch(
                   </li>
                 </ul>
                 <p v-else-if="!usersLoading" class="field__hint">暂无用户</p>
-                <WinButton v-if="usersCursor" Style="DefaultButtonStyle" :IsEnabled="!usersLoading" @Click="loadUsers(false)">
+                <WinButton v-if="usersCursor" Style="DefaultButtonStyle" :IsEnabled="!usersLoading" @click="loadUsers(false)">
                   {{ usersLoading ? '加载中…' : '加载更多' }}
                 </WinButton>
               </template>
@@ -683,7 +683,7 @@ watch(
 
             <div v-else class="admin-modal__body">
               <div class="groups-toolbar">
-                <WinButton Style="AccentButtonStyle" @Click="openCreateGroup">建组</WinButton>
+                <WinButton Style="AccentButtonStyle" @click="openCreateGroup">建组</WinButton>
               </div>
 
               <div v-if="groupsLoading" class="admin-modal__loading">加载中…</div>
@@ -698,10 +698,10 @@ watch(
                   <span class="group-row__name">{{ group.name }}</span>
                   <span v-if="group.is_moderator" class="group-row__mod-badge">管理员组</span>
                   <div class="group-row__actions">
-                    <WinButton Style="SubtleButtonStyle" :IsEnabled="index > 0" @Click="moveGroup(index, -1)">上移</WinButton>
-                    <WinButton Style="SubtleButtonStyle" :IsEnabled="index < groups.length - 1" @Click="moveGroup(index, 1)">下移</WinButton>
-                    <WinButton Style="SubtleButtonStyle" @Click="openEditGroup(group)">编辑</WinButton>
-                    <WinButton Style="AccentButtonStyle" class="win-btn--danger" @Click="deleteGroupConfirm(group)">删除</WinButton>
+                    <WinButton Style="SubtleButtonStyle" :IsEnabled="index > 0" @click="moveGroup(index, -1)">上移</WinButton>
+                    <WinButton Style="SubtleButtonStyle" :IsEnabled="index < groups.length - 1" @click="moveGroup(index, 1)">下移</WinButton>
+                    <WinButton Style="SubtleButtonStyle" @click="openEditGroup(group)">编辑</WinButton>
+                    <WinButton Style="AccentButtonStyle" class="win-btn--danger" @click="deleteGroupConfirm(group)">删除</WinButton>
                   </div>
                 </li>
               </ul>
@@ -724,7 +724,7 @@ watch(
   align-items: center;
   justify-content: center;
   padding: 2rem;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--overlay-scrim);
 }
 
 .admin-modal {
@@ -738,7 +738,7 @@ watch(
   border-radius: var(--radius-md);
   background: var(--flyout-bg, var(--layer-default));
   border: 1px solid var(--card-stroke);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--shadow-dialog);
   backdrop-filter: blur(32px) saturate(160%);
   -webkit-backdrop-filter: blur(32px) saturate(160%);
   overflow: hidden;

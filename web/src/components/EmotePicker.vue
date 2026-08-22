@@ -60,7 +60,7 @@ const isEmpty = computed(() => !loading.value && groups.value.length === 0)
   border-radius: var(--radius-md);
   background: var(--flyout-bg, var(--layer-default));
   border: 1px solid var(--card-stroke);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.24);
+  box-shadow: var(--shadow-popover);
   backdrop-filter: blur(24px) saturate(160%);
   -webkit-backdrop-filter: blur(24px) saturate(160%);
 }

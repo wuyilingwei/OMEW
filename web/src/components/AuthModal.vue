@@ -38,7 +38,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
       <div v-if="isOpen" class="auth-modal-overlay" @click.self="requestClose">
         <div class="auth-modal" role="dialog" aria-modal="true">
           <div class="auth-modal__header">
-            <WinButton Style="SubtleButtonStyle" @Click="requestClose">关闭</WinButton>
+            <WinButton Style="SubtleButtonStyle" @click="requestClose">关闭</WinButton>
           </div>
           <div class="auth-modal__scroll">
             <AuthForm ref="authForm" />
@@ -61,7 +61,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   align-items: center;
   justify-content: center;
   padding: 2rem;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--overlay-scrim);
 }
 
 .auth-modal {
@@ -74,7 +74,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   border-radius: var(--radius-md);
   background: var(--flyout-bg, var(--layer-default));
   border: 1px solid var(--card-stroke);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--shadow-dialog);
   backdrop-filter: blur(32px) saturate(160%);
   -webkit-backdrop-filter: blur(32px) saturate(160%);
   overflow: hidden;

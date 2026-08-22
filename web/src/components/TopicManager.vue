@@ -243,8 +243,8 @@ async function create() {
             <p v-if="descError" class="field__error">{{ descError }}</p>
           </div>
           <div class="topic-row__actions">
-            <WinButton Style="AccentButtonStyle" :IsEnabled="!busy" @Click="saveEdit(topic)">保存</WinButton>
-            <WinButton Style="SubtleButtonStyle" :IsEnabled="!busy" @Click="cancelEdit">取消</WinButton>
+            <WinButton Style="AccentButtonStyle" :IsEnabled="!busy" @click="saveEdit(topic)">保存</WinButton>
+            <WinButton Style="SubtleButtonStyle" :IsEnabled="!busy" @click="cancelEdit">取消</WinButton>
           </div>
         </template>
         <template v-else>
@@ -269,8 +269,8 @@ async function create() {
             >
               <AppIcon name="chevron-right" :size="16" class="icon-btn__rotate-down" />
             </button>
-            <WinButton Style="SubtleButtonStyle" :IsEnabled="!busy" @Click="startEdit(topic)">编辑</WinButton>
-            <WinButton Style="SubtleButtonStyle" class="win-btn--danger" :IsEnabled="!busy" @Click="remove(topic)">删除</WinButton>
+            <WinButton Style="SubtleButtonStyle" :IsEnabled="!busy" @click="startEdit(topic)">编辑</WinButton>
+            <WinButton Style="SubtleButtonStyle" class="win-btn--danger" :IsEnabled="!busy" @click="remove(topic)">删除</WinButton>
           </div>
         </template>
       </li>
@@ -310,7 +310,7 @@ async function create() {
           />
           <p v-if="createError" class="field__error">{{ createError }}</p>
         </div>
-        <WinButton Style="DefaultButtonStyle" :IsEnabled="!creating" @Click="create">
+        <WinButton Style="DefaultButtonStyle" :IsEnabled="!creating" @click="create">
           {{ creating ? '创建中…' : '新建标签' }}
         </WinButton>
       </div>

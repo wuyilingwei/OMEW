@@ -250,7 +250,7 @@ function finishRegistration() {
             class="auth-form__submit"
             type="button"
             :IsEnabled="!passkeyBusy"
-            @Click="loginWithPasskey"
+            @click="loginWithPasskey"
           >
             {{ passkeyBusy ? '等待设备确认…' : '使用通行密钥登录' }}
           </WinButton>
@@ -276,7 +276,7 @@ function finishRegistration() {
         <WinButton Style="AccentButtonStyle" class="auth-form__submit" type="submit" :IsEnabled="!loginBusy">
           {{ loginBusy ? '验证中…' : '验证并登录' }}
         </WinButton>
-        <WinButton Style="SubtleButtonStyle" class="auth-form__submit" type="button" @Click="cancelTotpLogin">返回</WinButton>
+        <WinButton Style="SubtleButtonStyle" class="auth-form__submit" type="button" @click="cancelTotpLogin">返回</WinButton>
       </form>
     </template>
 
@@ -285,8 +285,8 @@ function finishRegistration() {
         <WinInfoBar :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Success">
           注册成功。请务必导出并妥善保管所有权密钥备份——导出内容含你的加密私钥，是账号迁移的唯一凭证，服务器不会保存明文私钥。
         </WinInfoBar>
-        <WinButton Style="DefaultButtonStyle" @Click="exportBackup">导出所有权密钥备份</WinButton>
-        <WinButton Style="AccentButtonStyle" class="auth-form__submit" @Click="finishRegistration">
+        <WinButton Style="DefaultButtonStyle" @click="exportBackup">导出所有权密钥备份</WinButton>
+        <WinButton Style="AccentButtonStyle" class="auth-form__submit" @click="finishRegistration">
           进入 OpenMew
         </WinButton>
       </div>

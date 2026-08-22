@@ -24,18 +24,20 @@ function onCreated() {
           :class="{ 'node-rail__item--active': node.id === selectedNodeId }"
           type="button"
           :title="node.name"
+          :aria-label="node.name"
+          :aria-current="node.id === selectedNodeId ? 'page' : undefined"
           @click="selectNode(node.id)"
         >
           {{ node.name.slice(0, 1) }}
         </button>
       </li>
       <li v-if="!isGuestMode">
-        <button class="node-rail__item node-rail__item--add" type="button" title="发现据点" @click="showDirectory = true">
+        <button class="node-rail__item node-rail__item--add" type="button" title="发现据点" aria-label="发现据点" @click="showDirectory = true">
           <AppIcon name="compass" :size="18" />
         </button>
       </li>
       <li v-if="!isGuestMode">
-        <button class="node-rail__item node-rail__item--add" type="button" title="创建据点" @click="showCreate = true">
+        <button class="node-rail__item node-rail__item--add" type="button" title="创建据点" aria-label="创建据点" @click="showCreate = true">
           <AppIcon name="add" :size="18" />
         </button>
       </li>
@@ -133,7 +135,7 @@ function onCreated() {
   align-items: center;
   justify-content: center;
   padding: 2rem;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--overlay-scrim);
 }
 
 .node-rail__dialog {
@@ -146,7 +148,7 @@ function onCreated() {
   border-radius: var(--radius-md);
   background: var(--flyout-bg, var(--layer-default));
   border: 1px solid var(--card-stroke);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--shadow-dialog);
 }
 
 .node-rail__dialog-title {

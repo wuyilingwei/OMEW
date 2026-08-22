@@ -11,3 +11,6 @@ dist/
 # counter-exception to any global /test/ ignore rule: this repo tracks its test suite
 !/test/
 !/test/**
+
+# production Worker configuration is source, even when a global ignore matches wrangler.*
+!/server/wrangler.jsonc

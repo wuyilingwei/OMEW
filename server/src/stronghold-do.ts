@@ -84,6 +84,7 @@ export type BanRow = {
 interface TipAttachment {
   actor: string;
   stronghold: string;
+  role: Role;
 }
 
 export interface EditConfigSnapshot {
@@ -319,6 +320,8 @@ export class StrongholdDO extends DurableObject<Env> {
     // channel grants no write access, role/deny changes can't affect it.
     if (payload.effect === "close") {
       this.closeTipSockets(payload.actor);
+    } else if (payload.role) {
+      await this.updateTipSockets(payload.actor, payload.role);
     }
     const rooms = await this.listRooms();
     await Promise.all(
@@ -340,6 +343,25 @@ export class StrongholdDO extends DurableObject<Env> {
         // socket already gone.
       }
     }
+  }
+
+  private async updateTipSockets(actor: string, role: Role): Promise<void> {
+    const tips = await this.getTipsForRole(role);
+    const payload = JSON.stringify({ type: "tip.update", entries: tips });
+    for (const ws of this.ctx.getWebSockets("tips")) {
+      const attachment = ws.deserializeAttachment() as TipAttachment | null;
+      if (!attachment || attachment.actor !== actor) continue;
+      ws.serializeAttachment({ ...attachment, role });
+      try {
+        ws.send(payload);
+      } catch {
+        // socket already gone.
+      }
+    }
+  }
+
+  async revokeServerRole(actor: string): Promise<void> {
+    await this.pushRevokeToRooms({ actor, scope: this.selfId, effect: "close" });
   }
 
   // Recompute one actor's effective role/deny (server groups included, m0-protocol
@@ -616,12 +638,31 @@ export class StrongholdDO extends DurableObject<Env> {
     return this.ctx.storage.sql.exec<{ room_ref: string; latest_seq: number; ts: number }>("SELECT * FROM tip").toArray();
   }
 
+  private async getTipsForRole(role: Role): Promise<{ room_ref: string; latest_seq: number; ts: number }[]> {
+    const tips = await this.getTips();
+    if (role === "owner" || role === "mod") return tips;
+    const restricted = new Set(
+      (await this.listRooms())
+        .filter((room) => Boolean(room.restricted))
+        .map((room) => `${this.selfId}/${typeToKind(room.type)}/${room.res_id}`)
+    );
+    return tips.filter((tip) => !restricted.has(tip.room_ref));
+  }
+
   async alarm(): Promise<void> {
     const tips = await this.getTips();
-    const payload = JSON.stringify({ type: "tip.update", entries: tips });
+    const restricted = new Set(
+      (await this.listRooms())
+        .filter((room) => Boolean(room.restricted))
+        .map((room) => `${this.selfId}/${typeToKind(room.type)}/${room.res_id}`)
+    );
     for (const ws of this.ctx.getWebSockets("tips")) {
+      const attachment = ws.deserializeAttachment() as TipAttachment | null;
+      const entries = attachment && (attachment.role === "owner" || attachment.role === "mod")
+        ? tips
+        : tips.filter((tip) => !restricted.has(tip.room_ref));
       try {
-        ws.send(payload);
+        ws.send(JSON.stringify({ type: "tip.update", entries }));
       } catch {
         continue;
       }
@@ -640,19 +681,19 @@ export class StrongholdDO extends DurableObject<Env> {
     }
     const token = protocolHeader.trim();
     const claims = await verifyToken<StrongholdTokenClaims>(token, this.env.DEV_TOKEN_SECRET);
-    if (!claims || claims.typ !== "stronghold") {
+    if (!claims || claims.typ !== "stronghold" || claims.stronghold !== this.selfId) {
       return new Response("invalid token", { status: 401 });
     }
 
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
     this.ctx.acceptWebSocket(server, ["tips"]);
-    const attachment: TipAttachment = { actor: claims.actor, stronghold: claims.stronghold };
+    const attachment: TipAttachment = { actor: claims.actor, stronghold: claims.stronghold, role: claims.role };
     server.serializeAttachment(attachment);
 
     // First-frame snapshot so a freshly (re)connected client doesn't wait for the
     // next coalesced flush to see current unread state.
-    const tips = await this.getTips();
+    const tips = await this.getTipsForRole(claims.role);
     server.send(JSON.stringify({ type: "tip.update", entries: tips }));
 
     return new Response(null, { status: 101, webSocket: client, headers: { "Sec-WebSocket-Protocol": token } });

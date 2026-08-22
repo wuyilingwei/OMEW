@@ -40,6 +40,17 @@
      regardless of theme (e.g. scannable QR codes) - deliberately not
      redefined in the dark-mode blocks below. */
   --surface-fixed-light: 255 255 255;
+
+  /* elevation and media primitives shared by app-side overlays */
+  --overlay-scrim: rgb(0 0 0 / 0.5);
+  --overlay-scrim-soft: rgb(0 0 0 / 0.45);
+  --overlay-scrim-strong: rgb(0 0 0 / 0.6);
+  --overlay-scrim-media: rgb(0 0 0 / 0.75);
+  --shadow-dialog: 0 16px 48px rgb(0 0 0 / 0.28);
+  --shadow-card: 0 16px 48px rgb(0 0 0 / 0.18);
+  --shadow-popover: 0 12px 32px rgb(0 0 0 / 0.24);
+  --text-on-dark: rgb(var(--surface-fixed-light));
+  --critical-text: var(--SystemFillColorCriticalBrush);
 }
 
 @media (prefers-color-scheme: dark) {

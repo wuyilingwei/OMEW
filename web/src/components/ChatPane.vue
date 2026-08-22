@@ -220,7 +220,7 @@ watch(() => selectedChannel.value?.id, pin, { flush: 'post' })
   <section class="chat-pane">
     <div ref="scrollEl" class="chat-pane__messages">
       <div v-if="hasMoreHistory" class="chat-pane__load-more">
-        <WinButton Style="SubtleButtonStyle" :IsEnabled="!historyLoading" @Click="onLoadOlder">
+        <WinButton Style="SubtleButtonStyle" :IsEnabled="!historyLoading" @click="onLoadOlder">
           {{ historyLoading ? '加载中…' : '加载更早的消息' }}
         </WinButton>
       </div>
@@ -278,7 +278,7 @@ watch(() => selectedChannel.value?.id, pin, { flush: 'post' })
           class="chat-pane__emote-btn"
           title="表情"
           :IsEnabled="!muted"
-          @Click="showEmotePicker = !showEmotePicker"
+          @click="showEmotePicker = !showEmotePicker"
         >
           <AppIcon name="emote" :size="18" />
         </WinButton>
@@ -288,7 +288,7 @@ watch(() => selectedChannel.value?.id, pin, { flush: 'post' })
           class="chat-pane__image-btn"
           title="发送图片"
           :IsEnabled="!attachments.uploading.value && !muted"
-          @Click="pickImages"
+          @click="pickImages"
         >
           <AppIcon name="image" :size="18" />
         </WinButton>
@@ -301,12 +301,12 @@ watch(() => selectedChannel.value?.id, pin, { flush: 'post' })
           @keydown.enter="onEnter"
           @paste="onPaste"
         ></textarea>
-        <WinButton Style="AccentButtonStyle" class="chat-pane__send" :IsEnabled="!muted" @Click="submit">发送</WinButton>
+        <WinButton Style="AccentButtonStyle" class="chat-pane__send" :IsEnabled="!muted" @click="submit">发送</WinButton>
       </div>
     </div>
     <div v-else class="chat-pane__compose-wrap chat-pane__compose-wrap--guest">
       <p class="chat-pane__guest-text">登录后参与聊天</p>
-      <WinButton Style="AccentButtonStyle" @Click="openAuthModal">登录 / 注册</WinButton>
+      <WinButton Style="AccentButtonStyle" @click="openAuthModal">登录 / 注册</WinButton>
     </div>
   </section>
 </template>
@@ -395,8 +395,8 @@ watch(() => selectedChannel.value?.id, pin, { flush: 'post' })
   align-items: center;
   justify-content: center;
   border: none;
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
+  background: var(--overlay-scrim-strong);
+  color: var(--text-on-dark);
 }
 
 .chat-pane__compose {

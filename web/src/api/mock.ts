@@ -2,7 +2,6 @@
 // dev-only opt-in (see index.ts); production builds never import this module's
 // data path in practice since USE_MOCK is false by default.
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/browser'
-import { STAMP_EMOTES } from '../assets/mew'
 import { isReservedUsername } from '../utils/reservedUsernames'
 import { ApiRequestError } from './errors'
 import type { RoomSocketHandlers, RoomTransport } from './roomSocket'
@@ -86,16 +85,9 @@ const config: AdminInstanceConfig = {
   allow_guest_browsing: true,
 }
 
-// demo emote pack seeded from the same bundled mascot images the seed
-// script installs against a real instance - lets the picker/renderer be
-// visually checked without a backend.
-const emotePacks: EmotePack[] = [
-  {
-    id: 'mock-pack-mew',
-    name: 'Mew',
-    emotes: Object.entries(STAMP_EMOTES).map(([name, url]): Emote => ({ id: `mock-emote-${name}`, name, media_id: `mock-media-${name}`, url })),
-  },
-]
+// Bundled reaction emotes are merged by useEmotes for both real and mock API
+// modes. This store represents only instance-managed custom packs.
+const emotePacks: EmotePack[] = []
 
 const mediaStore = new Map<string, MediaUploadResult>()
 const storageUsage = { used: 0 }

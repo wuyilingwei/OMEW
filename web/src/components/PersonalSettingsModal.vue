@@ -357,7 +357,7 @@ watch(
         <div class="personal-modal" role="dialog" aria-modal="true" aria-label="个人设置">
           <div class="personal-modal__header">
             <h1 class="personal-modal__title">个人设置</h1>
-            <WinButton Style="SubtleButtonStyle" @Click="requestClose">关闭</WinButton>
+            <WinButton Style="SubtleButtonStyle" @click="requestClose">关闭</WinButton>
           </div>
 
           <WinSelectorBar
@@ -382,7 +382,7 @@ watch(
                   <WinInfoBar v-else-if="displayNameSaved" :IsOpen="true" :IsClosable="false" Severity="Success">
                     已保存
                   </WinInfoBar>
-                  <WinButton Style="AccentButtonStyle" :IsEnabled="!displayNameSaving" @Click="submitDisplayName">
+                  <WinButton Style="AccentButtonStyle" :IsEnabled="!displayNameSaving" @click="submitDisplayName">
                     {{ displayNameSaving ? '保存中…' : '保存' }}
                   </WinButton>
                 </form>
@@ -462,12 +462,12 @@ watch(
                     </div>
                     <div class="passkey-list__actions">
                       <template v-if="renamingId === pk.id">
-                        <WinButton Style="SubtleButtonStyle" @Click="submitRename(pk)">保存</WinButton>
-                        <WinButton Style="SubtleButtonStyle" @Click="renamingId = null">取消</WinButton>
+                        <WinButton Style="SubtleButtonStyle" @click="submitRename(pk)">保存</WinButton>
+                        <WinButton Style="SubtleButtonStyle" @click="renamingId = null">取消</WinButton>
                       </template>
                       <template v-else>
-                        <WinButton Style="SubtleButtonStyle" @Click="startRename(pk)">重命名</WinButton>
-                        <WinButton Style="SubtleButtonStyle" @Click="deletePasskey(pk)">
+                        <WinButton Style="SubtleButtonStyle" @click="startRename(pk)">重命名</WinButton>
+                        <WinButton Style="SubtleButtonStyle" title="删除通行密钥" aria-label="删除通行密钥" @click="deletePasskey(pk)">
                           <AppIcon name="delete" :size="15" />
                         </WinButton>
                       </template>
@@ -487,13 +487,13 @@ watch(
                   />
                   <p v-if="addPasskeyError" class="field__error">{{ addPasskeyError }}</p>
                   <div class="passkey-add-form__actions">
-                    <WinButton Style="AccentButtonStyle" :IsEnabled="!addPasskeyBusy" @Click="submitAddPasskey">
+                    <WinButton Style="AccentButtonStyle" :IsEnabled="!addPasskeyBusy" @click="submitAddPasskey">
                       {{ addPasskeyBusy ? '等待设备确认…' : '开始注册' }}
                     </WinButton>
-                    <WinButton Style="SubtleButtonStyle" @Click="cancelAddPasskey">取消</WinButton>
+                    <WinButton Style="SubtleButtonStyle" @click="cancelAddPasskey">取消</WinButton>
                   </div>
                 </div>
-                <WinButton v-else Style="DefaultButtonStyle" @Click="startAddPasskey">添加通行密钥</WinButton>
+                <WinButton v-else Style="DefaultButtonStyle" @click="startAddPasskey">添加通行密钥</WinButton>
               </section>
 
               <!-- 两步验证 -->
@@ -505,10 +505,10 @@ watch(
                   <WinInfoBar :IsOpen="true" :IsClosable="false" :IsIconVisible="false" :Severity="totpEnabled ? 'Success' : 'Informational'">
                     {{ totpEnabled ? '两步验证已启用' : '两步验证未启用' }}
                   </WinInfoBar>
-                  <WinButton v-if="!totpEnabled" Style="AccentButtonStyle" :IsEnabled="!totpBusy" @Click="beginTotpSetup">
+                  <WinButton v-if="!totpEnabled" Style="AccentButtonStyle" :IsEnabled="!totpBusy" @click="beginTotpSetup">
                     {{ totpBusy ? '准备中…' : '启用两步验证' }}
                   </WinButton>
-                  <WinButton v-else Style="DefaultButtonStyle" @Click="beginTotpDisable">禁用两步验证</WinButton>
+                  <WinButton v-else Style="DefaultButtonStyle" @click="beginTotpDisable">禁用两步验证</WinButton>
                   <p v-if="totpError" class="field__error">{{ totpError }}</p>
                 </template>
 
@@ -517,8 +517,8 @@ watch(
                   <img v-if="totpQrDataUrl" :src="totpQrDataUrl" alt="TOTP 二维码" class="totp-qr" />
                   <p class="totp-secret">{{ totpSecret }}</p>
                   <div class="passkey-add-form__actions">
-                    <WinButton Style="AccentButtonStyle" @Click="goToVerify">下一步</WinButton>
-                    <WinButton Style="SubtleButtonStyle" @Click="cancelTotpFlow">取消</WinButton>
+                    <WinButton Style="AccentButtonStyle" @click="goToVerify">下一步</WinButton>
+                    <WinButton Style="SubtleButtonStyle" @click="cancelTotpFlow">取消</WinButton>
                   </div>
                 </template>
 
@@ -539,10 +539,10 @@ watch(
                   </div>
                   <p v-if="totpError" class="field__error">{{ totpError }}</p>
                   <div class="passkey-add-form__actions">
-                    <WinButton Style="AccentButtonStyle" :IsEnabled="!totpBusy" @Click="submitTotpActivate">
+                    <WinButton Style="AccentButtonStyle" :IsEnabled="!totpBusy" @click="submitTotpActivate">
                       {{ totpBusy ? '验证中…' : '确认激活' }}
                     </WinButton>
-                    <WinButton Style="SubtleButtonStyle" @Click="cancelTotpFlow">取消</WinButton>
+                    <WinButton Style="SubtleButtonStyle" @click="cancelTotpFlow">取消</WinButton>
                   </div>
                 </template>
 
@@ -566,10 +566,10 @@ watch(
                   </div>
                   <p v-if="totpError" class="field__error">{{ totpError }}</p>
                   <div class="passkey-add-form__actions">
-                    <WinButton Style="AccentButtonStyle" :IsEnabled="!totpBusy" @Click="submitTotpDisable">
+                    <WinButton Style="AccentButtonStyle" :IsEnabled="!totpBusy" @click="submitTotpDisable">
                       {{ totpBusy ? '提交中…' : '确认禁用' }}
                     </WinButton>
-                    <WinButton Style="SubtleButtonStyle" @Click="cancelTotpFlow">取消</WinButton>
+                    <WinButton Style="SubtleButtonStyle" @click="cancelTotpFlow">取消</WinButton>
                   </div>
                 </template>
               </section>
@@ -600,7 +600,7 @@ watch(
   align-items: center;
   justify-content: center;
   padding: 2rem;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--overlay-scrim);
 }
 
 .personal-modal {
@@ -614,7 +614,7 @@ watch(
   border-radius: var(--radius-md);
   background: var(--flyout-bg, var(--layer-default));
   border: 1px solid var(--card-stroke);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--shadow-dialog);
   backdrop-filter: blur(32px) saturate(160%);
   -webkit-backdrop-filter: blur(32px) saturate(160%);
   overflow: hidden;

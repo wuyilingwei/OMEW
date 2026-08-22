@@ -34,7 +34,7 @@ onMounted(async () => {
   <Teleport to="body">
     <div class="member-info-overlay" @click.self="$emit('close')">
       <div class="member-info-card" role="dialog" aria-modal="true" :aria-label="member.display_name">
-        <WinButton Style="SubtleButtonStyle" class="member-info-card__close" @Click="$emit('close')">关闭</WinButton>
+        <WinButton Style="SubtleButtonStyle" class="member-info-card__close" @click="$emit('close')">关闭</WinButton>
         <AvatarBadge :seed="member.username" :size="64" />
         <h2 class="member-info-card__name">{{ profile?.display_name ?? member.display_name }}</h2>
         <p class="member-info-card__actor">{{ member.actor }}</p>
@@ -71,7 +71,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   padding: 1.5rem;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--overlay-scrim-soft);
 }
 
 .member-info-card {
@@ -86,7 +86,7 @@ onMounted(async () => {
   border-radius: var(--radius-md);
   background: var(--flyout-bg, var(--layer-default));
   border: 1px solid var(--card-stroke);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--shadow-dialog);
   backdrop-filter: blur(32px) saturate(160%);
   -webkit-backdrop-filter: blur(32px) saturate(160%);
 }

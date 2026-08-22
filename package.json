@@ -8,8 +8,11 @@
     "web"
   ],
   "scripts": {
+    "build": "npm run build --workspace web",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "typecheck": "npm run typecheck --workspace server && npx vue-tsc --noEmit -p web/tsconfig.app.json",
+    "verify": "npm run types --workspace server && npm run typecheck && npm test && npm run build && npm run deploy:check --workspace server"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.22.0",

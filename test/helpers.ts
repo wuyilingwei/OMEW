@@ -1,7 +1,8 @@
 import { env } from "cloudflare:test";
 import worker from "../server/src/api";
 import { signToken } from "../server/src/auth";
-import type { Role, RoomTokenClaims, ServerRole, SessionTokenClaims, StrongholdTokenClaims } from "../server/src/types";
+import { instanceDomain, type Role, type RoomTokenClaims, type ServerRole, type SessionTokenClaims, type StrongholdTokenClaims } from "../server/src/types";
+import { domainOfActor, localpartOfActor } from "../server/src/users";
 import migration0001 from "../server/migrations/0001_init.sql?raw";
 import migration0002 from "../server/migrations/0002_user_system.sql?raw";
 import migration0003 from "../server/migrations/0003_stronghold_index.sql?raw";
@@ -14,6 +15,7 @@ import migration0009 from "../server/migrations/0009_server_groups.sql?raw";
 import migration0010 from "../server/migrations/0010_totp_passkey.sql?raw";
 import migration0011 from "../server/migrations/0011_totp_passkey_hardening.sql?raw";
 import migration0012 from "../server/migrations/0012_stronghold_slug.sql?raw";
+import migration0013 from "../server/migrations/0013_security_hardening.sql?raw";
 
 // Must match vitest.config.ts's miniflare.bindings.DEV_TOKEN_SECRET.
 export const TEST_SECRET = "test-secret-do-not-use-in-prod";
@@ -36,7 +38,7 @@ export async function ensureMigrated(): Promise<void> {
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'instance_config'"
   ).first();
   if (marker) return;
-  for (const sql of [migration0001, migration0002, migration0003, migration0004, migration0005, migration0006, migration0007, migration0008, migration0009, migration0010, migration0011, migration0012]) {
+  for (const sql of [migration0001, migration0002, migration0003, migration0004, migration0005, migration0006, migration0007, migration0008, migration0009, migration0010, migration0011, migration0012, migration0013]) {
     for (const statement of splitStatements(sql)) {
       await env.DB.prepare(statement).run();
     }
@@ -55,31 +57,23 @@ export function apiRequest(path: string, init: RequestInit = {}): Promise<Respon
 export function mediaUploadRequest(opts: {
   token: string;
   contentType: string;
-  declaredLength: number;
+  declaredLength: number | null;
   body: Uint8Array | ReadableStream<Uint8Array>;
 }): Promise<Response> {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${opts.token}`,
+    "Content-Type": opts.contentType,
+  };
+  if (opts.declaredLength !== null) headers["Content-Length"] = String(opts.declaredLength);
   return worker.fetch(
     new Request("http://local/api/media", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${opts.token}`,
-        "Content-Type": opts.contentType,
-        "Content-Length": String(opts.declaredLength),
-      },
+      headers,
       body: opts.body,
       duplex: opts.body instanceof ReadableStream ? "half" : undefined,
     } as RequestInit),
     env
   );
-}
-
-export function streamOf(bytes: Uint8Array): ReadableStream<Uint8Array> {
-  return new ReadableStream({
-    start(controller) {
-      controller.enqueue(bytes);
-      controller.close();
-    },
-  });
 }
 
 export async function registerUser(
@@ -131,13 +125,19 @@ export async function connectRoom(
 // tip.update snapshot as its first frame on every fresh connection.
 export async function connectTips(
   strongholdId: string,
-  actor: string
-): Promise<{ ws: WebSocket; stub: DurableObjectStub<import("../server/src/stronghold-do").StrongholdDO> }> {
+  actor: string,
+  role: Role = "member"
+): Promise<{
+  ws: WebSocket;
+  stub: DurableObjectStub<import("../server/src/stronghold-do").StrongholdDO>;
+  firstMessage: Promise<Record<string, unknown>>;
+}> {
   const claims: StrongholdTokenClaims = {
     v: 1,
     typ: "stronghold",
     actor,
     stronghold: strongholdId,
+    role,
     exp: Math.floor(Date.now() / 1000) + 300,
     jti: crypto.randomUUID(),
   };
@@ -148,8 +148,9 @@ export async function connectTips(
   });
   const ws = res.webSocket;
   if (!ws) throw new Error("handshake did not return a websocket");
+  const firstMessage = nextMessage(ws);
   ws.accept();
-  return { ws, stub };
+  return { ws, stub, firstMessage };
 }
 
 export function nextClose(ws: WebSocket): Promise<{ code: number; reason: string }> {
@@ -240,6 +241,16 @@ export function itemReactionFrame(targetSeq: number, name: string, op: "add" | "
 // role tests keep exercising real membership; pass "admin"/"owner" to test the
 // overlay explicitly.
 export async function sessionToken(actor: string, serverRole: ServerRole = "user"): Promise<string> {
+  if (domainOfActor(actor) === instanceDomain(env)) {
+    await ensureMigrated();
+    const localpart = localpartOfActor(actor);
+    await env.DB.prepare(
+      "INSERT INTO users (localpart, display_name, status, created_at, server_role) VALUES (?, ?, 'active', ?, ?) " +
+        "ON CONFLICT(localpart) DO UPDATE SET status = 'active', server_role = excluded.server_role"
+    )
+      .bind(localpart, localpart, Date.now(), serverRole)
+      .run();
+  }
   const claims: SessionTokenClaims = {
     v: 1,
     typ: "session",

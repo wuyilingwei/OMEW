@@ -16,18 +16,6 @@ import noThoughtUrl from './no-thought.webp'
 import okashiiUrl from './okashii.webp'
 import questionUrl from './question.webp'
 import saluteUrl from './salute.webp'
-import stampAzUrl from './stamp-az.webp'
-import stampComfortUrl from './stamp-comfort.webp'
-import stampHelpfulUrl from './stamp-helpful.webp'
-import stampKusaUrl from './stamp-kusa.webp'
-import stampLanceUrl from './stamp-lance.webp'
-import stampLikeUrl from './stamp-like.webp'
-import stampNiubiUrl from './stamp-niubi.webp'
-import stampOkashiiUrl from './stamp-okashii.webp'
-import stampQuestionUrl from './stamp-question.webp'
-import stampSaluteUrl from './stamp-salute.webp'
-import stampTearUrl from './stamp-tear.webp'
-import stampUhhuhUrl from './stamp-uhhuh.webp'
 import tearUrl from './tear.webp'
 import uhhuhUrl from './uhhuh.webp'
 
@@ -39,25 +27,6 @@ export const EMPTY_STATE = {
   posts: noThoughtUrl,
   members: memberSearchUrl,
   onboarding: azUrl,
-}
-
-// the forum's standard sticker set (4x3) - full-bleed pictures sent as their
-// own card in chat. Drives the built-in pack, see mew-emotes.ts. Same twelve
-// semantic names as REACTION_SET below but a completely different set of
-// pictures, hence the stamp- prefix on the files.
-export const STAMP_EMOTES: Record<string, string> = {
-  az: stampAzUrl,
-  comfort: stampComfortUrl,
-  helpful: stampHelpfulUrl,
-  kusa: stampKusaUrl,
-  lance: stampLanceUrl,
-  like: stampLikeUrl,
-  niubi: stampNiubiUrl,
-  okashii: stampOkashiiUrl,
-  question: stampQuestionUrl,
-  salute: stampSaluteUrl,
-  tear: stampTearUrl,
-  uhhuh: stampUhhuhUrl,
 }
 
 // flat thick-outline glyphs - small reactions meant to attach to a message or

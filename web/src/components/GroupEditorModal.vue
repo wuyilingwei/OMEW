@@ -106,7 +106,7 @@ async function save() {
         <div class="group-modal" role="dialog" aria-modal="true">
           <div class="group-modal__header">
             <h1 class="group-modal__title">{{ isEdit ? '编辑用户组' : '新建用户组' }}</h1>
-            <WinButton Style="SubtleButtonStyle" @Click="$emit('close')">关闭</WinButton>
+            <WinButton Style="SubtleButtonStyle" @click="$emit('close')">关闭</WinButton>
           </div>
 
           <div class="group-modal__form">
@@ -161,7 +161,7 @@ async function save() {
               {{ error }}
             </WinInfoBar>
 
-            <WinButton Style="AccentButtonStyle" class="group-modal__submit" :IsEnabled="!saving" @Click="save">
+            <WinButton Style="AccentButtonStyle" class="group-modal__submit" :IsEnabled="!saving" @click="save">
               {{ saving ? '保存中…' : '保存' }}
             </WinButton>
           </div>
@@ -180,7 +180,7 @@ async function save() {
   align-items: center;
   justify-content: center;
   padding: 2rem;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--overlay-scrim);
 }
 
 .group-modal {
@@ -193,7 +193,7 @@ async function save() {
   border-radius: var(--radius-md);
   background: var(--flyout-bg, var(--layer-default));
   border: 1px solid var(--card-stroke);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--shadow-dialog);
   backdrop-filter: blur(32px) saturate(160%);
   -webkit-backdrop-filter: blur(32px) saturate(160%);
   overflow: hidden;

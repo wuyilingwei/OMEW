@@ -108,7 +108,7 @@ tombstone 侧表按 seq 区间分段:某区间的删除已固化进重写后的�
 | 搜索 / tips / 目录 | 按同一可见性裁剪,入公开目录 | 裁剪,不入目录 |
 
 **转私有仅对未来生效**:公开期间已被拉取或缓存的历史无法追回,协议 MUST NOT 承诺撤回能力,UI 须提示。
-**房间级可见性**:v1 房间继承据点 `visibility`,不做逐房间可见性矩阵;唯一例外是房间 flag `restricted: true`(仅 owner / mod 可见可入,对齐 Mew `moderation_topic` 先例),restricted 房间 MUST NOT 联邦、MUST NOT 进公开目录与 tips 汇总。
+**房间级可见性**:v1 房间继承据点 `visibility`,不做逐房间可见性矩阵;唯一例外是房间 flag `restricted: true`(仅 owner / mod 可见可入,对齐 Mew `moderation_topic` 先例),restricted 房间 MUST NOT 联邦、MUST NOT 进公开目录或宾客 / 普通成员的 tips 汇总;本地 owner / mod MAY 接收其 tips。
 ### 6.4 搜索
 D1 支持 FTS5(自带 unicode61 / porter / trigram tokenizer,不可自定义),搜索走 FTS5 正路,归档时把正文写入 D1 FTS 表。`LIKE` 仅作退路且 MUST 强制时间范围过滤(按扫描行计费)。FTS 表容量按库上限规划(免费 500 MB / 付费 10 GB),超限时 MUST 按时间窗裁剪索引或分库,搜索退化为仅覆盖近期区间。
 ---
