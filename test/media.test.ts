@@ -89,6 +89,18 @@ function webpWithExif(): Uint8Array {
   return output;
 }
 
+function animatedGifWithMetadata(): Uint8Array {
+  const ascii = (text: string) => Array.from(new TextEncoder().encode(text));
+  return new Uint8Array([
+    ...ascii("GIF89a"), 1, 0, 1, 0, 0x80, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff,
+    0x21, 0xff, 11, ...ascii("NETSCAPE2.0"), 3, 1, 0, 0, 0,
+    0x21, 0xfe, 3, ...ascii("gps"), 0,
+    0x21, 0xf9, 4, 0, 0, 0, 0, 0,
+    0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x4c, 1, 0,
+    0x3b,
+  ]);
+}
+
 function plainTextBytes(totalLen: number): Uint8Array {
   const text = "definitely not an image or media file, just text bytes";
   const bytes = new Uint8Array(totalLen);
@@ -221,12 +233,30 @@ describe("POST /api/media success + GET /media/:id", () => {
     expect(webpWithMetadata![20] & 0x08).toBe(0);
   });
 
-  it("fails closed for image formats outside the sanitization pipeline", async () => {
+  it("preserves GIF animation structures while removing metadata extensions", async () => {
     const token = await freshUserToken();
-    const body = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0, 0, 0, 0]);
+    const body = animatedGifWithMetadata();
+    const res = await mediaUploadRequest({ token, contentType: "image/gif", declaredLength: body.byteLength, body });
+    expect(res.status).toBe(201);
+    const created = (await res.json()) as { url: string; size: number; mime: string };
+    expect(created.mime).toBe("image/gif");
+    const stored = new Uint8Array(await (await apiRequest(created.url)).arrayBuffer());
+    expect(stored.byteLength).toBe(created.size);
+    expect(includesAscii(stored, "NETSCAPE2.0")).toBe(true);
+    expect(includesAscii(stored, "gps")).toBe(false);
+    expect(stored).toContain(0x2c);
+    expect(stored).toContain(0xf9);
+    expect(stored[stored.byteLength - 1]).toBe(0x3b);
+  });
+
+  it("rejects malformed GIF before it can be stored", async () => {
+    const token = await freshUserToken();
+    const body = animatedGifWithMetadata().subarray(0, -1);
     const res = await mediaUploadRequest({ token, contentType: "image/gif", declaredLength: body.byteLength, body });
     expect(res.status).toBe(415);
-    expect(await res.json()).toEqual({ error: "IMAGE_FORMAT_UNSUPPORTED" });
+    expect(await res.json()).toEqual({ error: "IMAGE_PROCESSING_FAILED" });
+    const storage = (await (await apiRequest("/api/me/storage", { headers: { Authorization: `Bearer ${token}` } })).json()) as { used: number };
+    expect(storage.used).toBe(0);
   });
 
   it("uploads a valid PNG, returns {id, url, size, mime}, and serves it back with immutable cache headers", async () => {
@@ -239,6 +269,7 @@ describe("POST /api/media success + GET /media/:id", () => {
     const created = (await res.json()) as { id: string; url: string; size: number; mime: string };
     expect(created.url).toBe(`/media/${created.id}`);
     expect(created.size).toBeGreaterThan(0);
+    expect(created.size).toBeLessThan(body.byteLength);
     expect(created.mime).toBe("image/png");
 
     const getRes = await apiRequest(created.url, { headers: { Authorization: `Bearer ${token}` } });
@@ -246,6 +277,7 @@ describe("POST /api/media success + GET /media/:id", () => {
     expect(getRes.headers.get("Content-Type")).toBe("image/png");
     expect(getRes.headers.get("Cache-Control")).toBe("public, max-age=31536000, immutable");
     const fetched = new Uint8Array(await getRes.arrayBuffer());
+    expect(fetched.byteLength).toBe(created.size);
     expect(fetched).not.toEqual(body);
   });
 

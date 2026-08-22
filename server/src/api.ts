@@ -2411,13 +2411,7 @@ const MEDIA_MIME_WHITELIST = new Set([
   "audio/mpeg",
 ]);
 
-const SANITIZED_IMAGE_MIME_WHITELIST = new Set(["image/png", "image/jpeg", "image/webp"]);
-
-const IMAGE_OUTPUT_FORMAT: Record<string, "image/png" | "image/jpeg" | "image/webp"> = {
-  "image/png": "image/png",
-  "image/jpeg": "image/jpeg",
-  "image/webp": "image/webp",
-};
+const SANITIZED_IMAGE_MIME_WHITELIST = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 
 const MEDIA_SNIFF_BYTES = 16;
 
@@ -2497,15 +2491,6 @@ async function readDeclaredUploadBody(body: ReadableStream<Uint8Array>, declared
     reader.releaseLock();
   }
   return totalBytes === declaredLength ? concatBytes(chunks) : null;
-}
-
-function imageInputStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
-  return new ReadableStream({
-    start(controller) {
-      controller.enqueue(bytes);
-      controller.close();
-    },
-  });
 }
 
 function readU32BE(bytes: Uint8Array, offset: number): number {
@@ -2612,17 +2597,88 @@ function stripWebpMetadata(bytes: Uint8Array): Uint8Array | null {
   return stripped;
 }
 
-export function stripImageMetadata(bytes: Uint8Array, mime: "image/png" | "image/jpeg" | "image/webp"): Uint8Array | null {
+function gifSubBlocksEnd(bytes: Uint8Array, offset: number): number {
+  while (offset < bytes.byteLength) {
+    const length = bytes[offset++]!;
+    if (length === 0) return offset;
+    if (offset + length > bytes.byteLength) return -1;
+    offset += length;
+  }
+  return -1;
+}
+
+function gifColorTableBytes(packed: number): number {
+  return (packed & 0x80) === 0 ? 0 : 3 * (1 << ((packed & 0x07) + 1));
+}
+
+function stripGifMetadata(bytes: Uint8Array): Uint8Array | null {
+  if (bytes.byteLength < 13 || (String.fromCharCode(...bytes.subarray(0, 6)) !== "GIF87a" && String.fromCharCode(...bytes.subarray(0, 6)) !== "GIF89a")) return null;
+  let offset = 13 + gifColorTableBytes(bytes[10]!);
+  if (offset > bytes.byteLength) return null;
+  const parts: Uint8Array[] = [bytes.subarray(0, offset)];
+  while (offset < bytes.byteLength) {
+    const start = offset;
+    const introducer = bytes[offset++]!;
+    if (introducer === 0x3b) return offset === bytes.byteLength ? concatBytes([...parts, bytes.subarray(start, offset)]) : null;
+    if (introducer === 0x2c) {
+      if (offset + 9 > bytes.byteLength) return null;
+      const packed = bytes[offset + 8]!;
+      offset += 9 + gifColorTableBytes(packed);
+      if (offset >= bytes.byteLength) return null;
+      offset += 1; // LZW minimum code size
+      const end = gifSubBlocksEnd(bytes, offset);
+      if (end < 0) return null;
+      parts.push(bytes.subarray(start, end));
+      offset = end;
+      continue;
+    }
+    if (introducer !== 0x21 || offset >= bytes.byteLength) return null;
+    const label = bytes[offset++]!;
+    if (label === 0xf9) {
+      if (offset + 6 > bytes.byteLength || bytes[offset] !== 4 || bytes[offset + 5] !== 0) return null;
+      offset += 6;
+      parts.push(bytes.subarray(start, offset));
+      continue;
+    }
+    if (label === 0xff) {
+      if (offset >= bytes.byteLength || bytes[offset] !== 11 || offset + 12 > bytes.byteLength) return null;
+      const application = String.fromCharCode(...bytes.subarray(offset + 1, offset + 12));
+      const end = gifSubBlocksEnd(bytes, offset + 12);
+      if (end < 0) return null;
+      if (application === "NETSCAPE2.0" || application === "ANIMEXTS1.0") parts.push(bytes.subarray(start, end));
+      offset = end;
+      continue;
+    }
+    if (label === 0xfe) {
+      const end = gifSubBlocksEnd(bytes, offset);
+      if (end < 0) return null;
+      offset = end;
+      continue;
+    }
+    if (label === 0x01) {
+      if (offset >= bytes.byteLength || bytes[offset] !== 12 || offset + 13 > bytes.byteLength) return null;
+      const end = gifSubBlocksEnd(bytes, offset + 13);
+      if (end < 0) return null;
+      offset = end;
+      continue;
+    }
+    return null;
+  }
+  return null;
+}
+
+export function stripImageMetadata(bytes: Uint8Array, mime: "image/png" | "image/jpeg" | "image/webp" | "image/gif"): Uint8Array | null {
   if (mime === "image/jpeg") return stripJpegMetadata(bytes);
   if (mime === "image/png") return stripPngMetadata(bytes);
-  return stripWebpMetadata(bytes);
+  if (mime === "image/webp") return stripWebpMetadata(bytes);
+  return stripGifMetadata(bytes);
 }
 
 async function handleSanitizedImageUpload(
   request: Request,
   env: Env,
   actor: string,
-  mime: "image/png" | "image/jpeg" | "image/webp",
+  mime: "image/png" | "image/jpeg" | "image/webp" | "image/gif",
   declaredLength: number,
   maxFileBytes: number,
   storageQuotaBytes: number
@@ -2632,18 +2688,8 @@ async function handleSanitizedImageUpload(
   if (!input) return apiError(400, "LENGTH_MISMATCH");
   if (sniffMediaMime(input.subarray(0, MEDIA_SNIFF_BYTES)) !== mime) return apiError(415, "MIME_REJECTED");
 
-  let sanitized: Uint8Array;
-  try {
-    const output = await env.IMAGES.input(imageInputStream(input)).output({ format: IMAGE_OUTPUT_FORMAT[mime]! });
-    const response = output.response();
-    if (!response.ok) return apiError(415, "IMAGE_PROCESSING_FAILED");
-    const reencoded = new Uint8Array(await response.arrayBuffer());
-    const withoutMetadata = stripImageMetadata(reencoded, mime);
-    if (!withoutMetadata) return apiError(415, "IMAGE_PROCESSING_FAILED");
-    sanitized = withoutMetadata;
-  } catch {
-    return apiError(415, "IMAGE_PROCESSING_FAILED");
-  }
+  const sanitized = stripImageMetadata(input, mime);
+  if (!sanitized) return apiError(415, "IMAGE_PROCESSING_FAILED");
 
   if (sanitized.byteLength === 0 || sniffMediaMime(sanitized.subarray(0, MEDIA_SNIFF_BYTES)) !== mime) {
     return apiError(415, "IMAGE_PROCESSING_FAILED");
@@ -2695,17 +2741,12 @@ async function handleMediaUpload(request: Request, env: Env): Promise<Response> 
     await request.body?.cancel().catch(() => {});
     return apiError(415, "MIME_REJECTED");
   }
-  if (mime.startsWith("image/") && !SANITIZED_IMAGE_MIME_WHITELIST.has(mime)) {
-    await request.body?.cancel().catch(() => {});
-    return apiError(415, "IMAGE_FORMAT_UNSUPPORTED");
-  }
-
   if (SANITIZED_IMAGE_MIME_WHITELIST.has(mime)) {
     return handleSanitizedImageUpload(
       request,
       env,
       actor,
-      mime as "image/png" | "image/jpeg" | "image/webp",
+      mime as "image/png" | "image/jpeg" | "image/webp" | "image/gif",
       declaredLength,
       config.max_file_bytes,
       config.user_storage_quota_bytes

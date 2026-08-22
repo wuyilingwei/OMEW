@@ -45,9 +45,6 @@
   "r2_buckets": [
     { "binding": "MEDIA", "bucket_name": "omew-media" }
   ],
-  "images": {
-    "binding": "IMAGES"
-  },
   "assets": {
     "directory": "../web/dist",
     "not_found_handling": "single-page-application",
