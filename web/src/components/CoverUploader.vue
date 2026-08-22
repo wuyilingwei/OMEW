@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { api, ApiRequestError } from '../api'
 import { useStorageUsage } from '../composables/useStorageUsage'
 import { fileUploadError } from '../utils/validate'
-import { WinButton } from '../vendor/winui'
+import { processImage, type ImageOutputMode } from '../utils/imageProcessing'
+import { WinButton, WinToggleSwitch } from '../vendor/winui'
 
 const props = defineProps<{ modelValue: string; token: string }>()
 const emit = defineEmits<{ 'update:modelValue': [string] }>()
@@ -20,6 +21,8 @@ const uploading = ref(false)
 const progress = ref(0)
 const error = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
+const mode = ref<ImageOutputMode>('webp')
+const keepOriginal = computed({ get: () => mode.value === 'original', set: (value: boolean) => { mode.value = value ? 'original' : 'webp' } })
 
 function pickFile() {
   fileInput.value?.click()
@@ -30,8 +33,15 @@ async function onFileChange(event: Event) {
   const file = input.files?.[0]
   if (!file) return
   error.value = ''
-  // pre-flight against the cached /api/me/storage usage before spending a request
-  const preflight = fileUploadError(file, usage.value)
+  let processed
+  try {
+    processed = await processImage(file, { mode: mode.value })
+  } catch {
+    error.value = '无法处理这张图片'
+    input.value = ''
+    return
+  }
+  const preflight = fileUploadError(processed.blob, usage.value)
   if (preflight) {
     error.value = preflight
     input.value = ''
@@ -40,11 +50,13 @@ async function onFileChange(event: Event) {
   uploading.value = true
   progress.value = 0
   try {
-    const result = await api.uploadMedia(props.token, file, (pct) => {
+    const result = await api.uploadMedia(props.token, processed.blob, (pct) => {
       progress.value = pct
     })
     noteUploaded(result.size)
     emit('update:modelValue', result.url)
+    if (processed.isGif) error.value = 'GIF 为保留动画不压缩，已按原图上传'
+    else if (processed.webpFallback) error.value = '此浏览器不能编码 WebP，已改用 PNG 上传'
   } catch (err) {
     error.value = err instanceof ApiRequestError ? (UPLOAD_ERROR_MESSAGES[err.code] ?? '上传失败，请稍后重试') : '上传失败，请稍后重试'
   } finally {
@@ -63,6 +75,7 @@ async function onFileChange(event: Event) {
         <WinButton Style="DefaultButtonStyle" :IsEnabled="!uploading" @click="pickFile">
           {{ uploading ? `上传中…${progress}%` : '上传文件' }}
         </WinButton>
+        <WinToggleSwitch v-model="keepOriginal" :IsEnabled="!uploading" OnContent="保留原图" OffContent="默认压缩为 WebP" />
       </div>
     </div>
     <p v-if="error" class="field__error">{{ error }}</p>
@@ -105,5 +118,6 @@ async function onFileChange(event: Event) {
   overflow: hidden;
   clip: rect(0 0 0 0);
 }
+
 
 </style>

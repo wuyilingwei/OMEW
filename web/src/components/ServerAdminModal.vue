@@ -18,7 +18,8 @@ import type {
 import { useAuth } from '../composables/useAuth'
 import { useStorageUsage } from '../composables/useStorageUsage'
 import { fileUploadError } from '../utils/validate'
-import { WinButton, WinInfoBar, WinSelectorBar } from '../vendor/winui'
+import { processImage, type ImageOutputMode } from '../utils/imageProcessing'
+import { WinButton, WinInfoBar, WinSelectorBar, WinToggleSwitch } from '../vendor/winui'
 import GroupEditorModal from './GroupEditorModal.vue'
 
 // Server-level administration only (m0-protocol §7.9/§7.10/§7.10a) - instance
@@ -292,6 +293,8 @@ const newPackName = ref('')
 const packBusy = ref(false)
 const newEmoteName = reactive<Record<string, string>>({})
 const emoteUploading = reactive<Record<string, boolean>>({})
+const emoteMode = ref<ImageOutputMode>('webp')
+const emoteKeepOriginal = computed({ get: () => emoteMode.value === 'original', set: (value: boolean) => { emoteMode.value = value ? 'original' : 'webp' } })
 const { usage: storage } = useStorageUsage()
 
 async function loadPacks() {
@@ -342,7 +345,14 @@ async function addEmote(pack: EmotePack, file: File) {
     packsError.value = '表情名称需为 1-32 字，且不能包含冒号'
     return
   }
-  const preflight = fileUploadError(file, storage.value)
+  let processed
+  try {
+    processed = await processImage(file, { mode: emoteMode.value })
+  } catch {
+    packsError.value = '无法处理这张图片'
+    return
+  }
+  const preflight = fileUploadError(processed.blob, storage.value)
   if (preflight) {
     packsError.value = preflight
     return
@@ -350,10 +360,12 @@ async function addEmote(pack: EmotePack, file: File) {
   packsError.value = ''
   emoteUploading[pack.id] = true
   try {
-    const uploaded = await api.uploadMedia(auth.token.value, file)
+    const uploaded = await api.uploadMedia(auth.token.value, processed.blob)
     await api.createEmote(auth.token.value, pack.id, name, uploaded.id)
     newEmoteName[pack.id] = ''
     await loadPacks()
+    if (processed.isGif) packsError.value = 'GIF 为保留动画不压缩，已按原图上传'
+    else if (processed.webpFallback) packsError.value = '此浏览器不能编码 WebP，已改用 PNG 上传'
   } catch {
     packsError.value = '添加失败，请稍后重试'
   } finally {
@@ -601,6 +613,7 @@ watch(
                   <p v-else class="field__hint">此包暂无表情</p>
                   <div class="admin-pack__add">
                     <input v-model="newEmoteName[pack.id]" type="text" maxlength="32" placeholder="新表情名称" />
+                    <WinToggleSwitch v-model="emoteKeepOriginal" OnContent="保留原图" OffContent="默认压缩为 WebP" />
                     <label class="admin-pack__upload-btn">
                       {{ emoteUploading[pack.id] ? '上传中…' : '选择图片并添加' }}
                       <input

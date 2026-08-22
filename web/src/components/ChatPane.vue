@@ -10,7 +10,7 @@ import { useItemPermissions } from '../composables/useItemPermissions'
 import { useStickyScroll } from '../composables/useStickyScroll'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
 import { actorLocalpart } from '../utils/actor'
-import { WinButton, WinInfoBar } from '../vendor/winui'
+import { WinButton, WinInfoBar, WinToggleSwitch } from '../vendor/winui'
 import EmotePicker from './EmotePicker.vue'
 import EmptyState from './EmptyState.vue'
 import AppIcon from './icons/AppIcon.vue'
@@ -292,6 +292,7 @@ watch(() => selectedChannel.value?.id, pin, { flush: 'post' })
         >
           <AppIcon name="image" :size="18" />
         </WinButton>
+        <WinToggleSwitch class="chat-pane__image-mode" :model-value="attachments.mode.value === 'original'" OnContent="原图" OffContent="WebP" @update:model-value="attachments.mode.value = $event ? 'original' : 'webp'" />
         <textarea
           v-model="draft"
           class="chat-pane__input"
@@ -414,6 +415,22 @@ watch(() => selectedChannel.value?.id, pin, { flush: 'post' })
   padding: 0 0.7rem;
   border-radius: var(--radius-md);
   font-size: 1.1rem;
+}
+
+.chat-pane__image-mode {
+  min-width: 0;
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+}
+
+.chat-pane__image-mode :deep(.win-switch-label) {
+  margin-left: 0.2rem;
+}
+
+@media (max-width: 375px) {
+  .chat-pane__image-mode :deep(.win-switch-label) {
+    display: none;
+  }
 }
 
 .chat-pane__image-input {

@@ -5,7 +5,7 @@ import { useImageAttachments } from '../composables/useImageAttachments'
 import { useSectionRoom } from '../composables/useSectionRoom'
 import { useTopics } from '../composables/useTopics'
 import { requiredError, requiredMaxLengthError } from '../utils/validate'
-import { WinButton, WinInfoBar } from '../vendor/winui'
+import { WinButton, WinInfoBar, WinToggleSwitch } from '../vendor/winui'
 import CoverUploader from './CoverUploader.vue'
 import AppIcon from './icons/AppIcon.vue'
 import TopicChips from './TopicChips.vue'
@@ -139,6 +139,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             <div class="field">
               <span class="field__label">配图（可选）</span>
               <input ref="imageInput" class="compose-modal__image-input" type="file" accept="image/*" multiple @change="onImageInputChange" />
+              <WinToggleSwitch :model-value="attachments.mode.value === 'original'" OnContent="保留原图" OffContent="默认压缩为 WebP" @update:model-value="attachments.mode.value = $event ? 'original' : 'webp'" />
               <div class="compose-modal__images">
                 <div v-for="item in attachments.items.value" :key="item.id" class="compose-modal__image">
                   <img :src="item.url" alt="" />
