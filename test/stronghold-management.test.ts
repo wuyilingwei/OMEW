@@ -43,6 +43,7 @@ describe("GET/PATCH /api/stronghold/:id/config", () => {
     expect(body).toMatchObject({
       id,
       visibility: "public",
+      avatar: null,
       allow_message_edit: true,
       allow_message_retract: true,
       edit_window_secs: 300,
@@ -78,13 +79,54 @@ describe("GET/PATCH /api/stronghold/:id/config", () => {
     const descRes = await apiRequest(`/api/stronghold/${id}/config`, {
       method: "PATCH",
       headers: { Authorization: `Bearer ${modToken}` },
-      body: JSON.stringify({ description: "mod wrote this", edit_window_secs: 60 }),
+      body: JSON.stringify({ description: "mod wrote this", avatar: "/media/cropped-avatar", edit_window_secs: 60 }),
     });
     expect(descRes.status).toBe(200);
     const body = (await descRes.json()) as Record<string, unknown>;
     expect(body.description).toBe("mod wrote this");
+    expect(body.avatar).toBe("/media/cropped-avatar");
     expect(body.edit_window_secs).toBe(60);
     expect(body.visibility).toBe("public"); // untouched
+  });
+
+  it("keeps legacy strongholds avatar-free until a manager sets one, then permits clearing it", async () => {
+    const owner = "@cfgowneravatar:local";
+    const id = await freshStronghold(owner);
+    const token = await sessionToken(owner);
+
+    const before = await apiRequest(`/api/stronghold/${id}/config`, { headers: { Authorization: `Bearer ${token}` } });
+    expect(before.status).toBe(200);
+    expect((await before.json() as Record<string, unknown>).avatar).toBeNull();
+
+    const set = await apiRequest(`/api/stronghold/${id}/config`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ avatar: "/media/cropped-avatar" }),
+    });
+    expect(set.status).toBe(200);
+    expect((await set.json() as Record<string, unknown>).avatar).toBe("/media/cropped-avatar");
+
+    const clear = await apiRequest(`/api/stronghold/${id}/config`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ avatar: null }),
+    });
+    expect(clear.status).toBe(200);
+    expect((await clear.json() as Record<string, unknown>).avatar).toBeNull();
+  });
+
+  it("rejects malformed avatar values without changing config", async () => {
+    const owner = "@cfgownerinvalidavatar:local";
+    const id = await freshStronghold(owner);
+    const token = await sessionToken(owner);
+    const res = await apiRequest(`/api/stronghold/${id}/config`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ avatar: 123 }),
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "CONFIG_INVALID" });
+    expect((await env.STRONGHOLD_DO.getByName(id).getConfig())?.avatar).toBeNull();
   });
 
   it("lets owner change visibility", async () => {

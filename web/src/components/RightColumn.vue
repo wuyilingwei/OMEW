@@ -22,6 +22,7 @@ const { openAuthModal } = useAuthModal()
 
 const strongholdName = computed(() => config.value?.name ?? currentNode.value?.name ?? '')
 const strongholdDescription = computed(() => config.value?.description ?? '')
+const strongholdAvatar = computed(() => config.value?.avatar ?? currentNode.value?.avatar ?? null)
 const strongholdCover = computed(() => config.value?.cover || currentNode.value?.cover || DEFAULT_NODE_PAGE_BG)
 
 const modeLabel: Record<string, string> = {
@@ -76,7 +77,10 @@ function onUserMenuSelect(item: { Value: string }) {
     <div class="right-column__stronghold">
       <img v-if="strongholdCover" class="right-column__cover" :src="strongholdCover" :alt="strongholdName" />
       <div class="right-column__stronghold-body">
-        <h2 class="right-column__stronghold-name">{{ strongholdName }}</h2>
+        <div class="right-column__stronghold-heading">
+          <img v-if="strongholdAvatar" class="right-column__avatar" :src="strongholdAvatar" alt="" />
+          <h2 class="right-column__stronghold-name">{{ strongholdName }}</h2>
+        </div>
         <p class="right-column__stronghold-description">{{ strongholdDescription }}</p>
       </div>
     </div>
@@ -177,6 +181,21 @@ function onUserMenuSelect(item: { Value: string }) {
   font-size: 0.98rem;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.right-column__stronghold-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.right-column__avatar {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--card-stroke);
 }
 
 .right-column__stronghold-description {

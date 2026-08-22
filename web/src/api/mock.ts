@@ -283,6 +283,7 @@ interface MockStrongholdState {
   name: string
   slug: string
   description: string
+  avatar: string
   cover: string
   visibility: StrongholdConfig['visibility']
   allow_message_edit: boolean
@@ -441,6 +442,7 @@ function seedDemoStronghold(): void {
     name: '主据点',
     slug: 'main',
     description: '综合讨论与公告的默认据点，日常消息大多汇聚在这里。',
+    avatar: '',
     cover: '',
     visibility: 'public',
     allow_message_edit: true,
@@ -515,6 +517,7 @@ function toStrongholdConfig(state: MockStrongholdState): StrongholdConfig {
     id: state.id,
     name: state.name,
     description: state.description,
+    avatar: state.avatar || null,
     cover: state.cover,
     visibility: state.visibility,
     allow_message_edit: state.allow_message_edit,
@@ -554,7 +557,7 @@ function toStrongholdSummary(state: MockStrongholdState): StrongholdSummary {
   const rooms: RoomSummary[] = [...state.rooms.values()]
     .sort((a, b) => a.position - b.position)
     .map(toRoomSummary)
-  return { id: state.id, name: state.name, cover: state.cover || null, slug: state.slug, rooms }
+  return { id: state.id, name: state.name, avatar: state.avatar || null, cover: state.cover || null, slug: state.slug, rooms }
 }
 
 function requireTopic(state: MockStrongholdState, topicId: string): Topic {
@@ -731,6 +734,7 @@ export const mockApi = {
           id: s.id,
           name: s.name,
           description: s.description || null,
+          avatar: s.avatar || null,
           cover: s.cover || null,
           slug: s.slug,
           member_count: strongholdMembers.get(s.id)?.length ?? 0,
@@ -1019,6 +1023,7 @@ export const mockApi = {
       name: payload.name,
       slug: uniqueSlug(payload.name),
       description: payload.description ?? '',
+      avatar: '',
       cover: '',
       visibility: payload.visibility ?? 'public',
       allow_message_edit: true,
@@ -1542,6 +1547,7 @@ export const mockApi = {
         name: application.name,
         slug: uniqueSlug(application.name),
         description: application.description ?? '',
+        avatar: '',
         cover: '',
         visibility: application.visibility,
         allow_message_edit: true,
