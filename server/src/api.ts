@@ -2405,6 +2405,14 @@ const MEDIA_MIME_WHITELIST = new Set([
   "audio/mpeg",
 ]);
 
+const SANITIZED_IMAGE_MIME_WHITELIST = new Set(["image/png", "image/jpeg", "image/webp"]);
+
+const IMAGE_OUTPUT_FORMAT: Record<string, "image/png" | "image/jpeg" | "image/webp"> = {
+  "image/png": "image/png",
+  "image/jpeg": "image/jpeg",
+  "image/webp": "image/webp",
+};
+
 const MEDIA_SNIFF_BYTES = 16;
 
 function sniffMediaMime(bytes: Uint8Array): string | null {
@@ -2462,6 +2470,205 @@ async function mediaUsage(env: Env, actor: string): Promise<number> {
   return row?.used ?? 0;
 }
 
+async function readDeclaredUploadBody(body: ReadableStream<Uint8Array>, declaredLength: number): Promise<Uint8Array | null> {
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > declaredLength) {
+        await reader.cancel().catch(() => {});
+        return null;
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return null;
+  } finally {
+    reader.releaseLock();
+  }
+  return totalBytes === declaredLength ? concatBytes(chunks) : null;
+}
+
+function imageInputStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+}
+
+function readU32BE(bytes: Uint8Array, offset: number): number {
+  return ((bytes[offset]! << 24) | (bytes[offset + 1]! << 16) | (bytes[offset + 2]! << 8) | bytes[offset + 3]!) >>> 0;
+}
+
+function writeU32LE(bytes: Uint8Array, offset: number, value: number): void {
+  bytes[offset] = value & 0xff;
+  bytes[offset + 1] = (value >>> 8) & 0xff;
+  bytes[offset + 2] = (value >>> 16) & 0xff;
+  bytes[offset + 3] = (value >>> 24) & 0xff;
+}
+
+function stripJpegMetadata(bytes: Uint8Array): Uint8Array | null {
+  if (bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+  const parts: Uint8Array[] = [bytes.subarray(0, 2)];
+  let offset = 2;
+  while (offset < bytes.length) {
+    if (bytes[offset++] !== 0xff) return null;
+    while (bytes[offset] === 0xff) offset++;
+    const marker = bytes[offset++];
+    if (marker === undefined) return null;
+    if (marker === 0xda) {
+      if (offset + 2 > bytes.length) return null;
+      const length = (bytes[offset]! << 8) | bytes[offset + 1]!;
+      if (length < 2 || offset + length > bytes.length) return null;
+      parts.push(bytes.subarray(offset - 2));
+      return concatBytes(parts);
+    }
+    if (marker === 0xd9 || (marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) {
+      parts.push(bytes.subarray(offset - 2, offset));
+      continue;
+    }
+    if (offset + 2 > bytes.length) return null;
+    const length = (bytes[offset]! << 8) | bytes[offset + 1]!;
+    const end = offset + length;
+    if (length < 2 || end > bytes.length) return null;
+    if (!((marker >= 0xe0 && marker <= 0xef) || marker === 0xfe)) parts.push(bytes.subarray(offset - 2, end));
+    offset = end;
+  }
+  return null;
+}
+
+function stripPngMetadata(bytes: Uint8Array): Uint8Array | null {
+  if (sniffMediaMime(bytes) !== "image/png") return null;
+  const parts: Uint8Array[] = [bytes.subarray(0, 8)];
+  let offset = 8;
+  while (offset < bytes.length) {
+    if (offset + 12 > bytes.length) return null;
+    const length = readU32BE(bytes, offset);
+    const end = offset + 12 + length;
+    if (end > bytes.length) return null;
+    const type = String.fromCharCode(bytes[offset + 4]!, bytes[offset + 5]!, bytes[offset + 6]!, bytes[offset + 7]!);
+    // Keep rendering chunks such as tRNS and animation controls. These are not
+    // personal metadata and removing them changes the pixels users see.
+    if (!["eXIf", "iTXt", "tEXt", "zTXt", "tIME", "pHYs", "iCCP"].includes(type)) parts.push(bytes.subarray(offset, end));
+    if (bytes[offset + 4] === 0x49 && bytes[offset + 5] === 0x45 && bytes[offset + 6] === 0x4e && bytes[offset + 7] === 0x44) {
+      return end === bytes.length ? concatBytes(parts) : null;
+    }
+    offset = end;
+  }
+  return null;
+}
+
+function stripWebpMetadata(bytes: Uint8Array): Uint8Array | null {
+  if (sniffMediaMime(bytes) !== "image/webp" || bytes.length < 12) return null;
+  const parts: Uint8Array[] = [bytes.subarray(0, 12)];
+  let offset = 12;
+  let removedFeatures = 0;
+  while (offset < bytes.length) {
+    if (offset + 8 > bytes.length) return null;
+    const length = bytes[offset + 4]! | (bytes[offset + 5]! << 8) | (bytes[offset + 6]! << 16) | (bytes[offset + 7]! << 24);
+    const end = offset + 8 + length + (length & 1);
+    if (length < 0 || end > bytes.length) return null;
+    const type = String.fromCharCode(bytes[offset]!, bytes[offset + 1]!, bytes[offset + 2]!, bytes[offset + 3]!);
+    if (type === "EXIF") {
+      removedFeatures |= 0x08;
+    } else if (type === "XMP ") {
+      removedFeatures |= 0x04;
+    } else if (type === "ICCP") {
+      removedFeatures |= 0x20;
+    } else if (type === "VP8X" && length >= 1) {
+      const vp8x = bytes.slice(offset, end);
+      vp8x[8] = vp8x[8]! & ~removedFeatures;
+      parts.push(vp8x);
+    } else {
+      parts.push(bytes.subarray(offset, end));
+    }
+    offset = end;
+  }
+  const stripped = concatBytes(parts);
+  // VP8X comes before optional chunks, so clear feature bits after all removals.
+  if (removedFeatures !== 0) {
+    for (let index = 12; index + 8 <= stripped.byteLength; ) {
+      const length = stripped[index + 4]! | (stripped[index + 5]! << 8) | (stripped[index + 6]! << 16) | (stripped[index + 7]! << 24);
+      if (String.fromCharCode(stripped[index]!, stripped[index + 1]!, stripped[index + 2]!, stripped[index + 3]!) === "VP8X" && length >= 1) {
+        stripped[index + 8] = stripped[index + 8]! & ~removedFeatures;
+        break;
+      }
+      index += 8 + length + (length & 1);
+    }
+  }
+  writeU32LE(stripped, 4, stripped.byteLength - 8);
+  return stripped;
+}
+
+export function stripImageMetadata(bytes: Uint8Array, mime: "image/png" | "image/jpeg" | "image/webp"): Uint8Array | null {
+  if (mime === "image/jpeg") return stripJpegMetadata(bytes);
+  if (mime === "image/png") return stripPngMetadata(bytes);
+  return stripWebpMetadata(bytes);
+}
+
+async function handleSanitizedImageUpload(
+  request: Request,
+  env: Env,
+  actor: string,
+  mime: "image/png" | "image/jpeg" | "image/webp",
+  declaredLength: number,
+  maxFileBytes: number,
+  storageQuotaBytes: number
+): Promise<Response> {
+  if (!request.body) return apiError(400, "PAYLOAD_INVALID");
+  const input = await readDeclaredUploadBody(request.body, declaredLength);
+  if (!input) return apiError(400, "LENGTH_MISMATCH");
+  if (sniffMediaMime(input.subarray(0, MEDIA_SNIFF_BYTES)) !== mime) return apiError(415, "MIME_REJECTED");
+
+  let sanitized: Uint8Array;
+  try {
+    const output = await env.IMAGES.input(imageInputStream(input)).output({ format: IMAGE_OUTPUT_FORMAT[mime]! });
+    const response = output.response();
+    if (!response.ok) return apiError(415, "IMAGE_PROCESSING_FAILED");
+    const reencoded = new Uint8Array(await response.arrayBuffer());
+    const withoutMetadata = stripImageMetadata(reencoded, mime);
+    if (!withoutMetadata) return apiError(415, "IMAGE_PROCESSING_FAILED");
+    sanitized = withoutMetadata;
+  } catch {
+    return apiError(415, "IMAGE_PROCESSING_FAILED");
+  }
+
+  if (sanitized.byteLength === 0 || sniffMediaMime(sanitized.subarray(0, MEDIA_SNIFF_BYTES)) !== mime) {
+    return apiError(415, "IMAGE_PROCESSING_FAILED");
+  }
+  if (sanitized.byteLength > maxFileBytes) return apiError(413, "FILE_TOO_LARGE");
+  const used = await mediaUsage(env, actor);
+  if (used + sanitized.byteLength > storageQuotaBytes) return apiError(413, "QUOTA_EXCEEDED");
+
+  const id = crypto.randomUUID();
+  const r2Key = `media/${id}`;
+  const hash = createHash("sha256").update(sanitized).digest("hex");
+  try {
+    await env.MEDIA.put(r2Key, sanitized, { httpMetadata: { contentType: mime } });
+  } catch {
+    await env.MEDIA.delete(r2Key).catch(() => {});
+    return apiError(400, "UPLOAD_FAILED");
+  }
+
+  try {
+    await env.DB.prepare(
+      "INSERT INTO media (id, hash, owner_actor, size, mime, r2_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    )
+      .bind(id, hash, actor, sanitized.byteLength, mime, r2Key, Date.now())
+      .run();
+  } catch {
+    await env.MEDIA.delete(r2Key).catch(() => {});
+    return apiError(400, "UPLOAD_FAILED");
+  }
+  return json({ id, url: `/media/${id}`, size: sanitized.byteLength, mime }, 201);
+}
+
 async function handleMediaUpload(request: Request, env: Env): Promise<Response> {
   const actor = await requireActor(request, env);
   if (!actor) return apiError(401, "AUTH_REQUIRED");
@@ -2481,6 +2688,22 @@ async function handleMediaUpload(request: Request, env: Env): Promise<Response> 
   if (!MEDIA_MIME_WHITELIST.has(mime)) {
     await request.body?.cancel().catch(() => {});
     return apiError(415, "MIME_REJECTED");
+  }
+  if (mime.startsWith("image/") && !SANITIZED_IMAGE_MIME_WHITELIST.has(mime)) {
+    await request.body?.cancel().catch(() => {});
+    return apiError(415, "IMAGE_FORMAT_UNSUPPORTED");
+  }
+
+  if (SANITIZED_IMAGE_MIME_WHITELIST.has(mime)) {
+    return handleSanitizedImageUpload(
+      request,
+      env,
+      actor,
+      mime as "image/png" | "image/jpeg" | "image/webp",
+      declaredLength,
+      config.max_file_bytes,
+      config.user_storage_quota_bytes
+    );
   }
 
   const used = await mediaUsage(env, actor);

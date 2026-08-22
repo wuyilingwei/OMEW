@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { apiRequest, ensureMigrated, loginAs, mediaUploadRequest, registerUser } from "./helpers";
+import pngFixture from "./fixtures/tiny.png.base64?raw";
 
 // Emote packs/emotes: v1 is instance-level and admin-managed (see agents/018 task
 // notes). Reads (GET /api/emotes) only require login; every write and the export/
@@ -29,15 +30,12 @@ async function makeAdminToken(): Promise<string> {
   return loginAs(username);
 }
 
-function pngBytes(totalLen: number): Uint8Array {
-  const bytes = new Uint8Array(totalLen);
-  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
-  for (let i = 8; i < totalLen; i++) bytes[i] = i % 256;
-  return bytes;
+function pngBytes(): Uint8Array {
+  return Uint8Array.from(atob(pngFixture.trim()), (char) => char.charCodeAt(0));
 }
 
 async function uploadMedia(token: string): Promise<string> {
-  const body = pngBytes(32);
+  const body = pngBytes();
   const res = await mediaUploadRequest({ token, contentType: "image/png", declaredLength: body.byteLength, body });
   expect(res.status).toBe(201);
   const created = (await res.json()) as { id: string };
