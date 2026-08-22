@@ -44,6 +44,14 @@ const { packs } = useEmotes()
 const emoteLookup = computed(() => buildEmoteLookup(packs.value))
 const segments = computed(() => parseMessageText(props.message.content.trim(), emoteLookup.value))
 const pureEmote = computed(() => pureEmoteToken(segments.value))
+const isSingleMediaMessage = computed(
+  () =>
+    !props.editing &&
+    !props.message.pending &&
+    !props.message.failed &&
+    !props.message.content.trim() &&
+    props.message.media?.length === 1,
+)
 
 // the shared context menu lives once in ChatPane (see useContextMenuGesture's
 // canOpen note - one instance per message would mean one set of global
@@ -73,6 +81,7 @@ function onTouchStart(event: TouchEvent) {
         'message-bubble--mine': message.mine,
         'message-bubble--failed': message.failed,
         'message-bubble--emote-only': !editing && pureEmote,
+        'message-bubble--single-media': isSingleMediaMessage,
       }"
       @contextmenu="onContextMenu"
       @touchstart.passive="onTouchStart"
@@ -90,35 +99,39 @@ function onTouchStart(event: TouchEvent) {
         </div>
       </template>
       <template v-else>
-        <img v-if="pureEmote" class="message-bubble__big-emote" :src="pureEmote.url" :alt="message.content" />
-        <div v-else-if="message.content" class="message-bubble__content">
-          <template v-for="(segment, index) in segments" :key="index">
-            <img
-              v-if="segment.type === 'emote'"
-              class="message-bubble__inline-emote"
-              :src="segment.token.url"
-              :alt="`:${segment.token.pack}:${segment.token.name}:`"
-            />
-            <template v-else>{{ segment.value }}</template>
-          </template>
+        <div class="message-bubble__main">
+          <div class="message-bubble__payload">
+            <img v-if="pureEmote" class="message-bubble__big-emote" :src="pureEmote.url" :alt="message.content" />
+            <div v-else-if="message.content" class="message-bubble__content">
+              <template v-for="(segment, index) in segments" :key="index">
+                <img
+                  v-if="segment.type === 'emote'"
+                  class="message-bubble__inline-emote"
+                  :src="segment.token.url"
+                  :alt="`:${segment.token.pack}:${segment.token.name}:`"
+                />
+                <template v-else>{{ segment.value }}</template>
+              </template>
+            </div>
+            <MediaGrid v-if="message.media?.length" class="message-bubble__media" :media="message.media" />
+          </div>
+          <div v-if="!message.pending && !message.failed" class="message-bubble__meta message-bubble__meta--timestamp">
+            <span>{{ message.timestamp }}</span>
+            <span v-if="message.editedAt">（已编辑）</span>
+          </div>
         </div>
-        <MediaGrid v-if="message.media?.length" :media="message.media" />
         <ReactionChips
           :reactions="message.reactions"
           :can-toggle="message.canReact"
           @toggle="emit('toggle-reaction', $event)"
         />
-        <div class="message-bubble__meta">
+        <div v-if="message.pending || message.failed" class="message-bubble__meta message-bubble__meta--status">
           <span v-if="message.pending">发送中…</span>
           <span v-else-if="message.failed && message.failReason === 'denied'">发送失败：你没有发言权限</span>
           <span v-else-if="message.failed">
             发送失败
             <button type="button" class="message-bubble__link" @click="$emit('resend')">重试</button>
           </span>
-          <template v-else>
-            <span>{{ message.timestamp }}</span>
-            <span v-if="message.editedAt">（已编辑）</span>
-          </template>
         </div>
       </template>
     </div>
@@ -186,6 +199,27 @@ function onTouchStart(event: TouchEvent) {
   padding: 0;
 }
 
+.message-bubble--single-media {
+  background: transparent;
+  border-color: transparent;
+  padding: 0;
+}
+
+.message-bubble__main {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.message-bubble__payload {
+  min-width: 0;
+}
+
+.message-bubble--single-media .message-bubble__media {
+  margin-top: 0;
+}
+
 .message-bubble__big-emote {
   display: block;
   max-width: 128px;
@@ -224,6 +258,14 @@ function onTouchStart(event: TouchEvent) {
   color: var(--text-tertiary);
   margin-top: 0.2rem;
   justify-content: flex-end;
+}
+
+.message-bubble__meta--timestamp {
+  flex: 0 0 auto;
+  margin-top: 0;
+  padding-bottom: 0.05rem;
+  white-space: nowrap;
+  opacity: 0.72;
 }
 
 .message-bubble--mine .message-bubble__meta {
@@ -268,6 +310,10 @@ function onTouchStart(event: TouchEvent) {
 @media (max-width: 768px) {
   .message-bubble {
     max-width: 80%;
+  }
+
+  .message-bubble__main {
+    gap: 0.3rem;
   }
 }
 </style>
