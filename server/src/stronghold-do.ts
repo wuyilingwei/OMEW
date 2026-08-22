@@ -22,6 +22,7 @@ export type ConfigRow = {
   description: string | null;
   visibility: "public" | "private";
   icon: string | null;
+  avatar: string | null;
   cover: string | null;
   allow_message_edit: number;
   allow_message_retract: number;
@@ -188,6 +189,7 @@ export class StrongholdDO extends DurableObject<Env> {
     // deployed strongholds - additive ALTER, guarded so it's a no-op once a DO
     // has already picked the columns up.
     this.addColumnIfMissing("config", "cover", "TEXT");
+    this.addColumnIfMissing("config", "avatar", "TEXT");
     this.addColumnIfMissing("config", "allow_message_edit", "INTEGER NOT NULL DEFAULT 1");
     this.addColumnIfMissing("config", "allow_message_retract", "INTEGER NOT NULL DEFAULT 1");
     this.addColumnIfMissing("config", "edit_window_secs", "INTEGER NOT NULL DEFAULT 300");
@@ -235,8 +237,8 @@ export class StrongholdDO extends DurableObject<Env> {
     const createdAt = Date.now();
     const resolvedSlug = slug ?? id;
     this.ctx.storage.sql.exec(
-      "INSERT INTO config (id, name, description, visibility, icon, cover, allow_message_edit, allow_message_retract, edit_window_secs, owner_actor, created_at, slug) " +
-        "VALUES (?, ?, ?, ?, ?, NULL, 1, 1, 300, ?, ?, ?)",
+      "INSERT INTO config (id, name, description, visibility, icon, avatar, cover, allow_message_edit, allow_message_retract, edit_window_secs, owner_actor, created_at, slug) " +
+        "VALUES (?, ?, ?, ?, ?, NULL, NULL, 1, 1, 300, ?, ?, ?)",
       id, name, description ?? null, visibility, icon ?? null, ownerActor, createdAt, resolvedSlug
     );
     this.ctx.storage.sql.exec(
@@ -245,7 +247,7 @@ export class StrongholdDO extends DurableObject<Env> {
     );
     await this.indexMember(ownerActor);
     return {
-      id, name, description: description ?? null, visibility, icon: icon ?? null, cover: null,
+      id, name, description: description ?? null, visibility, icon: icon ?? null, avatar: null, cover: null,
       allow_message_edit: 1, allow_message_retract: 1, edit_window_secs: 300,
       owner_actor: ownerActor, created_at: createdAt, slug: resolvedSlug,
     };
@@ -269,7 +271,7 @@ export class StrongholdDO extends DurableObject<Env> {
     patch: Partial<
       Pick<
         ConfigRow,
-        "name" | "description" | "visibility" | "icon" | "cover" | "allow_message_edit" | "allow_message_retract" | "edit_window_secs"
+        "name" | "description" | "visibility" | "icon" | "avatar" | "cover" | "allow_message_edit" | "allow_message_retract" | "edit_window_secs"
       >
     >
   ): Promise<ConfigRow | null> {
@@ -277,9 +279,9 @@ export class StrongholdDO extends DurableObject<Env> {
     if (!current) return null;
     const next = { ...current, ...patch };
     this.ctx.storage.sql.exec(
-      "UPDATE config SET name = ?, description = ?, visibility = ?, icon = ?, cover = ?, " +
+      "UPDATE config SET name = ?, description = ?, visibility = ?, icon = ?, avatar = ?, cover = ?, " +
         "allow_message_edit = ?, allow_message_retract = ?, edit_window_secs = ? WHERE id = ?",
-      next.name, next.description, next.visibility, next.icon, next.cover,
+      next.name, next.description, next.visibility, next.icon, next.avatar, next.cover,
       next.allow_message_edit, next.allow_message_retract, next.edit_window_secs, next.id
     );
     // Push the edit-policy slice to every room DO this stronghold owns (DO-to-DO,

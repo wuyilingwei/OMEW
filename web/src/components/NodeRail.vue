@@ -28,7 +28,8 @@ function onCreated() {
           :aria-current="node.id === selectedNodeId ? 'page' : undefined"
           @click="selectNode(node.id)"
         >
-          {{ node.name.slice(0, 1) }}
+          <img v-if="node.avatar" class="node-rail__avatar" :src="node.avatar" alt="" />
+          <span v-else>{{ node.name.slice(0, 1) }}</span>
         </button>
       </li>
       <li v-if="!isGuestMode">
@@ -118,6 +119,13 @@ function onCreated() {
 .node-rail__item--active {
   border-color: rgb(var(--colors-primary));
   color: var(--text-primary);
+}
+
+.node-rail__avatar {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
 }
 
 .node-rail__item--add {

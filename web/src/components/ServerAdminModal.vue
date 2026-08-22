@@ -533,6 +533,7 @@ watch(
                 <p v-if="!strongholds.length && !strongholdsError" class="field__hint">暂无据点</p>
                 <ul v-else class="admin-slug__list">
                   <li v-for="s in strongholds" :key="s.id" class="admin-slug__item">
+                    <img v-if="s.avatar" class="admin-slug__avatar" :src="s.avatar" alt="" />
                     <span class="admin-slug__name">{{ s.name }}</span>
                     <template v-if="editingSlugId === s.id">
                       <div class="field admin-slug__edit">
@@ -1077,6 +1078,15 @@ watch(
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.admin-slug__avatar {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--card-stroke);
 }
 
 .admin-slug__value {

@@ -96,6 +96,7 @@ export interface StrongholdConfig {
   id: string
   name: string
   description: string
+  avatar: string | null
   cover: string
   visibility: StrongholdVisibility
   allow_message_edit: boolean
@@ -106,6 +107,7 @@ export interface StrongholdConfig {
 export interface StrongholdConfigPatch {
   name?: string
   description?: string
+  avatar?: string | null
   cover?: string
   visibility?: StrongholdVisibility
   allow_message_edit?: boolean
@@ -249,6 +251,7 @@ export interface TopicPayload {
 export interface StrongholdSummary {
   id: string
   name: string
+  avatar: string | null
   cover: string | null
   slug: string
   rooms: RoomSummary[]
@@ -261,6 +264,7 @@ export interface DirectoryEntry {
   id: string
   name: string
   description: string | null
+  avatar: string | null
   cover: string | null
   slug: string
   member_count: number

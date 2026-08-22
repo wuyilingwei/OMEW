@@ -12,6 +12,7 @@ import { formatBytes, nonNegativeIntError, requiredMaxLengthError } from '../uti
 import { WinButton, WinComboBox, WinInfoBar, WinSelectorBar, WinToggleSwitch } from '../vendor/winui'
 import AvatarBadge from './AvatarBadge.vue'
 import CoverUploader from './CoverUploader.vue'
+import StrongholdAvatarUploader from './StrongholdAvatarUploader.vue'
 import EmptyState from './EmptyState.vue'
 import MemberInfoCard from './MemberInfoCard.vue'
 import SectionManager from './SectionManager.vue'
@@ -159,6 +160,7 @@ const settingsSaveOk = ref(false)
 const form = reactive({
   name: '',
   description: '',
+  avatar: '',
   cover: '',
   visibility: 'public' as 'public' | 'private',
   allow_message_edit: true,
@@ -174,6 +176,7 @@ async function loadSettings() {
     const config = await api.getStrongholdConfig(auth.token.value, selectedNodeId.value)
     form.name = config.name
     form.description = config.description
+    form.avatar = config.avatar ?? ''
     form.cover = config.cover
     form.visibility = config.visibility
     form.allow_message_edit = config.allow_message_edit
@@ -201,6 +204,7 @@ async function saveSettings() {
   const patch: StrongholdConfigPatch = {
     name: form.name,
     description: form.description,
+    avatar: form.avatar || null,
     cover: form.cover,
     allow_message_edit: form.allow_message_edit,
     allow_message_retract: form.allow_message_retract,
@@ -365,6 +369,10 @@ watch(
                 <div class="field">
                   <label class="field__label" for="sh-desc">描述</label>
                   <textarea id="sh-desc" v-model="form.description" rows="3"></textarea>
+                </div>
+                <div class="field">
+                  <span class="field__label">据点头像</span>
+                  <StrongholdAvatarUploader v-if="auth.token.value" v-model="form.avatar" :token="auth.token.value" />
                 </div>
                 <div class="field">
                   <span class="field__label">封面</span>

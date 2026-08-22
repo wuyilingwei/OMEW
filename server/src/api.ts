@@ -1484,6 +1484,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
       description: asOptionalString(body.description),
       visibility: body.visibility === "private" || body.visibility === "public" ? body.visibility : undefined,
       icon: asOptionalString(body.icon),
+      avatar: asOptionalString(body.avatar),
     });
     if (!updated) return errorResponse(404, "OMEW_NOT_FOUND", "stronghold not found");
     return json(updated);
@@ -1939,6 +1940,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
         return {
           id: config.id,
           name: config.name,
+          avatar: config.avatar,
           cover: config.cover,
           slug: config.slug,
           // post_count is deliberately absent here: it costs one DO call per
@@ -1974,7 +1976,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if ("visibility" in body && eff.role !== "owner") return apiError(403, "FORBIDDEN");
 
     const patch: Partial<
-      Pick<ConfigRow, "name" | "description" | "visibility" | "cover" | "allow_message_edit" | "allow_message_retract" | "edit_window_secs">
+      Pick<ConfigRow, "name" | "description" | "visibility" | "avatar" | "cover" | "allow_message_edit" | "allow_message_retract" | "edit_window_secs">
     > = {};
     if ("name" in body) {
       const name = typeof body.name === "string" ? body.name.trim() : "";
@@ -1988,6 +1990,10 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if ("cover" in body) {
       if (body.cover !== null && typeof body.cover !== "string") return apiError(400, "CONFIG_INVALID");
       patch.cover = body.cover as string | null;
+    }
+    if ("avatar" in body) {
+      if (body.avatar !== null && typeof body.avatar !== "string") return apiError(400, "CONFIG_INVALID");
+      patch.avatar = body.avatar as string | null;
     }
     if ("visibility" in body) {
       if (body.visibility !== "public" && body.visibility !== "private") return apiError(400, "CONFIG_INVALID");
@@ -2669,6 +2675,7 @@ function toApiConfig(row: ConfigRow) {
     name: row.name,
     description: row.description,
     cover: row.cover,
+    avatar: row.avatar,
     visibility: row.visibility,
     icon: row.icon,
     allow_message_edit: Boolean(row.allow_message_edit),
@@ -2959,7 +2966,7 @@ function roomBlockedForGate(
 // listMembers() per entry is fine, no cache column needed yet.
 async function listPublicDirectory(
   env: Env
-): Promise<Array<{ id: string; name: string; description: string | null; cover: string | null; member_count: number; slug: string }>> {
+): Promise<Array<{ id: string; name: string; description: string | null; avatar: string | null; cover: string | null; member_count: number; slug: string }>> {
   const { results } = await env.DB.prepare("SELECT DISTINCT stronghold_id FROM stronghold_member_index").all<{
     stronghold_id: string;
   }>();
@@ -2973,6 +2980,7 @@ async function listPublicDirectory(
         id: config.id,
         name: config.name,
         description: config.description,
+        avatar: config.avatar,
         cover: config.cover,
         member_count: members.length,
         slug: config.slug,
