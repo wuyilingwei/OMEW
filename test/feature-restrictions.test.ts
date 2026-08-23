@@ -125,14 +125,14 @@ describe("stronghold feature restrictions", () => {
     room.ws.send(itemCreateFrame("allowed", "allowed"));
     expect(await nextMessage(room.ws)).toMatchObject({ type: "ack", status: "ok" });
 
-    const expiry = Date.now() + 20;
+    const expiry = Date.now() + 500;
     const pause = await apiRequest(`/api/stronghold/${created.id}/feature-restrictions/server`, {
       method: "PATCH", headers: { Authorization: `Bearer ${adminToken}` }, body: JSON.stringify({ feature: "chat", mode: "force_pause", expires_at: expiry }),
     });
     expect(pause.status).toBe(200);
     room.ws.send(itemCreateFrame("forced", "no"));
     expect(await nextMessage(room.ws)).toMatchObject({ type: "error", code: "OMEW_FEATURE_RESTRICTED", message: "chat is temporarily paused" });
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await new Promise((resolve) => setTimeout(resolve, 550));
     room.ws.send(itemCreateFrame("fallback", "still owner paused"));
     expect(await nextMessage(room.ws)).toMatchObject({ type: "error", code: "OMEW_FEATURE_RESTRICTED", message: "chat is temporarily paused" });
     room.ws.close();
@@ -143,10 +143,10 @@ describe("stronghold feature restrictions", () => {
     const created = await stronghold(owner);
     const token = await sessionToken(owner);
     const set = await apiRequest(`/api/stronghold/${created.id}/feature-restrictions/owner`, {
-      method: "PATCH", headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify({ feature: "posts", paused: true, expires_at: Date.now() + 20 }),
+      method: "PATCH", headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify({ feature: "posts", paused: true, expires_at: Date.now() + 500 }),
     });
     expect(set.status).toBe(200);
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await new Promise((resolve) => setTimeout(resolve, 550));
     const read = await apiRequest(`/api/stronghold/${created.id}/feature-restrictions`, { headers: { Authorization: `Bearer ${token}` } });
     expect(await read.json()).toMatchObject({ posts: { owner: { paused: true }, effective: { paused: false } } });
   });
