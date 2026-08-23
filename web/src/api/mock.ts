@@ -546,6 +546,25 @@ function findMember(nodeId: string, actor: string): StrongholdMember | undefined
 function requireManager(token: string, nodeId: string): { user: MockUser; member: StrongholdMember } {
   const user = requireUser(token)
   const member = strongholdMembers.get(nodeId)?.find((candidate) => candidate.actor === user.actor)
+  // Keep the mock aligned with the real API's server-role overlay: a server
+  // owner/admin is owner-equivalent in every stronghold without joining it.
+  if (user.is_admin) {
+    return {
+      user,
+      member: member ?? {
+        actor: user.actor,
+        username: user.username,
+        display_name: user.display_name,
+        role: 'owner',
+        deny_discussion: false,
+        deny_idea: false,
+        deny_comment: false,
+        joined_at: '',
+        is_guest: false,
+        groups: [],
+      },
+    }
+  }
   if (!member || (member.role !== 'owner' && member.role !== 'mod')) throw new ApiRequestError('FORBIDDEN', 403)
   return { user, member }
 }
@@ -1225,7 +1244,10 @@ export const mockApi = {
   },
 
   async getStrongholdMembers(token: string, nodeId: string, tab: MemberTab): Promise<MemberPage> {
-    requireUser(token)
+    const user = requireUser(token)
+    // The real endpoint permits a member at any local role or the server-role
+    // owner/admin overlay, but not an unrelated authenticated account.
+    if (!user.is_admin && !findMember(nodeId, user.actor)) throw new ApiRequestError('FORBIDDEN', 403)
     if (tab === 'banned') {
       const banned = strongholdBans.get(nodeId) ?? []
       return delay({
@@ -1315,10 +1337,14 @@ export const mockApi = {
   },
 
   async transferOwnership(token: string, nodeId: string, toActor: string): Promise<void> {
-    const { user } = requireManager(token, nodeId)
+    const user = requireUser(token)
     const members = strongholdMembers.get(nodeId) ?? []
-    const currentOwner = members.find((m) => m.actor === user.actor && m.role === 'owner')
-    if (!currentOwner) throw new ApiRequestError('FORBIDDEN', 403)
+    const currentOwner = members.find((m) => m.role === 'owner')
+    const isRealOwner = currentOwner?.actor === user.actor
+    // The real server permits the unique server owner (but never a server
+    // admin) to make this transfer without being a stronghold member.
+    if (!isRealOwner && user.server_role !== 'owner') throw new ApiRequestError('FORBIDDEN', 403)
+    if (!currentOwner) throw new ApiRequestError('NOT_FOUND', 404)
     const target = members.find((m) => m.actor === toActor)
     if (!target) throw new ApiRequestError('NOT_FOUND', 404)
     currentOwner.role = 'member'
