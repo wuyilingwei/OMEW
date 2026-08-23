@@ -122,6 +122,43 @@ describe('OMEW landing page contract', () => {
     expect(near).toMatch(/depthX|depthY|scale|idleFromX|idleFromY|idleToX|idleToY/)
   })
 
+  it('keeps both halo centers aligned across desktop and mobile while separating their radii', () => {
+    const desktop = landingWorld.slice(landingWorld.indexOf('.landing-world__layer--glow-far'))
+    expect(desktop).toMatch(/\.landing-world__layer--glow-far[^}]*\binset:\s*0/)
+    expect(desktop).toMatch(/\.landing-world__layer--glow-near[^}]*\binset:\s*0/)
+    const farSize = desktop.match(/glow-far \.landing-world__art\s*\{[^}]*width:\s*([^;]+)/)?.[1]
+    const nearSize = desktop.match(/glow-near \.landing-world__art\s*\{[^}]*width:\s*([^;]+)/)?.[1]
+    expect(farSize).toBeTruthy()
+    expect(nearSize).toBeTruthy()
+    expect(farSize).not.toBe(nearSize)
+    const mobile = desktop.slice(desktop.indexOf('@media (max-width: 700px)'))
+    expect(mobile).toMatch(/glow-far[^}]*translate:\s*[^;]+/)
+    expect(mobile).toMatch(/glow-near[^}]*translate:\s*[^;]+/)
+  })
+
+  it('shows the landing page only at the root while retaining the application shell for deep links', () => {
+    expect(app).toMatch(/showLanding[\s\S]{0,300}location\.pathname\s*===\s*['"]\//)
+    expect(app).toMatch(/routeInstalled[\s\S]{0,250}location\.pathname\s*!==\s*['"]\//)
+    expect(app).toMatch(/(?:AuthGate|shell__body|StrongholdOnboarding)/)
+  })
+
+  it('provides a discoverable home entry from the authenticated shell', () => {
+    expect(app).toMatch(/(?:href|to|click|Click)[^\n]*(?:\/|首页|home)/i)
+    expect(app).toMatch(/(?:返回首页|首页|home)/i)
+  })
+
+  it('keeps the directory below the first screen and gives each card an exact browse target', () => {
+    expect(landing.indexOf('landing-page__directory')).toBeGreaterThan(landing.indexOf('landing-page__hero-screen'))
+    expect(landing).toMatch(/\.landing-page\s*\{[\s\S]*overflow-y:\s*auto/)
+    expect(landing).toMatch(/@click="emit\(['"]browse['"],\s*entry\.id\)/)
+  })
+
+  it('uses continuation actions instead of login copy for authenticated visitors', () => {
+    expect(landing).toMatch(/defineProps<\{[^}]*authenticated[^}]*\}>/)
+    expect(landing).toMatch(/authenticated[\s\S]{0,700}(?:进入据点|继续浏览|公开据点)/)
+    expect(landing).toMatch(/authenticated[\s\S]{0,700}登录或注册/)
+  })
+
   it('keeps the hero copy explicit about OMEW identity and architecture', () => {
     const hero = landing.slice(0, landing.indexOf('<section class="landing-page__features"'))
     expect(hero).toContain('OMEW')
