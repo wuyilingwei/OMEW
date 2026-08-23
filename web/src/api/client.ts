@@ -249,7 +249,9 @@ export const realApi = {
       body: JSON.stringify(patch),
     }),
 
-  // ---- server-level role appointment (task 035/039, server_owner only) --------
+  // ---- server-level role appointment -------------------------------------------
+  // Account listing supports server-group assignment for owners/admins; role
+  // appointment itself remains server-owner-only.
 
   getAdminUsers: (token: string, after?: string) =>
     request<AdminUsersPage>(`/api/admin/users${after ? `?after=${encodeURIComponent(after)}` : ''}`, {
