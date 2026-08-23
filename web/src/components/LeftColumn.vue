@@ -49,6 +49,21 @@ function closeCompose() {
 <template>
   <aside class="left-column">
     <div class="left-column__header">
+      <div class="left-column__header-row">
+        <span class="left-column__section-title">话题组</span>
+        <WinButton
+          v-if="postRoom && canParticipate"
+          Style="AccentButtonStyle"
+          class="left-column__compose-btn"
+          @click="openCompose"
+        >
+          发帖
+        </WinButton>
+        <WinButton v-else-if="postRoom && !auth.isAuthenticated.value" Style="DefaultButtonStyle" class="left-column__compose-btn" @click="openAuthModal">
+          登录后发帖
+        </WinButton>
+        <span v-else-if="postRoom" class="left-column__preview-hint">加入后发帖</span>
+      </div>
       <div class="left-column__section-nav" role="tablist" aria-label="帖子话题组">
         <WinButton
           v-for="(room, index) in sectionRooms"
@@ -59,9 +74,11 @@ function closeCompose() {
           :aria-selected="selectedSection?.id === room.id"
           :tabindex="selectedSection?.id === room.id ? 0 : -1"
           :aria-label="`切换到话题组 ${room.name}`"
+          :title="room.name"
           @click="selectSection(room)"
           @keydown="onSectionKeydown($event, index)"
         >
+          <span class="left-column__section-hash" aria-hidden="true">#</span>
           <span class="left-column__section-label">{{ room.name }}</span>
         </WinButton>
         <WinButton
@@ -74,21 +91,10 @@ function closeCompose() {
           :IsEnabled="false"
           aria-label="暂无可用话题组"
         >
+          <span class="left-column__section-hash" aria-hidden="true">#</span>
           <span class="left-column__section-label">帖子</span>
         </WinButton>
       </div>
-      <WinButton
-        v-if="postRoom && canParticipate"
-        Style="AccentButtonStyle"
-        class="left-column__compose-btn"
-        @click="openCompose"
-      >
-        发帖
-      </WinButton>
-      <WinButton v-else-if="postRoom && !auth.isAuthenticated.value" Style="DefaultButtonStyle" class="left-column__compose-btn" @click="openAuthModal">
-        登录后发帖
-      </WinButton>
-      <span v-else-if="postRoom" class="left-column__preview-hint">加入后发帖</span>
     </div>
 
     <ComposePostModal :open="showCompose" @close="closeCompose" />
@@ -121,24 +127,32 @@ function closeCompose() {
   backdrop-filter: blur(24px) saturate(160%);
   -webkit-backdrop-filter: blur(24px) saturate(160%);
   border-right: 1px solid var(--stroke-divider);
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .left-column__header {
-  position: sticky;
-  top: 0;
-  z-index: 2;
   flex: 0 0 auto;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1rem 1rem 0.75rem;
-  font-weight: 600;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.75rem 1rem;
   color: var(--text-primary);
   background: var(--app-bg);
   border-bottom: 1px solid var(--stroke-divider);
-  backdrop-filter: blur(24px) saturate(160%);
-  -webkit-backdrop-filter: blur(24px) saturate(160%);
+}
+
+.left-column__header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 2rem;
+}
+
+.left-column__section-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-secondary);
 }
 
 .left-column__compose-btn {
@@ -153,7 +167,8 @@ function closeCompose() {
 
 .left-column__section-nav {
   display: flex;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
+  width: 100%;
   min-width: 0;
   gap: 0.35rem;
   overflow-x: auto;
@@ -164,16 +179,30 @@ function closeCompose() {
 
 .left-column__section-button {
   flex: 0 0 auto;
-  min-width: 0;
-  max-width: 12rem;
-  font-size: 0.82rem;
-  border-radius: 999px;
+  width: 3.5rem;
+  height: 3.5rem;
+  min-width: 3.5rem;
+  padding: 0.3rem;
+  border-radius: 0.25rem;
+  font-size: 0.72rem;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.left-column__section-hash {
+  display: block;
+  font-size: 1.2rem;
+  line-height: 1;
+  font-weight: 700;
 }
 
 .left-column__section-label {
+  display: block;
+  width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1.1;
 }
 
 .left-column__section-placeholder {
@@ -181,10 +210,13 @@ function closeCompose() {
 }
 
 .left-column__feed {
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
   padding: 0 0.75rem 1rem;
+  overflow-y: auto;
 }
 
 .left-column__more {
