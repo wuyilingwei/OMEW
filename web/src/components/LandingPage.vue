@@ -1,34 +1,25 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { api } from '../api'
-import type { DirectoryEntry } from '../api/types'
+import { watch } from 'vue'
+import { useStronghold } from '../composables/useStronghold'
 import { WinButton } from '../vendor/winui'
 import { HOME_WORLD } from '../assets/mew'
 
-defineProps<{ guestBrowsingAllowed: boolean }>()
+const props = defineProps<{ guestBrowsingAllowed: boolean }>()
 
 const emit = defineEmits<{
   authenticate: []
-  browse: []
+  browse: [strongholdId?: string]
 }>()
 
-const entries = ref<DirectoryEntry[]>([])
-const directoryLoading = ref(true)
-const directoryError = ref('')
+const { publicDirectory: entries, loading: directoryLoading, loadError: directoryError, loadPublicDirectory } = useStronghold()
 
-async function loadDirectory() {
-  directoryLoading.value = true
-  directoryError.value = ''
-  try {
-    entries.value = await api.getDirectory()
-  } catch {
-    directoryError.value = '据点目录暂时无法加载'
-  } finally {
-    directoryLoading.value = false
-  }
-}
-
-onMounted(() => void loadDirectory())
+watch(
+  () => props.guestBrowsingAllowed,
+  (allowed) => {
+    if (allowed) void loadPublicDirectory()
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -94,13 +85,13 @@ onMounted(() => void loadDirectory())
         正在加载公开据点…
       </div>
       <div v-else-if="directoryError" class="landing-page__directory-status landing-page__directory-status--error" role="status">
-        <p>{{ directoryError }}</p>
-        <WinButton Style="DefaultButtonStyle" @Click="loadDirectory">重试</WinButton>
+        <p>{{ directoryError || '无法加载据点目录' }}</p>
+        <WinButton Style="DefaultButtonStyle" @Click="loadPublicDirectory(true)">重试</WinButton>
       </div>
       <p v-else-if="!entries.length" class="landing-page__directory-status">还没有公开据点，稍后再来看看。</p>
       <ul v-else class="landing-page__directory-list">
         <li v-for="entry in entries" :key="entry.id">
-          <button class="landing-directory-card" type="button" :aria-label="`进入 ${entry.name}`" @click="emit('browse')">
+          <button class="landing-directory-card" type="button" :aria-label="`进入 ${entry.name}`" @click="emit('browse', entry.id)">
             <img v-if="entry.cover" class="landing-directory-card__cover" :src="entry.cover" alt="" />
             <div class="landing-directory-card__body">
               <div class="landing-directory-card__identity">

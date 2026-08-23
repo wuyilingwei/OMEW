@@ -1,10 +1,11 @@
 import { computed, effectScope, ref, watch } from 'vue'
 import { api } from '../api'
-import type { StrongholdSummary } from '../api/types'
+import type { DirectoryEntry, StrongholdSummary } from '../api/types'
 import { useAuth } from './useAuth'
 import { useInstanceConfig } from './useInstanceConfig'
 
 const nodes = ref<StrongholdSummary[]>([])
+const publicDirectory = ref<DirectoryEntry[]>([])
 const selectedNodeId = ref('')
 const loading = ref(false)
 const loadError = ref('')
@@ -27,6 +28,7 @@ let inflight: Promise<void> | null = null
 
 async function replaceWithPublicDirectory() {
   const entries = await api.getDirectory()
+  publicDirectory.value = entries
   publicRoomsFetched.clear()
   nodes.value = entries.map((entry) => ({
     id: entry.id,
@@ -39,7 +41,7 @@ async function replaceWithPublicDirectory() {
   if (!nodes.value.some((node) => node.id === selectedNodeId.value)) {
     selectedNodeId.value = nodes.value[0]?.id ?? ''
   }
-  if (selectedNodeId.value) await ensurePublicRooms(selectedNodeId.value)
+  if (selectedNodeId.value) void ensurePublicRooms(selectedNodeId.value)
   loadedPublic = true
 }
 
@@ -140,6 +142,7 @@ function installWatchers() {
           loaded = false
           joinedNodeIds.value = new Set()
           isPublicPreview.value = false
+          publicDirectory.value = []
           isGuestMode.value = true
           void loadPublicDirectory()
         } else {
@@ -149,6 +152,7 @@ function installWatchers() {
           isPublicPreview.value = false
           isGuestMode.value = false
           nodes.value = []
+          publicDirectory.value = []
           selectedNodeId.value = ''
         }
       },
@@ -169,6 +173,7 @@ export function useStronghold() {
   installWatchers()
   return {
     nodes,
+    publicDirectory,
     joinedNodeIds,
     selectedNodeId,
     currentNode,
@@ -179,5 +184,6 @@ export function useStronghold() {
     isReadOnly,
     selectNode,
     loadStrongholds,
+    loadPublicDirectory,
   }
 }

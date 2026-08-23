@@ -37,16 +37,24 @@ describe('OMEW landing page contract', () => {
   })
 
   it('loads the public directory directly below the hero and covers its complete states', () => {
-    expect(landing).toMatch(/api\.getDirectory\s*\(\)/)
-    expect(landing).toMatch(/onMounted\s*\(\(\)\s*=>\s*void\s+loadDirectory\s*\(\)\s*\)/)
+    expect(landing).toMatch(/useStronghold\s*\(\)/)
+    expect(landing).toMatch(/publicDirectory:\s*entries/)
+    expect(landing).toMatch(/loadPublicDirectory/)
+    expect(landing).not.toMatch(/api\.getDirectory\s*\(\)/)
     expect(landing).toContain('正在加载公开据点')
-    expect(landing).toContain('据点目录暂时无法加载')
+    expect(landing).toContain('无法加载据点目录')
     expect(landing).toContain('还没有公开据点')
     expect(landing).toMatch(/v-for="entry in entries"/)
     expect(landing).toContain('entry.cover')
     expect(landing).toContain('entry.description')
     expect(landing).toContain('entry.member_count')
-    expect(landing).toMatch(/class="landing-directory-card"[\s\S]*@click="emit\('browse'\)"/)
+    expect(landing).toMatch(/class="landing-directory-card"[\s\S]*@click="emit\('browse', entry\.id\)"/)
+  })
+
+  it('passes the clicked stronghold id into route installation so the chosen card is selected', () => {
+    expect(app).toMatch(/function\s+installRoute\s*\(strongholdId\?\s*:\s*string\)/)
+    expect(app).toMatch(/if\s*\(strongholdId\)\s*selectNode\(strongholdId\)/)
+    expect(app).toMatch(/const\s*\{[^}]*selectNode[^}]*\}\s*=\s*useStronghold\s*\(\)/)
   })
 
   it('keeps every homepage directory avatar in a non-shrinking square crop', () => {
