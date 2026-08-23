@@ -48,6 +48,10 @@ const panelTab = ref<PanelTab>(props.initialTab)
 // server's overlayRole/effectiveRole gate (api.ts), not just the local role.
 const canManage = computed(() => myRole.value === 'owner' || myRole.value === 'mod' || auth.isAdmin.value)
 const isOwner = computed(() => myRole.value === 'owner')
+// Server owner/admin receive the backend's owner-equivalent overlay for normal
+// stronghold management. Actual ownership stays separate for deletion.
+const hasOwnerOverlay = computed(() => isOwner.value || auth.isAdmin.value)
+const canTransferOwnership = computed(() => isOwner.value || auth.isServerOwner.value)
 
 const panelTabOptions = computed(() => {
   const opts: { Text: string; value: PanelTab }[] = [{ Text: '成员', value: 'members' }]
@@ -211,7 +215,7 @@ async function saveSettings() {
     allow_message_retract: form.allow_message_retract,
     edit_window_secs: form.edit_window_secs,
   }
-  if (isOwner.value) patch.visibility = form.visibility
+  if (hasOwnerOverlay.value) patch.visibility = form.visibility
   try {
     await api.patchStrongholdConfig(auth.token.value, selectedNodeId.value, patch)
     // two independent caches read what was just saved: the stronghold list
@@ -346,17 +350,17 @@ watch(
                     </div>
 
                     <div v-if="canManage && !isSelf(member) && member.role !== 'owner'" class="member-row__actions">
-                      <WinButton v-if="isOwner && member.role === 'member'" Style="SubtleButtonStyle" @click="promote(member)">
+                      <WinButton v-if="hasOwnerOverlay && member.role === 'member'" Style="SubtleButtonStyle" @click="promote(member)">
                         任命管理员
                       </WinButton>
-                      <WinButton v-if="isOwner && member.role === 'mod'" Style="SubtleButtonStyle" @click="demote(member)">
+                      <WinButton v-if="hasOwnerOverlay && member.role === 'mod'" Style="SubtleButtonStyle" @click="demote(member)">
                         撤销管理员
                       </WinButton>
-                      <template v-if="isOwner || member.role !== 'mod'">
+                      <template v-if="hasOwnerOverlay || member.role !== 'mod'">
                         <WinButton Style="SubtleButtonStyle" @click="kick(member)">踢出</WinButton>
                         <WinButton Style="AccentButtonStyle" class="win-btn--danger" @click="ban(member)">拉黑</WinButton>
                       </template>
-                      <WinButton v-if="isOwner" Style="AccentButtonStyle" class="win-btn--danger" @click="transfer(member)">
+                      <WinButton v-if="canTransferOwnership" Style="AccentButtonStyle" class="win-btn--danger" @click="transfer(member)">
                         转让领主
                       </WinButton>
                     </div>
@@ -406,9 +410,9 @@ watch(
                     :ItemsSource="VISIBILITY_OPTIONS"
                     SelectedValuePath="Value"
                     v-model:SelectedValue="form.visibility"
-                    :IsEnabled="isOwner"
+                    :IsEnabled="hasOwnerOverlay"
                   />
-                  <p v-if="!isOwner" class="field__hint">仅领主可修改可见性</p>
+                  <p v-if="!hasOwnerOverlay" class="field__hint">仅领主或服务器管理员可修改可见性</p>
                 </div>
                 <WinToggleSwitch v-model="form.allow_message_edit">允许编辑消息</WinToggleSwitch>
                 <WinToggleSwitch v-model="form.allow_message_retract">允许撤回消息</WinToggleSwitch>
