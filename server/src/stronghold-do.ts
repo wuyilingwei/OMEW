@@ -246,8 +246,14 @@ export class StrongholdDO extends DurableObject<Env> {
   }
 
   async getConfig(): Promise<ConfigRow | null> {
-    const rows = this.ctx.storage.sql.exec<ConfigRow>("SELECT * FROM config LIMIT 1").toArray();
-    return rows[0] ?? null;
+    try {
+      const rows = this.ctx.storage.sql.exec<ConfigRow>("SELECT * FROM config LIMIT 1").toArray();
+      return rows[0] ?? null;
+    } catch {
+      // deleteAll() removes SQLite's schema too. A warm object can still serve
+      // one last request before its constructor runs again; it is simply gone.
+      return null;
+    }
   }
 
   async updateConfig(
@@ -402,6 +408,26 @@ export class StrongholdDO extends DurableObject<Env> {
     return this.ctx.storage.sql.exec<RoomRow>("SELECT * FROM room WHERE archived = 0 ORDER BY position, created_at").toArray();
   }
 
+  // Deletion must also purge archived rooms: their res_id is deliberately never
+  // reused, but their RoomDO can still contain historical content.
+  async listRoomsForDeletion(): Promise<RoomRow[]> {
+    return this.ctx.storage.sql.exec<RoomRow>("SELECT * FROM room ORDER BY position, created_at").toArray();
+  }
+
+  // Called only by the HTTP deletion orchestrator after every child RoomDO has
+  // been purged and the global D1 indexes have been removed.  deleteAll(), not
+  // a table-by-table DELETE, is required to release Durable Object metadata.
+  async purgeForStrongholdDeletion(): Promise<void> {
+    for (const ws of this.ctx.getWebSockets("tips")) {
+      try {
+        ws.close(4000, "stronghold deleted");
+      } catch {
+        // A socket may have closed between enumeration and this call.
+      }
+    }
+    await this.ctx.storage.deleteAll();
+  }
+
   async getRoom(resId: string): Promise<RoomRow | null> {
     const rows = this.ctx.storage.sql.exec<RoomRow>("SELECT * FROM room WHERE res_id = ?", resId).toArray();
     return rows[0] ?? null;
@@ -452,9 +478,13 @@ export class StrongholdDO extends DurableObject<Env> {
   }
 
   async getMember(actor: string): Promise<MemberRow | null> {
-    const rows = this.ctx.storage.sql.exec<MemberRow>("SELECT * FROM member WHERE actor = ?", actor).toArray();
-    if (rows[0]) return rows[0];
-    return this.adoptLegacyActor(actor);
+    try {
+      const rows = this.ctx.storage.sql.exec<MemberRow>("SELECT * FROM member WHERE actor = ?", actor).toArray();
+      if (rows[0]) return rows[0];
+      return this.adoptLegacyActor(actor);
+    } catch {
+      return null;
+    }
   }
 
   // The instance-domain migration (D1 0007) rewrote "@user:local" actors in D1
