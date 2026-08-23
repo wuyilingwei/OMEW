@@ -4,11 +4,10 @@ import { BUILTIN_REACTION_SET } from '../assets/mew-emotes'
 import { WinMenuFlyout } from '../vendor/winui'
 
 // Right-click/long-press menu shared by chat messages, post bodies and post
-// replies (see useContextMenuGesture for the open-gesture wiring). Laid out
-// like the Windows 11 shell menu: a row of icon buttons pinned across the top,
-// the labelled commands underneath. Renders through WinMenuFlyout's default
-// slot with an empty `Items` array because that row isn't expressible as a
-// flyout item.
+// replies (see useContextMenuGesture for the open-gesture wiring). Reactions
+// use a compact grid above the labelled commands. Renders through
+// WinMenuFlyout's default slot with an empty `Items` array because the grid
+// isn't expressible as a flyout item.
 const props = defineProps<{ canReact: boolean; canEdit: boolean; canRetract: boolean; mine?: string[] }>()
 const emit = defineEmits<{ 'add-reaction': [name: string]; edit: []; retract: [] }>()
 
@@ -27,8 +26,9 @@ function close() {
 // real size from this component's own CSS metrics and clamping/flipping the
 // anchor itself instead of trusting WinMenuFlyout's placement math.
 const REACTION_CELL = 32
-const REACTION_GAP = 2
+const REACTION_GAP = 4
 const REACTION_PAD = 4 // one side
+const NARROW_VIEWPORT = 360
 const SEPARATOR_HEIGHT = 9 // 1px rule + 2*4px margin
 const LIST_ITEM_HEIGHT = 36 // .win-menu-flyout-item: 32px min-height + 2*2px margin
 const CHROME = 16 // WinMenuFlyout's own border + padding around the slot
@@ -41,15 +41,14 @@ function estimateMenuSize(): { width: number; height: number } {
   const commandsHeight = commandCount * LIST_ITEM_HEIGHT
   if (!props.canReact) return { width: MIN_WIDTH + CHROME, height: commandsHeight + CHROME }
 
-  const rowWidth = reactionNames.length * REACTION_CELL + (reactionNames.length - 1) * REACTION_GAP + REACTION_PAD * 2
-  // the row scrolls horizontally rather than widening the menu past the
-  // viewport - matches the .item-context-menu max-width below.
-  const maxWidth = Math.max(MIN_WIDTH, window.innerWidth - VIEWPORT_MARGIN * 2 - CHROME)
-  const rowHeight = REACTION_CELL + REACTION_PAD * 2
+  const REACTION_COLUMNS = window.innerWidth <= NARROW_VIEWPORT ? 2 : 3
+  const reactionRows = Math.ceil(reactionNames.length / REACTION_COLUMNS)
+  const gridWidth = REACTION_COLUMNS * REACTION_CELL + (REACTION_COLUMNS - 1) * REACTION_GAP + REACTION_PAD * 2
+  const gridHeight = reactionRows * REACTION_CELL + (reactionRows - 1) * REACTION_GAP + REACTION_PAD * 2
   const separator = commandCount > 0 ? SEPARATOR_HEIGHT : 0
   return {
-    width: Math.max(MIN_WIDTH, Math.min(rowWidth, maxWidth)) + CHROME,
-    height: rowHeight + separator + commandsHeight + CHROME,
+    width: Math.max(MIN_WIDTH, gridWidth) + CHROME,
+    height: gridHeight + separator + commandsHeight + CHROME,
   }
 }
 
@@ -143,15 +142,11 @@ defineExpose({ openAt })
 }
 
 .item-context-menu__reactions {
-  display: flex;
-  gap: 2px;
+  display: grid;
+  grid-template-columns: repeat(3, 32px);
+  justify-content: center;
+  gap: 4px;
   padding: 4px;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.item-context-menu__reactions::-webkit-scrollbar {
-  display: none;
 }
 
 .item-context-menu__separator {
@@ -161,7 +156,6 @@ defineExpose({ openAt })
 }
 
 .item-context-menu__reaction {
-  flex: 0 0 auto;
   width: 32px;
   height: 32px;
   padding: 4px;
@@ -184,5 +178,11 @@ defineExpose({ openAt })
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+@media (max-width: 360px) {
+  .item-context-menu__reactions {
+    grid-template-columns: repeat(2, 32px);
+  }
 }
 </style>
