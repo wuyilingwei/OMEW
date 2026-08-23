@@ -254,6 +254,41 @@ describe("GET /api/directory", () => {
     expect(await res.json()).toEqual({ error: "NOT_FOUND" });
     await setGuestBrowsing(true);
   });
+
+  it("hydrates a pre-projection stronghold once and then serves its exact D1 card", async () => {
+    await setGuestBrowsing(true);
+    const { id } = await freshStronghold("@directory-hydrate:local", "public");
+    const stub = env.STRONGHOLD_DO.getByName(id);
+    await stub.addMember("@directory-hydrate-member:local", "member");
+    await env.DB.prepare("DELETE FROM stronghold_directory_index WHERE stronghold_id = ?").bind(id).run();
+
+    const first = await apiRequest("/api/directory");
+    expect(first.status).toBe(200);
+    expect((await first.json() as { strongholds: Array<{ id: string; member_count: number }> }).strongholds)
+      .toContainEqual(expect.objectContaining({ id, member_count: 2 }));
+    expect(await env.DB.prepare("SELECT stronghold_id FROM stronghold_directory_index WHERE stronghold_id = ?").bind(id).first())
+      .toEqual({ stronghold_id: id });
+
+    await stub.updateConfig({ description: "current preview", avatar: "https://example.test/avatar.png", cover: "https://example.test/cover.png" });
+    const second = await apiRequest("/api/directory");
+    const entry = (await second.json() as { strongholds: Array<Record<string, unknown>> }).strongholds.find((item) => item.id === id);
+    expect(entry).toMatchObject({
+      id,
+      description: "current preview",
+      avatar: "https://example.test/avatar.png",
+      cover: "https://example.test/cover.png",
+      member_count: 2,
+    });
+  });
+
+  it("does not depend on the member index to list a public stronghold", async () => {
+    await setGuestBrowsing(true);
+    const { id } = await freshStronghold("@directory-no-member-index:local", "public");
+    await env.DB.prepare("DELETE FROM stronghold_member_index WHERE stronghold_id = ?").bind(id).run();
+
+    const body = await (await apiRequest("/api/directory")).json() as { strongholds: Array<{ id: string }> };
+    expect(body.strongholds).toContainEqual(expect.objectContaining({ id }));
+  });
 });
 
 describe("admin instance config: allow_guest_browsing is env, not runtime-writable", () => {

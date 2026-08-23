@@ -36,6 +36,36 @@ describe('OMEW landing page contract', () => {
     expect(landing).toMatch(/prefers-reduced-motion\s*:\s*reduce/)
   })
 
+  it('loads the public directory directly below the hero and covers its complete states', () => {
+    expect(landing).toMatch(/useStronghold\s*\(\)/)
+    expect(landing).toMatch(/publicDirectory:\s*entries/)
+    expect(landing).toMatch(/loadPublicDirectory/)
+    expect(landing).not.toMatch(/api\.getDirectory\s*\(\)/)
+    expect(landing).toContain('正在加载公开据点')
+    expect(landing).toContain('无法加载据点目录')
+    expect(landing).toContain('还没有公开据点')
+    expect(landing).toMatch(/v-for="entry in entries"/)
+    expect(landing).toContain('entry.cover')
+    expect(landing).toContain('entry.description')
+    expect(landing).toContain('entry.member_count')
+    expect(landing).toMatch(/class="landing-directory-card"[\s\S]*@click="emit\('browse', entry\.id\)"/)
+  })
+
+  it('owns vertical scrolling because the application shell clips document overflow', () => {
+    expect(landing).toMatch(/\.landing-page\s*\{(?=[\s\S]*?height:\s*100%)(?=[\s\S]*?overflow-y:\s*auto)(?=[\s\S]*?overflow-x:\s*hidden)/)
+  })
+
+  it('passes the clicked stronghold id into route installation so the chosen card is selected', () => {
+    expect(app).toMatch(/function\s+installRoute\s*\(strongholdId\?\s*:\s*string\)/)
+    expect(app).toMatch(/if\s*\(strongholdId\)\s*selectNode\(strongholdId\)/)
+    expect(app).toMatch(/const\s*\{[^}]*selectNode[^}]*\}\s*=\s*useStronghold\s*\(\)/)
+  })
+
+  it('keeps every homepage directory avatar in a non-shrinking square crop', () => {
+    expect(landing).toMatch(/\.landing-directory-card__avatar\s*\{(?=[\s\S]*?aspect-ratio:\s*1)(?=[\s\S]*?flex-shrink:\s*0)/)
+    expect(landing).toMatch(/\.landing-directory-card__avatar img\s*\{[\s\S]*object-fit:\s*cover/)
+  })
+
   it('bundles and exports the licensed home-world asset', () => {
     expect(assetIndex).toContain("import homeWorldUrl from './home-world.jpg'")
     expect(assetIndex).toContain('export const HOME_WORLD = homeWorldUrl')

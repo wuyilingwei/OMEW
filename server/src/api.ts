@@ -2192,6 +2192,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     await env.DB.batch([
       env.DB.prepare("DELETE FROM stronghold_member_index WHERE stronghold_id = ?").bind(strongholdId),
       env.DB.prepare("DELETE FROM stronghold_slug_index WHERE stronghold_id = ?").bind(strongholdId),
+      env.DB.prepare("DELETE FROM stronghold_directory_index WHERE stronghold_id = ?").bind(strongholdId),
       env.DB.prepare("DELETE FROM guest_member_state WHERE stronghold_id = ?").bind(strongholdId),
       env.DB.prepare("DELETE FROM archive_index WHERE do_key = ? OR instr(do_key, ?) = 1").bind(strongholdId, `${strongholdId}/`),
     ]);
@@ -3402,31 +3403,25 @@ function roomBlockedForGate(
   return !canAccessRestrictedRoom(gate.kind === "member" ? gate.role : null, room);
 }
 
-// Public stronghold directory (task 034), fanned out from the member index the
-// same way GET /api/me/strongholds does. Small instance scale: a live COUNT via
-// listMembers() per entry is fine, no cache column needed yet.
+// Public stronghold directory. The D1 read model is maintained by StrongholdDO
+// write paths. Pre-projection strongholds are hydrated once by slug index; later
+// reads remain one D1 query and never fan out per card.
 async function listPublicDirectory(
   env: Env
 ): Promise<Array<{ id: string; name: string; description: string | null; avatar: string | null; cover: string | null; member_count: number; slug: string }>> {
-  const { results } = await env.DB.prepare("SELECT DISTINCT stronghold_id FROM stronghold_member_index").all<{
+  const { results: missing } = await env.DB.prepare(
+    "SELECT stronghold_id FROM stronghold_slug_index EXCEPT SELECT stronghold_id FROM stronghold_directory_index"
+  ).all<{
     stronghold_id: string;
   }>();
-  const entries = await Promise.all(
-    results.map(async (row) => {
-      const stub = env.STRONGHOLD_DO.getByName(row.stronghold_id);
-      const config = await stub.getConfig();
-      if (!config || config.visibility !== "public") return null;
-      const members = await stub.listMembers();
-      return {
-        id: config.id,
-        name: config.name,
-        description: config.description,
-        avatar: config.avatar,
-        cover: config.cover,
-        member_count: members.length,
-        slug: config.slug,
-      };
-    })
+  await Promise.all(
+    missing.map((row) => env.STRONGHOLD_DO.getByName(row.stronghold_id).hydrateDirectoryIndex())
   );
-  return entries.filter((e): e is NonNullable<typeof e> => e != null);
+  const { results } = await env.DB.prepare(
+    "SELECT directory.stronghold_id AS id, directory.name, directory.description, directory.avatar, directory.cover, " +
+    "directory.member_count, directory.slug FROM stronghold_directory_index AS directory " +
+    "INNER JOIN stronghold_slug_index AS slugs ON slugs.stronghold_id = directory.stronghold_id " +
+    "WHERE directory.visibility = 'public' ORDER BY directory.name COLLATE NOCASE, directory.stronghold_id"
+  ).all<{ id: string; name: string; description: string | null; avatar: string | null; cover: string | null; member_count: number; slug: string }>();
+  return results;
 }

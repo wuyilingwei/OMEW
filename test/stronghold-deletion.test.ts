@@ -70,7 +70,7 @@ describe("DELETE /api/stronghold/:id", () => {
     await env.MEDIA.put("archive/foreign-index-test", new Uint8Array([2]));
     await env.MEDIA.put("archive/shared-index-test", new Uint8Array([3]));
     await env.DB.batch([
-      env.DB.prepare("INSERT INTO stronghold_slug_index (slug, stronghold_id) VALUES (?, ?)").bind(`cleanup-${sequence}`, id),
+      env.DB.prepare("INSERT OR IGNORE INTO stronghold_slug_index (slug, stronghold_id) VALUES (?, ?)").bind(`cleanup-${sequence}`, id),
       env.DB.prepare("INSERT INTO guest_member_state (actor, stronghold_id) VALUES (?, ?)").bind(member, id),
       env.DB.prepare("INSERT INTO archive_index (do_key, seq_start, seq_end, r2_key, created_at) VALUES (?, ?, ?, ?, ?)")
         .bind(roomRef, 1, 3, "archive/keep-index-test", Date.now()),
@@ -101,6 +101,7 @@ describe("DELETE /api/stronghold/:id", () => {
 
     expect(await env.DB.prepare("SELECT * FROM stronghold_member_index WHERE stronghold_id = ?").bind(id).all()).toEqual({ results: [], success: true, meta: expect.any(Object) });
     expect(await env.DB.prepare("SELECT * FROM stronghold_slug_index WHERE stronghold_id = ?").bind(id).all()).toEqual({ results: [], success: true, meta: expect.any(Object) });
+    expect(await env.DB.prepare("SELECT * FROM stronghold_directory_index WHERE stronghold_id = ?").bind(id).all()).toEqual({ results: [], success: true, meta: expect.any(Object) });
     expect(await env.DB.prepare("SELECT * FROM guest_member_state WHERE stronghold_id = ?").bind(id).all()).toEqual({ results: [], success: true, meta: expect.any(Object) });
     expect(await env.DB.prepare("SELECT * FROM archive_index WHERE do_key = ? OR instr(do_key, ?) = 1").bind(id, `${id}/`).all()).toEqual({ results: [], success: true, meta: expect.any(Object) });
     expect(await env.DB.prepare("SELECT do_key FROM archive_index WHERE do_key = ?").bind(foreignArchiveRef).first()).toEqual({ do_key: foreignArchiveRef });

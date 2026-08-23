@@ -35,7 +35,7 @@ const strongholdAdminOpen = ref(false)
 const strongholdAdminTab = ref<'members' | 'settings'>('members')
 const { activeView } = useShellView()
 const { config: instanceConfig } = useInstanceConfig()
-const { nodes, loading: strongholdsLoading } = useStronghold()
+const { nodes, loading: strongholdsLoading, selectNode } = useStronghold()
 const hasStrongholds = computed(() => nodes.value.length > 0)
 useDocumentTitle()
 
@@ -46,7 +46,8 @@ useDocumentTitle()
 const showAuthGate = computed(() => !auth.isAuthenticated.value && !instanceConfig.value?.allow_guest_browsing)
 const showLanding = computed(() => !auth.isAuthenticated.value && !routeInstalled.value)
 
-function installRoute() {
+function installRoute(strongholdId?: string) {
+  if (strongholdId) selectNode(strongholdId)
   if (routeInstalled.value) return
   routeInstalled.value = true
   useRoute()

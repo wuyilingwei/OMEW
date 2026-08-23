@@ -164,6 +164,20 @@ export class StrongholdDO extends DurableObject<Env> {
     ).bind(actor, this.selfId).run().catch(() => {});
   }
 
+  // The StrongholdDO remains authoritative. This projection makes the public
+  // directory one D1 query instead of two DO calls for every displayed card.
+  private async syncDirectoryIndex(config: ConfigRow): Promise<void> {
+    const memberCount = this.ctx.storage.sql
+      .exec<{ count: number }>("SELECT COUNT(*) AS count FROM member")
+      .one().count;
+    await this.env.DB.prepare(
+      "INSERT INTO stronghold_directory_index (stronghold_id, name, description, avatar, cover, visibility, member_count, slug, updated_at) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+      "ON CONFLICT(stronghold_id) DO UPDATE SET name = excluded.name, description = excluded.description, avatar = excluded.avatar, " +
+      "cover = excluded.cover, visibility = excluded.visibility, member_count = excluded.member_count, slug = excluded.slug, updated_at = excluded.updated_at"
+    ).bind(config.id, config.name, config.description, config.avatar, config.cover, config.visibility, memberCount, config.slug, Date.now()).run();
+  }
+
   private migrate(): void {
     this.ctx.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS config (
@@ -262,12 +276,19 @@ export class StrongholdDO extends DurableObject<Env> {
       ownerActor, createdAt
     );
     await this.indexMember(ownerActor);
-    return {
+    // Direct StrongholdDO callers (tests and maintenance tools) must create the
+    // same global enumeration row as the HTTP creation route.
+    await this.env.DB.prepare(
+      "INSERT INTO stronghold_slug_index (slug, stronghold_id) VALUES (?, ?) ON CONFLICT DO NOTHING"
+    ).bind(resolvedSlug, id).run();
+    const config: ConfigRow = {
       id, name, description: description ?? null, visibility, icon: icon ?? null, avatar: null, cover: null,
       allow_message_edit: 1, allow_message_retract: 1, edit_window_secs: 300,
       owner_chat_paused: 0, owner_chat_expires_at: null, owner_posts_paused: 0, owner_posts_expires_at: null,
       owner_actor: ownerActor, created_at: createdAt, slug: resolvedSlug,
     };
+    await this.syncDirectoryIndex(config);
+    return config;
   }
 
   // server admin-only slug rename (api.ts holds the D1-index
@@ -276,7 +297,9 @@ export class StrongholdDO extends DurableObject<Env> {
     const current = await this.getConfig();
     if (!current) return null;
     this.ctx.storage.sql.exec("UPDATE config SET slug = ? WHERE id = ?", newSlug, current.id);
-    return { ...current, slug: newSlug };
+    const updated = { ...current, slug: newSlug };
+    await this.syncDirectoryIndex(updated);
+    return updated;
   }
 
   async getConfig(): Promise<ConfigRow | null> {
@@ -307,6 +330,7 @@ export class StrongholdDO extends DurableObject<Env> {
       next.name, next.description, next.visibility, next.icon, next.avatar, next.cover,
       next.allow_message_edit, next.allow_message_retract, next.edit_window_secs, next.id
     );
+    await this.syncDirectoryIndex(next);
     // Push the edit-policy slice to every room DO this stronghold owns (DO-to-DO,
     // fire-and-forget) so RoomDO write paths never query D1/config on the hot
     // path - only StrongholdDO changes trigger a refresh.
@@ -577,6 +601,8 @@ export class StrongholdDO extends DurableObject<Env> {
       actor, role, effectiveDeny, restricted ? 1 : 0, joinedAt
     );
     await this.indexMember(actor);
+    const config = await this.getConfig();
+    if (config) await this.syncDirectoryIndex(config);
     return { actor, role, deny: effectiveDeny, restricted: restricted ? 1 : 0, banned_at: null, expires_at: null, application_state: "approved", joined_at: joinedAt };
   }
 
@@ -627,6 +653,15 @@ export class StrongholdDO extends DurableObject<Env> {
     }
   }
 
+  // Migration-era backfill for existing strongholds. It combines config and
+  // SQL member counting into one DO call, then all later directory reads use D1.
+  async hydrateDirectoryIndex(): Promise<boolean> {
+    const config = await this.getConfig();
+    if (!config) return false;
+    await this.syncDirectoryIndex(config);
+    return true;
+  }
+
   // proposal §9: deny bits only apply to `member`; role/deny changes here never
   // touch `owner` (ownership moves only through transferOwnership). Caller (api.ts)
   // is responsible for the "role change requires owner" / "DENY_ON_MOD" gating -
@@ -648,6 +683,8 @@ export class StrongholdDO extends DurableObject<Env> {
     if (!current || current.role === "owner") return false;
     this.ctx.storage.sql.exec("DELETE FROM member WHERE actor = ?", actor);
     await this.unindexMember(actor);
+    const config = await this.getConfig();
+    if (config) await this.syncDirectoryIndex(config);
     await this.pushRevokeToRooms({ actor, scope: this.selfId, effect: "close" });
     return true;
   }

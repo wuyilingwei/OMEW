@@ -35,7 +35,7 @@ describe('首次登录据点选择', () => {
     expect(strongholdState).toContain('const joinedNodeIds = ref<Set<string>>(new Set())')
     expect(strongholdState).toMatch(/memberNodes\.length === 0 && allowPublicPreview[\s\S]*replaceWithPublicDirectory\(\)/)
     expect(strongholdState).toContain('const entries = await api.getDirectory()')
-    expect(strongholdState).toContain('if (selectedNodeId.value) await ensurePublicRooms(selectedNodeId.value)')
+    expect(strongholdState).toContain('if (selectedNodeId.value) void ensurePublicRooms(selectedNodeId.value)')
     expect(strongholdState).toContain('isPublicPreview.value = true')
     expect(strongholdState).toContain('const isReadOnly = computed(() => isGuestMode.value || (isPublicPreview.value && !authState.isAdmin.value))')
     expect(directoryModal).toContain("const { joinedNodeIds, selectedNodeId, loadStrongholds } = useStronghold()")
