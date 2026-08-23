@@ -9,6 +9,7 @@ import type {
   AdminInstanceConfig,
   AdminUsersPage,
   AvatarUploadResult,
+  CoverUploadResult,
   AuthResponse,
   AuthUser,
   BanEntry,
@@ -124,6 +125,7 @@ const users: MockUser[] = [
     username: 'admin',
     display_name: 'admin',
     avatar: null,
+    cover: null,
     password: 'admin123',
     is_admin: true,
     server_role: 'owner',
@@ -140,6 +142,7 @@ const users: MockUser[] = [
     username: 'mod2',
     display_name: 'mod2',
     avatar: null,
+    cover: null,
     password: 'mod2pass1',
     is_admin: true,
     server_role: 'admin',
@@ -840,6 +843,7 @@ export const mockApi = {
       username: payload.username,
       display_name: payload.username,
       avatar: null,
+      cover: null,
       password: payload.password,
       is_admin: false,
       server_role: 'user',
@@ -1596,6 +1600,13 @@ export const mockApi = {
     return { ...result, avatar: result.url }
   },
 
+  async uploadCover(token: string, file: File | Blob, onProgress?: (percent: number) => void): Promise<CoverUploadResult> {
+    const user = requireUser(token)
+    const result = await mockApi.uploadMedia(token, file, onProgress)
+    user.cover = result.url
+    return { ...result, cover: result.url }
+  },
+
   async clearAvatar(token: string): Promise<{ avatar: null }> {
     const user = requireUser(token)
     user.avatar = null
@@ -1604,6 +1615,12 @@ export const mockApi = {
       if (member) member.avatar = null
     }
     return delay({ avatar: null }, 120)
+  },
+
+  async clearCover(token: string): Promise<{ cover: null }> {
+    const user = requireUser(token)
+    user.cover = null
+    return delay({ cover: null }, 120)
   },
 
   async getStorageUsage(token: string): Promise<StorageUsage> {

@@ -39,6 +39,7 @@ export interface AuthUser {
   // renameable; `username` (and the actor derived from it) is not
   display_name: string
   avatar: string | null
+  cover: string | null
   is_admin: boolean
   server_role: ServerRole
   email: string | null
@@ -54,6 +55,16 @@ export interface AuthUser {
 export interface AuthResponse {
   token: string
   user: AuthUser
+}
+
+export interface UserProfile {
+  actor: string
+  display_name: string
+  avatar: string | null
+  cover: string | null
+  created_at: number
+  is_guest: boolean
+  home_domain?: string
 }
 
 export interface RegisterPayload {
@@ -408,6 +419,10 @@ export interface MediaUploadResult {
 
 export interface AvatarUploadResult extends MediaUploadResult {
   avatar: string
+}
+
+export interface CoverUploadResult extends MediaUploadResult {
+  cover: string
 }
 
 export interface StorageUsage {

@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import pngFixture from "./fixtures/tiny.png.base64?raw";
-import { apiRequest, avatarUploadRequest, ensureMigrated, registerUser } from "./helpers";
+import { apiRequest, avatarUploadRequest, coverUploadRequest, ensureMigrated, registerUser } from "./helpers";
 
 const OWNERSHIP = { ownership_pubkey: "test-pubkey", ownership_ciphertext: "test-ciphertext-blob" };
 
@@ -90,5 +90,24 @@ describe("personal avatar", () => {
       headers: { Authorization: `Bearer ${token}` },
     });
     expect(((await profileAfterMediaDelete.json()) as { avatar: string | null }).avatar).toBeNull();
+  });
+});
+
+describe("personal cover", () => {
+  it("uploads, projects and cleans up an owned cover media object", async () => {
+    const { json } = await registerUser({ username: "coverowner", password: "password123", ...OWNERSHIP });
+    const token = json.token as string;
+    const actor = (json.user as { actor: string }).actor;
+    const upload = await coverUploadRequest({ token, contentType: "image/png", body: pngBytes() });
+    expect(upload.status).toBe(201);
+    const body = (await upload.json()) as { id: string; url: string; cover: string };
+    expect(body.cover).toBe(body.url);
+    const login = await apiRequest("/api/login", { method: "POST", body: JSON.stringify({ username: "coverowner", password: "password123" }) });
+    expect(((await login.json()) as { user: { cover: string } }).user.cover).toBe(body.url);
+    const cleared = await apiRequest("/api/me/cover", { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    expect(await cleared.json()).toEqual({ cover: null });
+    const profile = await apiRequest(`/api/users/${encodeURIComponent(actor)}`, { headers: { Authorization: `Bearer ${token}` } });
+    expect(((await profile.json()) as { cover: string | null }).cover).toBeNull();
+    expect((await apiRequest(`/media/${body.id}`)).status).toBe(404);
   });
 });

@@ -7,6 +7,7 @@ import type {
   AuthResponse,
   BanEntry,
   ChangePasswordPayload,
+  CoverUploadResult,
   CreateRoomPayload,
   CreateStrongholdPayload,
   DirectoryEntry,
@@ -676,8 +677,14 @@ export const realApi = {
   uploadAvatar: (token: string, file: File | Blob, onProgress?: (percent: number) => void) =>
     uploadBlob<AvatarUploadResult>('/api/me/avatar', token, file, onProgress),
 
+  uploadCover: (token: string, file: File | Blob, onProgress?: (percent: number) => void) =>
+    uploadBlob<CoverUploadResult>('/api/me/cover', token, file, onProgress),
+
   clearAvatar: (token: string) =>
     request<{ avatar: null }>('/api/me/avatar', { method: 'DELETE', headers: authHeaders(token) }),
+
+  clearCover: (token: string) =>
+    request<{ cover: null }>('/api/me/cover', { method: 'DELETE', headers: authHeaders(token) }),
 
   getStorageUsage: (token: string) => request<StorageUsage>('/api/me/storage', { headers: authHeaders(token) }),
 

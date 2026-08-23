@@ -499,7 +499,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
       }
       throw err;
     }
-    const user = toPublicUser({ localpart: username, server_role: serverRole, email, email_verified: 0 }, actor);
+    const user = toPublicUser({ localpart: username, server_role: serverRole, email, email_verified: 0, avatar: null, cover: null }, actor);
     return json({ token, user });
   }
 
@@ -511,13 +511,14 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     await clearExpiredGlobalBan(env, username);
 
     const user = await env.DB.prepare(
-      "SELECT localpart, display_name, avatar, pw_hash, pw_salt, status, server_role, email, email_verified, totp_enabled FROM users WHERE localpart = ?"
+      "SELECT localpart, display_name, avatar, cover, pw_hash, pw_salt, status, server_role, email, email_verified, totp_enabled FROM users WHERE localpart = ?"
     )
       .bind(username)
       .first<{
         localpart: string;
         display_name: string;
         avatar: string | null;
+        cover: string | null;
         pw_hash: string | null;
         pw_salt: string | null;
         status: string;
@@ -567,13 +568,14 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     await clearExpiredGlobalBan(env, localpart);
 
     const user = await env.DB.prepare(
-      "SELECT localpart, display_name, avatar, status, server_role, email, email_verified, totp_secret, totp_enabled FROM users WHERE localpart = ?"
+      "SELECT localpart, display_name, avatar, cover, status, server_role, email, email_verified, totp_secret, totp_enabled FROM users WHERE localpart = ?"
     )
       .bind(localpart)
       .first<{
         localpart: string;
         display_name: string;
         avatar: string | null;
+        cover: string | null;
         status: string;
         server_role: ServerRole;
         email: string | null;
@@ -632,8 +634,10 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const localpart = localpartOfActor(actor);
 
     if (method === "DELETE") {
+      const previous = await env.DB.prepare("SELECT avatar FROM users WHERE localpart = ?").bind(localpart).first<{ avatar: string | null }>();
       const cleared = await env.DB.prepare("UPDATE users SET avatar = NULL WHERE localpart = ?").bind(localpart).run();
       if (cleared.meta.changes === 0) return apiError(404, "NOT_FOUND");
+      await deleteOwnedMediaReference(env, actor, previous?.avatar);
       return json({ avatar: null });
     }
 
@@ -646,6 +650,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const uploadedResponse = await handleMediaUpload(request, env);
     if (!uploadedResponse.ok) return uploadedResponse;
     const uploaded = await uploadedResponse.json() as { id: string; url: string; size: number; mime: string };
+    const previous = await env.DB.prepare("SELECT avatar FROM users WHERE localpart = ?").bind(localpart).first<{ avatar: string | null }>();
     try {
       const updated = await env.DB.prepare("UPDATE users SET avatar = ? WHERE localpart = ?")
         .bind(uploaded.url, localpart)
@@ -656,7 +661,41 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
       await env.DB.prepare("DELETE FROM media WHERE id = ?").bind(uploaded.id).run().catch(() => {});
       return apiError(500, "AVATAR_UPDATE_FAILED");
     }
+    await deleteOwnedMediaReference(env, actor, previous?.avatar, uploaded.id);
     return json({ ...uploaded, avatar: uploaded.url }, 201);
+  }
+
+  if (path === "/api/me/cover" && (method === "POST" || method === "DELETE")) {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    if (domainOfActor(actor) !== instanceDomain(env)) return apiError(403, "FORBIDDEN");
+    const localpart = localpartOfActor(actor);
+    if (method === "DELETE") {
+      const previous = await env.DB.prepare("SELECT cover FROM users WHERE localpart = ?").bind(localpart).first<{ cover: string | null }>();
+      const cleared = await env.DB.prepare("UPDATE users SET cover = NULL WHERE localpart = ?").bind(localpart).run();
+      if (cleared.meta.changes === 0) return apiError(404, "NOT_FOUND");
+      await deleteOwnedMediaReference(env, actor, previous?.cover);
+      return json({ cover: null });
+    }
+    const mime = request.headers.get("Content-Type")?.split(";")[0]?.trim().toLowerCase() ?? "";
+    if (!SANITIZED_IMAGE_MIME_WHITELIST.has(mime)) {
+      await request.body?.cancel().catch(() => {});
+      return apiError(415, "COVER_IMAGE_REQUIRED");
+    }
+    const uploadedResponse = await handleMediaUpload(request, env);
+    if (!uploadedResponse.ok) return uploadedResponse;
+    const uploaded = await uploadedResponse.json() as { id: string; url: string; size: number; mime: string };
+    const previous = await env.DB.prepare("SELECT cover FROM users WHERE localpart = ?").bind(localpart).first<{ cover: string | null }>();
+    try {
+      const updated = await env.DB.prepare("UPDATE users SET cover = ? WHERE localpart = ?").bind(uploaded.url, localpart).run();
+      if (updated.meta.changes === 0) throw new Error("USER_NOT_FOUND");
+    } catch {
+      await env.MEDIA.delete(`media/${uploaded.id}`).catch(() => {});
+      await env.DB.prepare("DELETE FROM media WHERE id = ?").bind(uploaded.id).run().catch(() => {});
+      return apiError(500, "COVER_UPDATE_FAILED");
+    }
+    await deleteOwnedMediaReference(env, actor, previous?.cover, uploaded.id);
+    return json({ ...uploaded, cover: uploaded.url }, 201);
   }
 
   // ---- account: change password ----------------------------------------------------
@@ -955,7 +994,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
     const credentialId = response.id;
     const row = await env.DB.prepare(
-      "SELECT w.credential_id, w.public_key, w.counter, w.transports, w.localpart, u.display_name, u.avatar, u.status, u.server_role, u.email, u.email_verified, u.totp_enabled FROM webauthn_credentials w JOIN users u ON u.localpart = w.localpart WHERE w.credential_id = ?"
+      "SELECT w.credential_id, w.public_key, w.counter, w.transports, w.localpart, u.display_name, u.avatar, u.cover, u.status, u.server_role, u.email, u.email_verified, u.totp_enabled FROM webauthn_credentials w JOIN users u ON u.localpart = w.localpart WHERE w.credential_id = ?"
     )
       .bind(credentialId)
       .first<{
@@ -966,6 +1005,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
         localpart: string;
         display_name: string;
         avatar: string | null;
+        cover: string | null;
         status: string;
         server_role: ServerRole;
         email: string | null;
@@ -1415,8 +1455,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (row.owner_actor !== session.actor && !isElevated) return apiError(403, "FORBIDDEN");
     await env.MEDIA.delete(row.r2_key);
     await env.DB.prepare("DELETE FROM media WHERE id = ?").bind(mediaDeleteMatch.id!).run();
-    await env.DB.prepare("UPDATE users SET avatar = NULL WHERE avatar = ?")
-      .bind(`/media/${mediaDeleteMatch.id!}`)
+    await env.DB.prepare("UPDATE users SET avatar = NULL WHERE avatar = ? OR cover = ?")
+      .bind(`/media/${mediaDeleteMatch.id!}`, `/media/${mediaDeleteMatch.id!}`)
       .run();
     return new Response(null, { status: 204, headers: cors() });
   }
@@ -2404,11 +2444,11 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (!target.startsWith("@") || !target.includes(":")) return apiError(400, "MALFORMED");
 
     if (domainOfActor(target) === instanceDomain(env)) {
-      const row = await env.DB.prepare("SELECT display_name, avatar, created_at FROM users WHERE localpart = ?")
+      const row = await env.DB.prepare("SELECT display_name, avatar, cover, created_at FROM users WHERE localpart = ?")
         .bind(localpartOfActor(target))
-        .first<{ display_name: string; avatar: string | null; created_at: number }>();
+        .first<{ display_name: string; avatar: string | null; cover: string | null; created_at: number }>();
       if (!row) return apiError(404, "NOT_FOUND");
-      return json({ actor: target, display_name: row.display_name, avatar: row.avatar, created_at: row.created_at, is_guest: false });
+      return json({ actor: target, display_name: row.display_name, avatar: row.avatar, cover: row.cover, created_at: row.created_at, is_guest: false });
     }
 
     const row = await env.DB.prepare(
@@ -2668,6 +2708,15 @@ async function mediaUsage(env: Env, actor: string): Promise<number> {
     .bind(actor)
     .first<{ used: number }>();
   return row?.used ?? 0;
+}
+
+async function deleteOwnedMediaReference(env: Env, actor: string, url: string | null | undefined, exceptId?: string): Promise<void> {
+  const id = typeof url === "string" && url.startsWith("/media/") ? url.slice("/media/".length) : "";
+  if (!id || id === exceptId) return;
+  const row = await env.DB.prepare("SELECT r2_key FROM media WHERE id = ? AND owner_actor = ?").bind(id, actor).first<{ r2_key: string }>();
+  if (!row) return;
+  await env.MEDIA.delete(row.r2_key).catch(() => {});
+  await env.DB.prepare("DELETE FROM media WHERE id = ? AND owner_actor = ?").bind(id, actor).run().catch(() => {});
 }
 
 async function readDeclaredUploadBody(body: ReadableStream<Uint8Array>, declaredLength: number): Promise<Uint8Array | null> {
