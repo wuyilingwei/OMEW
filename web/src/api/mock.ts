@@ -670,6 +670,15 @@ export class MockRoomTransport implements RoomTransport {
   createItem(clientId: string, kind: 'post' | 'reply', body: Record<string, unknown>, parentSeq?: number | null): boolean {
     const room = strongholds.get(this.nodeId)?.rooms.get(this.resId)
     if (!room || 'topics' in body) return false
+    const feature = room.type === 'channel' ? 'chat' : 'posts'
+    if (toFeatureRestrictions(this.nodeId)[feature].effective.paused) {
+      // Item creation frames are accepted by the socket transport and rejected
+      // asynchronously by application policy, just like reaction validation.
+      // Crucially this runs before appendItem, so a paused feature cannot consume
+      // a sequence number or leave a hidden item in mock history.
+      queueMicrotask(() => this.handlers.onError?.({ code: 'OMEW_FEATURE_RESTRICTED', message: `${feature} is temporarily paused` }))
+      return true
+    }
     const item = appendItem(room, this.actor, kind, body as ItemBody, parentSeq ?? null, Date.now())
     queueMicrotask(() => {
       this.handlers.onAck?.({ status: 'ok', client_id: clientId, seq: item.seq })

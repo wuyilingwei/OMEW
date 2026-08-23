@@ -22,6 +22,11 @@ describe('independent chat and posts restriction web contract', () => {
     expect(mock).toMatch(/async patchServerFeatureRestriction[\s\S]*?requireAdmin\(token\)/)
   })
 
+  it('rejects mock socket writes before appendItem when the matching feature is paused', () => {
+    expect(mock).toMatch(/const feature = room\.type === 'channel' \? 'chat' : 'posts'/)
+    expect(mock).toMatch(/toFeatureRestrictions\(this\.nodeId\)\[feature\]\.effective\.paused[\s\S]*?OMEW_FEATURE_RESTRICTED[\s\S]*?return true[\s\S]*?const item = appendItem/)
+  })
+
   it('limits owner writes to the actual stronghold owner and server writes to server admins', () => {
     expect(strongholdAdminModal).toMatch(/<template v-if="isOwner">[\s\S]*?saveOwnerFeatureRestriction\(feature\)/)
     expect(strongholdAdminModal).toMatch(/v-if="!isOwner"[\s\S]*?仅据点实际领主可设置据点级暂停/)
