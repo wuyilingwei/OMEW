@@ -48,7 +48,7 @@ async function upload(blob: Blob) {
       <WinButton v-if="modelValue" Style="SubtleButtonStyle" :IsEnabled="!uploading" @click="emit('update:modelValue', '')">移除</WinButton>
     </div>
     <p v-if="error" class="field__error" role="alert">{{ error }}</p>
-    <ImageEditor :file="selectedFile" square :output-size="512" :uploading="uploading" @confirm="upload" @cancel="selectedFile = null" />
+    <ImageEditor :file="selectedFile" crop-label="头像 1:1" :crop-ratio="1" :output-size="512" :uploading="uploading" @confirm="upload" @cancel="selectedFile = null" />
   </div>
 </template>
 

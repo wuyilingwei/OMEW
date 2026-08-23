@@ -6,7 +6,7 @@ import { fileUploadError } from '../utils/validate'
 import { WinButton } from '../vendor/winui'
 import ImageEditor from './ImageEditor.vue'
 
-const props = defineProps<{ modelValue: string; token: string }>()
+const props = defineProps<{ modelValue: string; token: string; cropRatio?: number | null; cropLabel?: string }>()
 const emit = defineEmits<{ 'update:modelValue': [string] }>()
 
 const UPLOAD_ERROR_MESSAGES: Record<string, string> = {
@@ -71,7 +71,7 @@ async function uploadProcessed(blob: Blob) {
       </div>
     </div>
     <p v-if="error" class="field__error">{{ error }}</p>
-    <ImageEditor :file="selectedFile" :uploading="uploading" @confirm="uploadProcessed" @cancel="selectedFile = null" />
+    <ImageEditor :file="selectedFile" :crop-ratio="cropRatio" :crop-label="cropLabel" :uploading="uploading" @confirm="uploadProcessed" @cancel="selectedFile = null" />
   </div>
 </template>
 
