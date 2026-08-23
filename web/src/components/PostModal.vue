@@ -54,6 +54,7 @@ function formatTime(ts: number): string {
 
 watch(openPostSeq, (seq) => {
   editingSeq.value = null
+  actionNotice.value = ''
   if (seq != null) void openThread(seq)
   else closeThread()
 })
@@ -213,12 +214,18 @@ function onReplyToggleReaction(reply: PostReply, name: string) {
 async function sharePost() {
   const post = thread.value?.post
   if (!post) return
+  actionNotice.value = ''
   const shareData = { title: post.title, text: post.title, url: window.location.href }
-  try {
-    if (navigator.share) {
+  if (navigator.share) {
+    try {
       await navigator.share(shareData)
-      return
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) actionNotice.value = '未能打开系统转发'
     }
+    return
+  }
+
+  try {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(shareData.url)
       actionNotice.value = '链接已复制'
@@ -226,13 +233,12 @@ async function sharePost() {
     }
     actionNotice.value = '当前浏览器不支持转发'
   } catch {
-    // Cancelling a system share sheet is an expected no-op, while a clipboard
-    // failure gets a concise visible result instead of pretending it worked.
-    actionNotice.value = navigator.clipboard ? '未能复制链接' : ''
+    actionNotice.value = '未能复制链接'
   }
 }
 
 function openReactionPicker(event: MouseEvent) {
+  actionNotice.value = ''
   if (!auth.isAuthenticated.value) {
     openAuthModal()
     return
