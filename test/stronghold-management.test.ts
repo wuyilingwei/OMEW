@@ -419,6 +419,7 @@ describe("GET /api/users/:actor", () => {
       display_name: "Profile User",
       avatar: null,
       cover: null,
+      bio: null,
       created_at: now,
       is_guest: false,
     });
@@ -442,6 +443,8 @@ describe("GET /api/users/:actor", () => {
       actor: "@remoteuser1:remote.example",
       display_name: "Remote User",
       avatar: "https://remote.example/a.png",
+      cover: null,
+      bio: null,
       created_at: now,
       is_guest: true,
       home_domain: "remote.example",

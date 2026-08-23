@@ -12,10 +12,13 @@ describe('layout A stronghold card contract', () => {
     expect(leftColumnSource.indexOf('class="left-column__stronghold"')).toBeLessThan(leftColumnSource.indexOf('class="left-column__feed"'))
   })
 
-  it('removes topic group controls while retaining the default post room loader', () => {
-    expect(leftColumnSource).not.toContain('left-column__section-button')
-    expect(leftColumnSource).not.toContain('left-column__section-nav')
-    expect(leftColumnSource).not.toContain('onSectionKeydown')
+  it('keeps the always-visible horizontal topic group controls and default post room loader', () => {
+    expect(leftColumnSource).toContain('left-column__section-button')
+    expect(leftColumnSource).toContain('left-column__section-nav')
+    expect(leftColumnSource).toContain('onSectionKeydown')
+    expect(leftColumnSource).toContain('left-column__section-placeholder')
+    expect(leftColumnSource).toContain('role="tablist"')
+    expect(leftColumnSource).toContain("import { useSection } from '../composables/useSection'")
     expect(leftColumnSource).toContain("import { useSectionRoom } from '../composables/useSectionRoom'")
     expect(leftColumnSource).toContain('const { posts, postsLoading, hasMorePosts, loadMorePosts, postRoom, toggleReaction } = useSectionRoom()')
   })

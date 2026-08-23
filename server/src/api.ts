@@ -295,6 +295,27 @@ async function effectiveRole(
   return synthesizeEffectivePermissions("member", member.deny, groups);
 }
 
+function isActorIdentifier(actor: string): boolean {
+  return actor.startsWith("@") && actor.includes(":");
+}
+
+// Direct messages are available only inside the shared member surface that
+// exposed the target. This keeps an authenticated account from probing or
+// messaging arbitrary actors, while keeping the ordinary server-role overlay
+// consistent with other stronghold member routes.
+async function requireDirectMessageMembership(
+  env: Env,
+  strongholdId: string,
+  session: SessionTokenClaims,
+  targetActor: string
+): Promise<Response | null> {
+  const stub = env.STRONGHOLD_DO.getByName(strongholdId);
+  const [requester, target] = await Promise.all([stub.getMember(session.actor), stub.getMember(targetActor)]);
+  if (!overlayRole(session.server_role, requester)) return apiError(403, "FORBIDDEN");
+  if (!target || target.banned_at) return apiError(404, "NOT_FOUND");
+  return null;
+}
+
 // task 048 (m0-protocol §7.10a revocation propagation): a server group
 // definition or assignment change re-derives every affected local user's
 // effective role/deny in every stronghold they belong to. Fan-out is
@@ -508,7 +529,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
       }
       throw err;
     }
-    const user = toPublicUser({ localpart: username, server_role: serverRole, email, email_verified: 0, avatar: null, cover: null }, actor);
+    const user = toPublicUser({ localpart: username, server_role: serverRole, email, email_verified: 0, avatar: null, cover: null, bio: null }, actor);
     return json({ token, user });
   }
 
@@ -520,7 +541,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     await clearExpiredGlobalBan(env, username);
 
     const user = await env.DB.prepare(
-      "SELECT localpart, display_name, avatar, cover, pw_hash, pw_salt, status, server_role, email, email_verified, totp_enabled FROM users WHERE localpart = ?"
+      "SELECT localpart, display_name, avatar, cover, bio, pw_hash, pw_salt, status, server_role, email, email_verified, totp_enabled FROM users WHERE localpart = ?"
     )
       .bind(username)
       .first<{
@@ -528,6 +549,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
         display_name: string;
         avatar: string | null;
         cover: string | null;
+        bio: string | null;
         pw_hash: string | null;
         pw_salt: string | null;
         status: string;
@@ -578,7 +600,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     await clearExpiredGlobalBan(env, localpart);
 
     const user = await env.DB.prepare(
-      "SELECT localpart, display_name, avatar, cover, status, server_role, email, email_verified, totp_secret, totp_enabled FROM users WHERE localpart = ?"
+      "SELECT localpart, display_name, avatar, cover, bio, status, server_role, email, email_verified, totp_secret, totp_enabled FROM users WHERE localpart = ?"
     )
       .bind(localpart)
       .first<{
@@ -586,6 +608,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
         display_name: string;
         avatar: string | null;
         cover: string | null;
+        bio: string | null;
         status: string;
         server_role: ServerRole;
         email: string | null;
@@ -636,6 +659,19 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
       .bind(displayName, localpartOfActor(actor))
       .run();
     return json({ display_name: displayName });
+  }
+
+  if (method === "POST" && path === "/api/me/bio") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const body = await readJsonBody(request);
+    if (!body || typeof body.bio !== "string") return apiError(400, "BIO_INVALID");
+    const bio = body.bio.trim();
+    if ([...bio].length > 512) return apiError(400, "BIO_INVALID");
+    await env.DB.prepare("UPDATE users SET bio = ? WHERE localpart = ?")
+      .bind(bio || null, localpartOfActor(actor))
+      .run();
+    return json({ bio: bio || null });
   }
 
   if (path === "/api/me/avatar" && (method === "POST" || method === "DELETE")) {
@@ -1005,7 +1041,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
     const credentialId = response.id;
     const row = await env.DB.prepare(
-      "SELECT w.credential_id, w.public_key, w.counter, w.transports, w.localpart, u.display_name, u.avatar, u.cover, u.status, u.server_role, u.email, u.email_verified, u.totp_enabled FROM webauthn_credentials w JOIN users u ON u.localpart = w.localpart WHERE w.credential_id = ?"
+      "SELECT w.credential_id, w.public_key, w.counter, w.transports, w.localpart, u.display_name, u.avatar, u.cover, u.bio, u.status, u.server_role, u.email, u.email_verified, u.totp_enabled FROM webauthn_credentials w JOIN users u ON u.localpart = w.localpart WHERE w.credential_id = ?"
     )
       .bind(credentialId)
       .first<{
@@ -1017,6 +1053,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
         display_name: string;
         avatar: string | null;
         cover: string | null;
+        bio: string | null;
         status: string;
         server_role: ServerRole;
         email: string | null;
@@ -2446,6 +2483,81 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     return json({ seq: result.seq, target_seq: seq });
   }
 
+  // ---- member-to-member private messaging and ordinary user blocks ------------
+
+  // Both actions are scoped to a shared stronghold membership at the API
+  // boundary. A user block itself is global, but it never reuses (or changes)
+  // administrator account/stronghold bans.
+  m = match("/api/stronghold/:id/blocks/:actor", path);
+  if (m && (method === "GET" || method === "PUT" || method === "DELETE")) {
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
+    const target = m.actor!;
+    if (!isActorIdentifier(target)) return apiError(400, "MALFORMED");
+    if (session.actor === target) return apiError(400, "SELF_TARGET");
+    const permitted = await requireDirectMessageMembership(env, m.id!, session, target);
+    if (permitted instanceof Response) return permitted;
+
+    if (method === "GET") {
+      const row = await env.DB.prepare(
+        "SELECT 1 FROM user_blocks WHERE blocker_actor = ? AND blocked_actor = ?"
+      ).bind(session.actor, target).first();
+      return json({ blocked: Boolean(row) });
+    }
+    if (method === "PUT") {
+      await env.DB.prepare(
+        "INSERT INTO user_blocks (blocker_actor, blocked_actor, created_at) VALUES (?, ?, ?) " +
+          "ON CONFLICT(blocker_actor, blocked_actor) DO NOTHING"
+      ).bind(session.actor, target, Date.now()).run();
+      return json({ blocked: true });
+    }
+    await env.DB.prepare(
+      "DELETE FROM user_blocks WHERE blocker_actor = ? AND blocked_actor = ?"
+    ).bind(session.actor, target).run();
+    return json({ blocked: false });
+  }
+
+  m = match("/api/stronghold/:id/direct-messages/:actor", path);
+  if (m && (method === "GET" || method === "POST")) {
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
+    const target = m.actor!;
+    if (!isActorIdentifier(target)) return apiError(400, "MALFORMED");
+    if (session.actor === target) return apiError(400, "SELF_TARGET");
+    const permitted = await requireDirectMessageMembership(env, m.id!, session, target);
+    if (permitted instanceof Response) return permitted;
+
+    if (method === "GET") {
+      const { results } = await env.DB.prepare(
+        "SELECT id, sender_actor, recipient_actor, body, created_at FROM (" +
+          "SELECT id, sender_actor, recipient_actor, body, created_at FROM direct_messages " +
+          "WHERE stronghold_id = ? AND ((sender_actor = ? AND recipient_actor = ?) OR (sender_actor = ? AND recipient_actor = ?)) " +
+          "ORDER BY created_at DESC LIMIT 100" +
+        ") ORDER BY created_at ASC"
+      ).bind(m.id!, session.actor, target, target, session.actor).all<{
+        id: string; sender_actor: string; recipient_actor: string; body: string; created_at: number;
+      }>();
+      return json({ messages: results });
+    }
+
+    const body = await readJsonBody(request);
+    if (!body || typeof body.body !== "string") return apiError(400, "MESSAGE_INVALID");
+    const text = body.body.trim();
+    if (!text || text.length > 2_000) return apiError(400, "MESSAGE_INVALID");
+    const blocked = await env.DB.prepare(
+      "SELECT 1 FROM user_blocks WHERE (blocker_actor = ? AND blocked_actor = ?) OR (blocker_actor = ? AND blocked_actor = ?)"
+    ).bind(session.actor, target, target, session.actor).first();
+    if (blocked) return apiError(403, "DIRECT_MESSAGE_BLOCKED");
+    const message = {
+      id: crypto.randomUUID(), stronghold_id: m.id!, sender_actor: session.actor,
+      recipient_actor: target, body: text, created_at: Date.now(),
+    };
+    await env.DB.prepare(
+      "INSERT INTO direct_messages (id, stronghold_id, sender_actor, recipient_actor, body, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+    ).bind(message.id, message.stronghold_id, message.sender_actor, message.recipient_actor, message.body, message.created_at).run();
+    return json({ id: message.id, sender_actor: message.sender_actor, recipient_actor: message.recipient_actor, body: message.body, created_at: message.created_at }, 201);
+  }
+
   // ---- user profile lookup (登录可读) --------------------------------------------
 
   m = match("/api/users/:actor", path);
@@ -2456,11 +2568,11 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (!target.startsWith("@") || !target.includes(":")) return apiError(400, "MALFORMED");
 
     if (domainOfActor(target) === instanceDomain(env)) {
-      const row = await env.DB.prepare("SELECT display_name, avatar, cover, created_at FROM users WHERE localpart = ?")
+      const row = await env.DB.prepare("SELECT display_name, avatar, cover, bio, created_at FROM users WHERE localpart = ?")
         .bind(localpartOfActor(target))
-        .first<{ display_name: string; avatar: string | null; cover: string | null; created_at: number }>();
+        .first<{ display_name: string; avatar: string | null; cover: string | null; bio: string | null; created_at: number }>();
       if (!row) return apiError(404, "NOT_FOUND");
-      return json({ actor: target, display_name: row.display_name, avatar: row.avatar, cover: row.cover, created_at: row.created_at, is_guest: false });
+      return json({ actor: target, display_name: row.display_name, avatar: row.avatar, cover: row.cover, bio: row.bio, created_at: row.created_at, is_guest: false });
     }
 
     const row = await env.DB.prepare(
@@ -2473,6 +2585,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
       actor: target,
       display_name: row.display_name ?? target,
       avatar: row.avatar,
+      cover: null,
+      bio: null,
       created_at: row.first_seen_at,
       is_guest: true,
       home_domain: row.registered_origin,

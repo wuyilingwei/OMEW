@@ -16,6 +16,7 @@ import type {
   CreateRoomPayload,
   CreateStrongholdPayload,
   DirectoryEntry,
+  DirectMessage,
   EditRetractResult,
   Emote,
   EmotePack,
@@ -126,6 +127,7 @@ const users: MockUser[] = [
     display_name: 'admin',
     avatar: null,
     cover: null,
+    bio: null,
     password: 'admin123',
     is_admin: true,
     server_role: 'owner',
@@ -143,6 +145,7 @@ const users: MockUser[] = [
     display_name: 'mod2',
     avatar: null,
     cover: null,
+    bio: null,
     password: 'mod2pass1',
     is_admin: true,
     server_role: 'admin',
@@ -327,6 +330,16 @@ const strongholds = new Map<string, MockStrongholdState>()
 const strongholdMembers = new Map<string, StrongholdMember[]>()
 const strongholdBans = new Map<string, BanEntry[]>()
 const globalBans: BanEntry[] = []
+const directMessages: Array<DirectMessage & { node_id: string }> = []
+const userBlocks = new Set<string>()
+
+function blockKey(blocker: string, blocked: string): string {
+  return `${blocker}\u0000${blocked}`
+}
+
+function isDirectMessageBlocked(left: string, right: string): boolean {
+  return userBlocks.has(blockKey(left, right)) || userBlocks.has(blockKey(right, left))
+}
 
 function touchMockActivity(actor: string): void {
   const now = new Date().toISOString()
@@ -618,6 +631,14 @@ function findMember(nodeId: string, actor: string): StrongholdMember | undefined
   return strongholdMembers.get(nodeId)?.find((member) => member.actor === actor)
 }
 
+function requireStrongholdParticipant(token: string, nodeId: string, targetActor: string): MockUser {
+  const user = requireUser(token)
+  if (user.actor === targetActor) throw new ApiRequestError('SELF_TARGET', 400)
+  if (!user.is_admin && !findMember(nodeId, user.actor)) throw new ApiRequestError('FORBIDDEN', 403)
+  if (!findMember(nodeId, targetActor)) throw new ApiRequestError('NOT_FOUND', 404)
+  return user
+}
+
 function requireManager(token: string, nodeId: string): { user: MockUser; member: StrongholdMember } {
   const user = requireUser(token)
   const member = strongholdMembers.get(nodeId)?.find((candidate) => candidate.actor === user.actor)
@@ -832,6 +853,14 @@ export const mockApi = {
     return delay({ display_name: trimmed }, 150)
   },
 
+  async setBio(token: string, bio: string): Promise<{ bio: string | null }> {
+    const user = requireUser(token)
+    const trimmed = bio.trim()
+    if ([...trimmed].length > 512) throw new ApiRequestError('BIO_INVALID', 400)
+    user.bio = trimmed || null
+    return delay({ bio: user.bio }, 150)
+  },
+
   async getOwnership(token: string): Promise<OwnershipResponse> {
     const user = requireUser(token)
     return delay({ ownership_pubkey: user.ownership_pubkey, ownership_ciphertext: user.ownership_ciphertext })
@@ -858,6 +887,7 @@ export const mockApi = {
       display_name: payload.username,
       avatar: null,
       cover: null,
+      bio: null,
       password: payload.password,
       is_admin: false,
       server_role: 'user',
@@ -1528,17 +1558,63 @@ export const mockApi = {
     for (const nodeId of strongholdMembers.keys()) {
       const member = findMember(nodeId, actor)
       if (member) {
+        const localUser = users.find((user) => user.actor === member.actor)
         return delay({
           actor: member.actor,
           username: member.username,
           display_name: member.display_name,
           avatar: member.avatar,
+          cover: localUser?.cover ?? null,
+          created_at: new Date(localUser?.created_at ?? Date.now()).toISOString(),
+          bio: localUser?.bio ?? null,
           is_guest: member.is_guest,
           home_domain: member.home_domain,
         })
       }
     }
     throw new ApiRequestError('NOT_FOUND', 404)
+  },
+
+  async isUserBlocked(token: string, nodeId: string, actor: string): Promise<boolean> {
+    const user = requireStrongholdParticipant(token, nodeId, actor)
+    return delay(userBlocks.has(blockKey(user.actor, actor)))
+  },
+
+  async blockUser(token: string, nodeId: string, actor: string): Promise<void> {
+    const user = requireStrongholdParticipant(token, nodeId, actor)
+    userBlocks.add(blockKey(user.actor, actor))
+    return delay(undefined)
+  },
+
+  async unblockUser(token: string, nodeId: string, actor: string): Promise<void> {
+    const user = requireStrongholdParticipant(token, nodeId, actor)
+    userBlocks.delete(blockKey(user.actor, actor))
+    return delay(undefined)
+  },
+
+  async getDirectMessages(token: string, nodeId: string, actor: string): Promise<DirectMessage[]> {
+    const user = requireStrongholdParticipant(token, nodeId, actor)
+    return delay(directMessages
+      .filter((message) => message.node_id === nodeId && ((message.sender_actor === user.actor && message.recipient_actor === actor) || (message.sender_actor === actor && message.recipient_actor === user.actor)))
+      .map(({ node_id: _nodeId, ...message }) => ({ ...message })))
+  },
+
+  async sendDirectMessage(token: string, nodeId: string, actor: string, body: string): Promise<DirectMessage> {
+    const user = requireStrongholdParticipant(token, nodeId, actor)
+    const text = body.trim()
+    if (!text || text.length > 2_000) throw new ApiRequestError('MESSAGE_INVALID', 400)
+    if (isDirectMessageBlocked(user.actor, actor)) throw new ApiRequestError('DIRECT_MESSAGE_BLOCKED', 403)
+    const message: DirectMessage & { node_id: string } = {
+      id: `dm-${crypto.randomUUID()}`,
+      node_id: nodeId,
+      sender_actor: user.actor,
+      recipient_actor: actor,
+      body: text,
+      created_at: new Date().toISOString(),
+    }
+    directMessages.push(message)
+    const { node_id: _nodeId, ...result } = message
+    return delay(result)
   },
 
   // ---- emotes / media / storage ------------------------------------------------
