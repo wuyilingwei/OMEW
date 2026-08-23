@@ -88,6 +88,37 @@ describe("GET /api/admin/users (server_owner/server_admin)", () => {
   });
 });
 
+describe("GET /api/me/strongholds server-admin discovery", () => {
+  it("shows an unjoined server admin every indexed stronghold and its rooms, but not an unjoined user", async () => {
+    const owner = await freshUser("discoveryowner");
+    const admin = await makeAdmin();
+    const ordinary = await freshUser("discoveryuser");
+    const created = await apiRequest("/api/strongholds", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${owner.token}` },
+      body: JSON.stringify({ name: "Admin Discovery" }),
+    });
+    expect(created.status).toBe(201);
+    const stronghold = (await created.json()) as { id: string };
+    await env.DB.prepare("INSERT INTO stronghold_slug_index (slug, stronghold_id) VALUES (?, ?)")
+      .bind(`stale-discovery-${Date.now()}`, `deleted-discovery-${Date.now()}`)
+      .run();
+
+    const adminList = await apiRequest("/api/me/strongholds", { headers: { Authorization: `Bearer ${admin.token}` } });
+    expect(adminList.status).toBe(200);
+    const adminNodes = (await adminList.json()) as Array<{ id: string; rooms: Array<{ id: string }> }>;
+    expect(adminNodes.find((node) => node.id === stronghold.id)?.rooms.map((room) => room.id)).toEqual(
+      expect.arrayContaining(["lobby", "posts"]),
+    );
+    expect(adminNodes.some((node) => node.id.startsWith("deleted-discovery-"))).toBe(false);
+
+    const ordinaryList = await apiRequest("/api/me/strongholds", { headers: { Authorization: `Bearer ${ordinary.token}` } });
+    expect(ordinaryList.status).toBe(200);
+    const ordinaryNodes = (await ordinaryList.json()) as Array<{ id: string }>;
+    expect(ordinaryNodes.some((node) => node.id === stronghold.id)).toBe(false);
+  });
+});
+
 describe("PATCH /api/admin/users/:localpart (server_owner only)", () => {
   it("promotes a user to admin and demotes back to user", async () => {
     const owner = await makeOwner();
