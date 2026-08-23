@@ -160,7 +160,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               <input v-model="form.title" type="text" maxlength="64" placeholder="标题（≤64 字）" />
             </div>
             <div class="field">
-              <textarea v-model="form.text" rows="6" placeholder="正文" @paste="onTextPaste"></textarea>
+              <textarea v-model="form.text" class="field__textarea--fixed" rows="6" placeholder="正文" @paste="onTextPaste"></textarea>
             </div>
             <div class="field">
               <span class="field__label">发布到话题组</span>

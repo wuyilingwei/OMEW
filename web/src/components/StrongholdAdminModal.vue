@@ -483,7 +483,7 @@ watch(
                 </div>
                 <div class="field">
                   <label class="field__label" for="sh-desc">描述</label>
-                  <textarea id="sh-desc" v-model="form.description" rows="3"></textarea>
+                  <textarea id="sh-desc" v-model="form.description" class="field__textarea--fixed" rows="3"></textarea>
                 </div>
                 <div class="field">
                   <span class="field__label">据点头像</span>
