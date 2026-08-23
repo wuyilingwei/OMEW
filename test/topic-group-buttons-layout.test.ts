@@ -11,10 +11,10 @@ describe('topic group button layout contract', () => {
     expect(leftColumnSource).toContain('overflow-x: auto')
     expect(leftColumnSource).toContain(":Style=\"selectedSection?.id === room.id ? 'AccentButtonStyle' : 'DefaultButtonStyle'\"")
     expect(leftColumnSource).not.toContain('WinDropDownButton')
-    expect(leftColumnSource).toMatch(/\.left-column__section-button\s*\{[\s\S]*?width: 3\.5rem;/)
-    expect(leftColumnSource).toMatch(/\.left-column__section-button\s*\{[\s\S]*?height: 3\.5rem;/)
+    expect(leftColumnSource).toMatch(/\.left-column__section-button\s*\{[\s\S]*?min-height: 2\.25rem;/)
+    expect(leftColumnSource).toMatch(/\.left-column__section-button\s*\{[\s\S]*?max-width: 12rem;/)
     expect(leftColumnSource).toMatch(/\.left-column__section-button\s*\{[\s\S]*?border-radius: 0\.25rem;/)
-    expect(leftColumnSource).toMatch(/\.left-column__section-button\s*\{[\s\S]*?flex-direction: column;/)
+    expect(leftColumnSource).toMatch(/\.left-column__section-button\s*\{[\s\S]*?flex-direction: row;/)
   })
 
   it('exposes selected state and keyboard navigation without mixing topic labels', () => {
