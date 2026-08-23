@@ -2278,10 +2278,15 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     let requester: string | null = null;
     let role: Role | null = null;
     if (!(session instanceof Response)) {
+      const member = await strongholdStub.getMember(session.actor);
       const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
       if (eff) {
         requester = session.actor;
         role = eff.role;
+      } else if (member) {
+        // A banned member is not an anonymous visitor and must not regain
+        // read access by falling through to the public guest path.
+        return errorResponse(403, "OMEW_BANNED", "not a member or banned");
       } else {
         // Authenticated accounts without a membership get the same public
         // read-only preview as an unauthenticated guest. Keep requester null
@@ -3142,6 +3147,7 @@ async function resolveGuestOrMember(
     const member = await stub.getMember(session.actor);
     const eff = await effectiveRole(env, strongholdId, session.server_role, session.actor);
     if (eff) return { kind: "member", actor: session.actor, member, role: eff.role, config };
+    if (member) return apiError(403, "FORBIDDEN");
 
     // A registered account may browse public strongholds before joining one.
     // Treat it exactly like a guest for read routes, while all write and WS

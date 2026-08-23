@@ -106,6 +106,22 @@ describe("guest read access matrix", () => {
     expect((await apiRequest(`/stronghold/${id}/rooms/${channelResId}/history`, { headers })).status).toBe(403);
   });
 
+  it("a banned member cannot fall back to public guest preview", async () => {
+    await setGuestBrowsing(true);
+    const owner = "@guestowner-auth-banned:local";
+    const banned = "@guestbanned-auth-preview:local";
+    const { id, sectionResId, channelResId } = await freshStronghold(owner, "public");
+    const stub = env.STRONGHOLD_DO.getByName(id);
+    await stub.addMember(banned, "member");
+    await stub.banMember(banned, owner);
+    const headers = { Authorization: `Bearer ${await sessionToken(banned)}` };
+
+    expect((await apiRequest(`/api/stronghold/${id}/config`, { headers })).status).toBe(403);
+    expect((await apiRequest(`/api/stronghold/${id}/rooms`, { headers })).status).toBe(403);
+    expect((await apiRequest(`/api/stronghold/${id}/rooms/${sectionResId}/posts`, { headers })).status).toBe(403);
+    expect((await apiRequest(`/stronghold/${id}/rooms/${channelResId}/history`, { headers })).status).toBe(403);
+  });
+
   it("private stronghold: unauthenticated reads are 401 regardless of the guest policy", async () => {
     await setGuestBrowsing(true);
     const owner = "@guestowner2:local";
