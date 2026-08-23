@@ -363,6 +363,10 @@ export class RoomDO extends DurableObject<Env> {
       return;
     }
     const b = body as Record<string, unknown>;
+    if ("topics" in b) {
+      this.sendError(ws, "OMEW_MALFORMED", "topics are no longer supported");
+      return;
+    }
     if (!b.text && !b.media && !b.quote) {
       this.sendError(ws, "OMEW_MALFORMED", "body needs text, media or quote");
       return;
@@ -443,10 +447,9 @@ export class RoomDO extends DurableObject<Env> {
 
     // Section post: preview is derived server-side and folded into the stored
     // body (proposal S4.5) so list reads never need to recompute it.
-    const { topics: _discardedTopics, ...bodyWithoutTopics } = b;
     const finalBody: unknown = isSectionPost
-      ? { ...bodyWithoutTopics, preview: (b.text as string).slice(0, PREVIEW_LEN) }
-      : bodyWithoutTopics;
+      ? { ...b, preview: (b.text as string).slice(0, PREVIEW_LEN) }
+      : b;
     const bodyJson = JSON.stringify(finalBody);
     this.ctx.storage.sql.exec(
       "INSERT INTO item (seq, parent_seq, root_seq, actor, origin, client_id, kind, ts, body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -634,10 +637,10 @@ export class RoomDO extends DurableObject<Env> {
     const roomKind = roomRef.split("/")[1];
     const isSectionPost = roomKind === "sec" && target[0]!.parent_seq == null;
     const b = body as Record<string, unknown>;
-    const { topics: _discardedTopics, ...bodyWithoutTopics } = b;
+    if ("topics" in b) return { ok: false, code: "OMEW_MALFORMED", message: "topics are no longer supported" };
     const finalBody: unknown = isSectionPost && typeof b.text === "string"
-      ? { ...bodyWithoutTopics, preview: b.text.slice(0, PREVIEW_LEN) }
-      : bodyWithoutTopics;
+      ? { ...b, preview: b.text.slice(0, PREVIEW_LEN) }
+      : b;
 
     const editedAt = Date.now();
     const seq = this.allocateSeq();

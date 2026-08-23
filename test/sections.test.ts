@@ -76,18 +76,13 @@ describe("post contract without tags", () => {
 
     const { ws } = await connectRoom(`${id}/sec/posts`, owner, "owner");
     ws.send(postFrame("legacy-tag", "Title", "Body", { topics: ["legacy"] }));
-    const ack = await nextMessage(ws);
-    expect(ack).toMatchObject({ type: "ack", status: "ok" });
+    const rejected = await nextMessage(ws);
+    expect(rejected).toMatchObject({ type: "error", code: "OMEW_MALFORMED" });
     ws.close();
 
     const list = await apiRequest(`/api/stronghold/${id}/rooms/posts/posts?topic=legacy`, { headers: { Authorization: `Bearer ${token}` } });
     expect(list.status).toBe(200);
     const page = (await list.json()) as { posts: Array<Record<string, unknown>> };
-    expect(page.posts).toHaveLength(1);
-    expect(page.posts[0]).not.toHaveProperty("topics");
-
-    const detail = await apiRequest(`/api/stronghold/${id}/rooms/posts/posts/${ack.seq}`, { headers: { Authorization: `Bearer ${token}` } });
-    const thread = (await detail.json()) as { post: Record<string, unknown> };
-    expect(thread.post).not.toHaveProperty("topics");
+    expect(page.posts).toHaveLength(0);
   });
 });

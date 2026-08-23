@@ -118,43 +118,6 @@ function closeCompose() {
   white-space: nowrap;
 }
 
-.left-column__topic-filter {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0 1rem 0.6rem;
-  overflow-x: auto;
-}
-
-.topic-filter-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  flex: 0 0 auto;
-  padding: 0.2rem 0.6rem;
-  border-radius: 999px;
-  border: 1px solid var(--ctrl-border);
-  background: var(--ctrl-fill-secondary);
-  color: var(--text-secondary);
-  font-size: 0.72rem;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.topic-filter-chip--active {
-  border-color: var(--accent-base);
-  color: var(--text-primary);
-  background: var(--card-bg-secondary);
-}
-
-.topic-filter-chip__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex: 0 0 auto;
-}
-
 .left-column__feed {
   display: flex;
   flex-direction: column;
