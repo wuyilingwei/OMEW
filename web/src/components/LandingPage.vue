@@ -2,7 +2,7 @@
 import { watch } from 'vue'
 import { useStronghold } from '../composables/useStronghold'
 import { WinButton } from '../vendor/winui'
-import { HOME_WORLD } from '../assets/mew'
+import LandingWorld from './LandingWorld.vue'
 
 const props = defineProps<{ guestBrowsingAllowed: boolean }>()
 
@@ -24,7 +24,7 @@ watch(
 
 <template>
   <main class="landing-page">
-    <img class="landing-page__world" :src="HOME_WORLD" alt="" aria-hidden="true" />
+    <LandingWorld class="landing-page__world" />
     <div class="landing-page__shade" aria-hidden="true" />
 
     <div class="landing-page__hero-screen">
@@ -141,14 +141,7 @@ watch(
   inset: 0;
   z-index: -2;
   width: 100%;
-  height: 100%;
-}
-
-.landing-page__world {
-  object-fit: cover;
-  object-position: center;
-  transform: scale(1.02);
-  animation: landing-world-arrive 900ms var(--fast-out-slow-in, ease-out) both;
+  height: 100svh;
 }
 
 .landing-page__shade {
@@ -440,21 +433,12 @@ h1 {
   line-height: 1.6;
 }
 
-@keyframes landing-world-arrive {
-  from { opacity: 0; transform: scale(1.06); }
-  to { opacity: 1; transform: scale(1.02); }
-}
-
 @keyframes landing-content-arrive {
   from { opacity: 0; transform: translateY(1rem); }
   to { opacity: 1; transform: translateY(0); }
 }
 
 @media (max-width: 700px) {
-  .landing-page__world {
-    object-position: 59% center;
-  }
-
   .landing-page__hero {
     align-self: end;
     padding: 3.5rem 0 2.5rem;
@@ -485,7 +469,6 @@ h1 {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .landing-page__world,
   .landing-page__hero,
   .landing-page__directory-spinner {
     animation: none;

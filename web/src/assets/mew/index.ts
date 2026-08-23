@@ -6,6 +6,12 @@ import defaultAvatar0Url from './default-avatar-0.png'
 import defaultAvatar1Url from './default-avatar-1.png'
 import defaultNodePageBgUrl from './default-node-page-bg.png'
 import helpfulUrl from './helpful.webp'
+import homeAtmosphereUrl from './home-atmosphere.png'
+import homeCityUrl from './home-city.png'
+import homeCloudsUrl from './home-clouds.png'
+import homeForegroundUrl from './home-foreground.png'
+import homeGlowFarUrl from './home-glow-far.png'
+import homeGlowNearUrl from './home-glow-near.png'
 import homeWorldUrl from './home-world.jpg'
 import kusaUrl from './kusa.webp'
 import lanceUrl from './lance.webp'
@@ -35,6 +41,14 @@ import uhhuhUrl from './uhhuh.webp'
 export const DEFAULT_AVATARS = [defaultAvatar0Url, defaultAvatar1Url]
 export const DEFAULT_NODE_PAGE_BG = defaultNodePageBgUrl
 export const HOME_WORLD = homeWorldUrl
+export const HOME_WORLD_LAYERS = {
+  atmosphere: homeAtmosphereUrl,
+  city: homeCityUrl,
+  clouds: homeCloudsUrl,
+  foreground: homeForegroundUrl,
+  glowFar: homeGlowFarUrl,
+  glowNear: homeGlowNearUrl,
+}
 
 export const EMPTY_STATE = {
   chat: noMsgUrl,
