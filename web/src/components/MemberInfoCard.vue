@@ -110,8 +110,8 @@ onMounted(async () => {
           </ul>
         </div>
         <div v-if="canInteract" class="member-info-card__actions">
-          <WinButton Style="AccentButtonStyle" :disabled="isBlocked" @click="showMessages = !showMessages">{{ showMessages ? '收起私聊' : '私聊' }}</WinButton>
-          <WinButton Style="SubtleButtonStyle" :disabled="blocking" @click="toggleBlock">{{ blocking ? '处理中…' : isBlocked ? '解除拉黑' : '拉黑' }}</WinButton>
+          <WinButton Style="AccentButtonStyle" :IsEnabled="!isBlocked" @click="showMessages = !showMessages">{{ showMessages ? '收起私聊' : '私聊' }}</WinButton>
+          <WinButton Style="SubtleButtonStyle" :IsEnabled="!blocking" @click="toggleBlock">{{ blocking ? '处理中…' : isBlocked ? '解除拉黑' : '拉黑' }}</WinButton>
         </div>
         <p v-if="actionError" class="member-info-card__error" role="alert">{{ actionError }}</p>
         <DirectMessagePanel v-if="canInteract && showMessages && !isBlocked" :node-id="nodeId" :target-actor="member.actor" :target-name="displayName" />

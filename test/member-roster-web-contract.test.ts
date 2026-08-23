@@ -4,9 +4,10 @@ import roster from '../web/src/components/StrongholdMemberRoster.vue?raw'
 import rightColumn from '../web/src/components/RightColumn.vue?raw'
 
 describe('据点成员右栏 roster', () => {
-  it('复用成员数据并明确声明没有在线状态来源', () => {
+  it('复用成员数据但不显示活动来源说明', () => {
     expect(roster).toContain('useStrongholdMembers')
-    expect(roster).toContain('基于最近活动记录，不代表实时在线')
+    expect(roster).not.toContain('基于最近活动记录，不代表实时在线')
+    expect(roster).not.toContain('member-roster__presence-note')
     expect(roster).toContain('last_active_at')
     expect(roster).toContain("if (age < 5 * 60 * 1000) return '活跃'")
     expect(roster).toContain("return age < 7 * 24 * 60 * 60 * 1000 ? 'member-roster__status-dot--recent'")

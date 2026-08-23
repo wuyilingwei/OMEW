@@ -2529,9 +2529,11 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
     if (method === "GET") {
       const { results } = await env.DB.prepare(
-        "SELECT id, sender_actor, recipient_actor, body, created_at FROM direct_messages " +
+        "SELECT id, sender_actor, recipient_actor, body, created_at FROM (" +
+          "SELECT id, sender_actor, recipient_actor, body, created_at FROM direct_messages " +
           "WHERE stronghold_id = ? AND ((sender_actor = ? AND recipient_actor = ?) OR (sender_actor = ? AND recipient_actor = ?)) " +
-          "ORDER BY created_at ASC LIMIT 100"
+          "ORDER BY created_at DESC LIMIT 100" +
+        ") ORDER BY created_at ASC"
       ).bind(m.id!, session.actor, target, target, session.actor).all<{
         id: string; sender_actor: string; recipient_actor: string; body: string; created_at: number;
       }>();
