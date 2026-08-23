@@ -158,6 +158,8 @@ const settingsLoading = ref(true)
 const settingsError = ref('')
 const settingsSaving = ref(false)
 const settingsSaveOk = ref(false)
+const strongholdDeleting = ref(false)
+const strongholdDeleteError = ref('')
 const form = reactive({
   name: '',
   description: '',
@@ -223,6 +225,27 @@ async function saveSettings() {
     settingsError.value = '保存失败，请稍后重试'
   } finally {
     settingsSaving.value = false
+  }
+}
+
+async function deleteStronghold() {
+  if (!auth.token.value || !currentNode.value || !isOwner.value || strongholdDeleting.value) return
+  const name = currentNode.value.name
+  if (!confirm(`确定删除据点「${name}」吗？所有话题、话题组、消息和成员关系将永久移除。`)) return
+  if (!confirm(`这是最终确认：删除「${name}」后无法恢复。`)) return
+
+  strongholdDeleting.value = true
+  strongholdDeleteError.value = ''
+  try {
+    await api.deleteStronghold(auth.token.value, selectedNodeId.value)
+    // loadStrongholds selects the first remaining node (or empty state) when
+    // the deleted id disappears, so the rail cannot retain a dead target.
+    await loadStrongholds(true)
+    emit('close')
+  } catch {
+    strongholdDeleteError.value = '删除据点失败，请稍后重试'
+  } finally {
+    strongholdDeleting.value = false
   }
 }
 
@@ -406,6 +429,15 @@ watch(
                     {{ settingsSaving ? '保存中…' : '保存设置' }}
                   </WinButton>
                 </div>
+
+                <section v-if="isOwner" class="stronghold-danger" aria-label="危险操作">
+                  <h2>危险操作</h2>
+                  <p>删除据点会永久清除成员、话题、话题组和全部消息，且不可恢复。</p>
+                  <p v-if="strongholdDeleteError" class="field__error">{{ strongholdDeleteError }}</p>
+                  <WinButton Style="AccentButtonStyle" class="win-btn--danger" :IsEnabled="!strongholdDeleting" @click="deleteStronghold">
+                    {{ strongholdDeleting ? '删除中…' : '删除据点' }}
+                  </WinButton>
+                </section>
 
                 <p v-if="storage" class="admin-modal__storage">
                   存储用量：{{ formatBytes(storage.used) }} / {{ formatBytes(storage.quota) }}（单文件上限 {{ formatBytes(storage.max_file) }}）
@@ -665,6 +697,26 @@ watch(
   margin: 0;
   font-size: 0.8rem;
   color: var(--SystemFillColorSuccessBrush);
+}
+
+.stronghold-danger {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  border: 1px solid rgb(var(--colors-error, 196 43 28) / 0.48);
+  border-radius: var(--radius-sm);
+  background: rgb(var(--colors-error, 196 43 28) / 0.08);
+}
+
+.stronghold-danger h2 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--SystemFillColorCriticalBrush, #c42b1c);
+}
+
+.stronghold-danger p {
+  margin: 0.45rem 0 0.8rem;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
 }
 
 @media (max-width: 768px) {

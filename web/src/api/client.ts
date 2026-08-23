@@ -329,6 +329,12 @@ export const realApi = {
       body: JSON.stringify(patch),
     }),
 
+  deleteStronghold: (token: string, nodeId: string) =>
+    request<void>(`/api/stronghold/${nodeId}`, {
+      method: 'DELETE',
+      headers: authHeaders(token),
+    }),
+
   patchRoom: (token: string, nodeId: string, resId: string, patch: RoomPatch) =>
     request<RoomSummary>(`/api/stronghold/${nodeId}/rooms/${resId}`, {
       method: 'PATCH',

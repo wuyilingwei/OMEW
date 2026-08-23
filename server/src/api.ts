@@ -1492,6 +1492,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
   m = match("/stronghold/:id/rooms", path);
   if (m && method === "POST") {
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    if (!await stub.getConfig()) return errorResponse(404, "OMEW_NOT_FOUND", "stronghold not found");
     const gate = await requireRole(request, env, m.id!, ["owner", "mod"]);
     if (gate instanceof Response) return gate;
     const body = await readJsonBody(request);
@@ -1501,7 +1503,6 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const name = String(body.name ?? "");
     if (!RES_ID_RE.test(resId) || !name) return errorResponse(400, "OMEW_MALFORMED", "invalid res_id or name");
     const capabilities = Array.isArray(body.capabilities) ? body.capabilities.map(String) : [];
-    const stub = env.STRONGHOLD_DO.getByName(m.id!);
     if (await stub.getRoom(resId)) return errorResponse(409, "OMEW_ALREADY_EXISTS", "res_id taken");
     const room = await stub.createRoom(resId, type, name, capabilities, Boolean(body.restricted), asOptionalNumber(body.position));
     return json(room, 201);
@@ -1721,6 +1722,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const session = await requireSession(request, env);
     if (session instanceof Response) return session;
     const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    if (!await stub.getConfig()) return apiError(404, "NOT_FOUND");
     const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
     if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
 
@@ -2017,6 +2019,43 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const updated = await stub.updateConfig(patch);
     if (!updated) return apiError(404, "NOT_FOUND");
     return json(toApiConfig(updated));
+  }
+
+  // A stronghold is a graph of one StrongholdDO, one RoomDO per active room,
+  // and several D1 discovery/federation indexes.  Only its *actual* owner may
+  // erase that graph: the server-role overlay intentionally does not apply.
+  // In particular, an instance admin/owner cannot delete another owner's
+  // stronghold merely by virtue of their server role.
+  m = match("/api/stronghold/:id", path);
+  if (m && method === "DELETE") {
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
+    const strongholdId = m.id!;
+    const stub = env.STRONGHOLD_DO.getByName(strongholdId);
+    const [config, requester] = await Promise.all([stub.getConfig(), stub.getMember(session.actor)]);
+    if (!config) return apiError(404, "NOT_FOUND");
+    const isActualOwner = config.owner_actor === session.actor && requester?.role === "owner" && !requester.banned_at;
+    if (!isActualOwner) return apiError(403, "FORBIDDEN");
+
+    // Purge children first.  A failed child purge leaves the authoritative
+    // StrongholdDO intact, so a retry is safe and cannot strand inaccessible
+    // room state behind an already-deleted config.
+    const rooms = await stub.listRoomsForDeletion();
+    await Promise.all(
+      rooms.map((room) => env.ROOM_DO.getByName(`${strongholdId}/${typeToKind(room.type)}/${room.res_id}`).purgeForStrongholdDeletion())
+    );
+
+    // D1 is only an index/auxiliary state for this graph.  These deletes are
+    // deliberately scoped by the stronghold id; media is not touched because
+    // media.owner_actor is an account owner, not a stronghold ownership link.
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM stronghold_member_index WHERE stronghold_id = ?").bind(strongholdId),
+      env.DB.prepare("DELETE FROM stronghold_slug_index WHERE stronghold_id = ?").bind(strongholdId),
+      env.DB.prepare("DELETE FROM guest_member_state WHERE stronghold_id = ?").bind(strongholdId),
+      env.DB.prepare("DELETE FROM archive_index WHERE do_key = ? OR do_key LIKE ?").bind(strongholdId, `${strongholdId}/%`),
+    ]);
+    await stub.purgeForStrongholdDeletion();
+    return new Response(null, { status: 204, headers: cors() });
   }
 
   m = match("/api/stronghold/:id/members", path);

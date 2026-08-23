@@ -1055,6 +1055,21 @@ export const mockApi = {
     return delay(toStrongholdConfig(state))
   },
 
+  async deleteStronghold(token: string, nodeId: string): Promise<void> {
+    const user = requireUser(token)
+    const state = strongholds.get(nodeId)
+    if (!state) throw new ApiRequestError('NOT_FOUND', 404)
+    // Keep the mock's authority model aligned with production: this is not a
+    // server-admin operation, only the recorded stronghold owner can erase it.
+    if (state.owner_actor !== user.actor || findMember(nodeId, user.actor)?.role !== 'owner') {
+      throw new ApiRequestError('FORBIDDEN', 403)
+    }
+    strongholds.delete(nodeId)
+    strongholdMembers.delete(nodeId)
+    strongholdBans.delete(nodeId)
+    await delay(undefined)
+  },
+
   async resolveStronghold(server: string, slug: string): Promise<{ stronghold_id: string }> {
     if (server !== 'a') throw new ApiRequestError('NOT_FOUND', 404)
     const state = [...strongholds.values()].find((s) => s.slug === slug)

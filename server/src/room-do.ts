@@ -83,6 +83,20 @@ export class RoomDO extends DurableObject<Env> {
     ctx.blockConcurrencyWhile(async () => this.migrate());
   }
 
+  // A StrongholdDO cannot delete a RoomDO's SQLite/KV namespace from the
+  // outside.  Keep the destructive operation inside the object so that both
+  // user data and Durable Object metadata are released together.
+  async purgeForStrongholdDeletion(): Promise<void> {
+    for (const ws of this.ctx.getWebSockets()) {
+      try {
+        ws.close(4000, "stronghold deleted");
+      } catch {
+        // A socket may have closed between enumeration and this call.
+      }
+    }
+    await this.ctx.storage.deleteAll();
+  }
+
   private migrate(): void {
     const sql = this.ctx.storage.sql;
     // proposal S5.1 schema, verbatim table shapes. `meta` is the one addition:
