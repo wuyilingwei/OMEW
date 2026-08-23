@@ -1,10 +1,15 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useShellView } from '../composables/useShellView'
+import { useChannel } from '../composables/useChannel'
+import { channelDescription } from '../utils/contentMetadata'
 import ChannelSwitcher from './ChannelSwitcher.vue'
 import ChatPane from './ChatPane.vue'
 import AppIcon from './icons/AppIcon.vue'
 
 const { setView } = useShellView()
+const { selectedChannel } = useChannel()
+const selectedChannelDescription = computed(() => channelDescription(selectedChannel.value?.description))
 </script>
 
 <template>
@@ -13,6 +18,9 @@ const { setView } = useShellView()
       <button type="button" class="middle-column__back" aria-label="返回据点" @click="setView('stronghold')">
         <AppIcon name="chevron-left" :size="20" />
       </button>
+      <span v-if="selectedChannelDescription" class="middle-column__description" :title="selectedChannelDescription">
+        {{ selectedChannelDescription }}
+      </span>
       <div class="middle-column__header-spacer" />
       <ChannelSwitcher />
     </div>
@@ -43,6 +51,16 @@ const { setView } = useShellView()
 
 .middle-column__header-spacer {
   flex: 1 1 auto;
+}
+
+.middle-column__description {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .middle-column__back {

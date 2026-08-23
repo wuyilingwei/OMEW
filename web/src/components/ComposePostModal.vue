@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useAuth } from '../composables/useAuth'
 import { useImageAttachments } from '../composables/useImageAttachments'
+import { useSection } from '../composables/useSection'
 import { useSectionRoom } from '../composables/useSectionRoom'
+import { resolveSectionTarget } from '../utils/contentMetadata'
 import { requiredError, requiredMaxLengthError } from '../utils/validate'
-import { WinButton, WinInfoBar, WinToggleSwitch } from '../vendor/winui'
+import { WinButton, WinDropDownButton, WinInfoBar, WinToggleSwitch } from '../vendor/winui'
 import CoverUploader from './CoverUploader.vue'
 import AppIcon from './icons/AppIcon.vue'
 
@@ -13,9 +15,12 @@ const emit = defineEmits<{ close: [] }>()
 
 const auth = useAuth()
 const { createPost } = useSectionRoom()
+const { sectionRooms, selectedSection, selectSection } = useSection()
 const attachments = useImageAttachments()
 
 const form = reactive({ title: '', text: '', cover: '' })
+const targetSectionId = ref('')
+const targetSection = computed(() => resolveSectionTarget(sectionRooms.value, targetSectionId.value, selectedSection.value?.id ?? ''))
 const composeError = ref('')
 const imageInput = ref<HTMLInputElement | null>(null)
 
@@ -41,13 +46,17 @@ function requestClose() {
   emit('close')
 }
 
-function submitPost() {
+async function submitPost() {
   const titleError = requiredMaxLengthError(form.title, 64, '标题')
   const textError = requiredError(form.text, '正文')
   if (titleError || textError) {
     composeError.value = [titleError, textError].filter(Boolean).join('；')
     return
   }
+  // Let useSectionRoom's watcher close the previous section transport before
+  // attempting the create frame; otherwise a fast click could post to the
+  // previously selected room.
+  await nextTick()
   const media = attachments.items.value.length ? [...attachments.items.value] : undefined
   const ok = createPost(form.title, form.text, form.cover, media)
   if (!ok) {
@@ -56,6 +65,19 @@ function submitPost() {
   }
   resetForm()
   emit('close')
+}
+
+const sectionFlyout = computed(() => ({
+  Items: sectionRooms.value.map((room) => ({ Text: room.name, Value: room.id })),
+}))
+
+function onSelectSection(item: { Value: string }) {
+  const room = sectionRooms.value.find((candidate) => candidate.id === item.Value)
+  if (!room) return
+  targetSectionId.value = room.id
+  // The section singleton owns the post-room transport. Selecting here keeps
+  // the draft local to this modal while the room connection is switched.
+  selectSection(room)
 }
 
 function pickImages() {
@@ -92,7 +114,10 @@ function onKeydown(event: KeyboardEvent) {
 watch(
   () => props.open,
   (open) => {
-    if (open) composeError.value = ''
+    if (open) {
+      composeError.value = ''
+      targetSectionId.value = selectedSection.value?.id ?? ''
+    }
   },
 )
 
@@ -116,6 +141,17 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             </div>
             <div class="field">
               <textarea v-model="form.text" rows="6" placeholder="正文" @paste="onTextPaste"></textarea>
+            </div>
+            <div class="field">
+              <span class="field__label">发布到话题组</span>
+              <WinDropDownButton
+                class="compose-modal__section-picker"
+                :Flyout="sectionFlyout"
+                :IsEnabled="sectionRooms.length > 0"
+                @Select="onSelectSection"
+              >
+                <span>{{ targetSection?.name ?? '选择话题组' }}</span>
+              </WinDropDownButton>
             </div>
             <div class="field">
               <span class="field__label">封面（可选）</span>
@@ -248,6 +284,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   justify-content: flex-end;
   gap: 0.5rem;
   padding: 0 1.1rem 1.1rem;
+}
+
+.compose-modal__section-picker {
+  align-self: flex-start;
+  max-width: 100%;
 }
 
 .compose-modal__image-input {
