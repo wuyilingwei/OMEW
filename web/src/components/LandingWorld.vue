@@ -235,9 +235,12 @@ onBeforeUnmount(() => {
     object-position: 59% center;
   }
 
-  .landing-world__layer--glow-far .landing-world__art,
+  .landing-world__layer--glow-far .landing-world__art {
+    translate: -3% -6%;
+  }
+
   .landing-world__layer--glow-near .landing-world__art {
-    translate: 9% 0;
+    translate: 18% 9%;
   }
 }
 

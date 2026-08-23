@@ -36,9 +36,11 @@ watch(
       </header>
 
       <section class="landing-page__hero" aria-labelledby="landing-title">
-        <p class="landing-page__eyebrow">OPEN MEW</p>
-        <h1 id="landing-title">为你的小世界，留一扇开放的门。</h1>
-        <p class="landing-page__subtitle">创建据点、分享正在发生的事，并在你信任的社区里自在交流。</p>
+        <p class="landing-page__eyebrow">OMEW · OPEN MEMBER OF EXCELLENT WORLD</p>
+        <h1 id="landing-title">一个能「住下来」的「开放社区世界」</h1>
+        <p class="landing-page__subtitle">
+          OMEW（Open Member of Excellent World）是 MEW 官方停止运营后完全重写的继承者，以高性能轻架构延续「人与人的连接」，支持去中心化部署与多服务商互联。
+        </p>
         <div class="landing-page__actions">
           <WinButton Style="AccentButtonStyle" class="landing-page__primary" @Click="emit('authenticate')">
             登录或注册
@@ -56,16 +58,16 @@ watch(
 
       <section class="landing-page__features" aria-label="OMEW 的能力">
         <article>
-          <h2>你的据点</h2>
-          <p>用独立空间沉淀成员、主题与共同记忆。</p>
+          <h2>完全重写</h2>
+          <p>面向今天重新设计，不背负旧系统的重量。</p>
         </article>
         <article>
-          <h2>即时相遇</h2>
-          <p>聊天与动态并行，让回应自然发生。</p>
+          <h2>轻而高效</h2>
+          <p>高性能轻架构，让每一个据点都能自在运行。</p>
         </article>
         <article>
-          <h2>自在连接</h2>
-          <p>按自己的节奏加入值得停留的社区。</p>
+          <h2>互联世界</h2>
+          <p>去中心化部署，多服务商互联，让群体拥有姓名。</p>
         </article>
       </section>
     </div>
