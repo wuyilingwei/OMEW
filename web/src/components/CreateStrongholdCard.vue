@@ -118,7 +118,7 @@ async function submit() {
         </div>
         <div class="field">
           <label class="field__label" for="cs-desc">描述（可选）</label>
-          <textarea id="cs-desc" v-model="form.description" rows="3" placeholder="这个据点是做什么的？"></textarea>
+          <textarea id="cs-desc" v-model="form.description" class="field__textarea--fixed" rows="3" placeholder="这个据点是做什么的？"></textarea>
         </div>
         <div class="field">
           <span class="field__label">可见性</span>
