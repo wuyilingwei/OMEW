@@ -3,6 +3,7 @@ import {
   constrainCropRect,
   createCropPreset,
   createFreeCropRect,
+  hasMeaningfulCrop,
   normalizeCropRect,
   type CropRect,
 } from '../web/src/utils/imageProcessing'
@@ -19,16 +20,23 @@ describe('normalized crop contract', () => {
   })
 
   it('creates aspect-ratio presets and preserves their ratio at the edges', () => {
-    expect(createCropPreset(16 / 9)).toEqual({ x: 0, y: 0.21875, width: 1, height: 0.5625 })
-    const constrained = constrainCropRect({ x: 0.8, y: 0.8, width: 0.5, height: 0.5 }, 1)
+    expect(createCropPreset(16 / 9, 3 / 2)).toEqual({ x: 0, y: 0.078125, width: 1, height: 0.84375 })
+    expect((1 * (3 / 2)) / 0.84375).toBeCloseTo(16 / 9)
+    const constrained = constrainCropRect({ x: 0.8, y: 0.8, width: 0.5, height: 0.5 }, 16 / 9, 3 / 2)
     expect(constrained.x + constrained.width).toBeLessThanOrEqual(1)
     expect(constrained.y + constrained.height).toBeLessThanOrEqual(1)
-    expect(constrained.width / constrained.height).toBeCloseTo(1)
+    expect((constrained.width * (3 / 2)) / constrained.height).toBeCloseTo(16 / 9)
   })
 
   it('keeps small valid rectangles usable', () => {
     const rect: CropRect = normalizeCropRect({ x: 0, y: 0, width: 0, height: 0 })
     expect(rect.width).toBeGreaterThanOrEqual(0.01)
     expect(rect.height).toBeGreaterThanOrEqual(0.01)
+  })
+
+  it('does not treat an explicit full-image crop as an edit', () => {
+    expect(hasMeaningfulCrop()).toBe(false)
+    expect(hasMeaningfulCrop({ x: 0, y: 0, width: 1, height: 1 })).toBe(false)
+    expect(hasMeaningfulCrop({ x: 0, y: 0, width: 0.99, height: 1 })).toBe(true)
   })
 })
