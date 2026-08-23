@@ -18,6 +18,7 @@ import migration0012 from "../server/migrations/0012_stronghold_slug.sql?raw";
 import migration0013 from "../server/migrations/0013_security_hardening.sql?raw";
 import migration0014 from "../server/migrations/0014_user_avatar.sql?raw";
 import migration0015 from "../server/migrations/0015_timed_bans.sql?raw";
+import migration0016 from "../server/migrations/0016_stronghold_feature_overrides.sql?raw";
 
 // Must match vitest.config.ts's miniflare.bindings.DEV_TOKEN_SECRET.
 export const TEST_SECRET = "test-secret-do-not-use-in-prod";
@@ -40,7 +41,7 @@ export async function ensureMigrated(): Promise<void> {
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'instance_config'"
   ).first();
   if (marker) return;
-  for (const sql of [migration0001, migration0002, migration0003, migration0004, migration0005, migration0006, migration0007, migration0008, migration0009, migration0010, migration0011, migration0012, migration0013, migration0014, migration0015]) {
+  for (const sql of [migration0001, migration0002, migration0003, migration0004, migration0005, migration0006, migration0007, migration0008, migration0009, migration0010, migration0011, migration0012, migration0013, migration0014, migration0015, migration0016]) {
     for (const statement of splitStatements(sql)) {
       await env.DB.prepare(statement).run();
     }

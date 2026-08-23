@@ -15,7 +15,7 @@ import { getInstanceConfig } from "./config";
 import { handleInbox } from "./inbox";
 import type { EffectivePermissions } from "./permissions";
 import { canAccessRestrictedRoom, synthesizeEffectivePermissions } from "./permissions";
-import { deriveSlugBase, fetchServerGroupsForLocalpart, type ConfigRow, type MemberRow, type RoomRow } from "./stronghold-do";
+import { deriveSlugBase, featurePaused, fetchServerGroupsForLocalpart, type ConfigRow, type FeatureRestrictionSnapshot, type MemberRow, type RestrictedFeature, type RoomRow, type ServerFeatureOverride } from "./stronghold-do";
 import { generateTotpSecret, totpOtpauthUrl, verifyTotpCode } from "./totp";
 import {
   HOME_DOMAIN,
@@ -162,6 +162,26 @@ function readBanExpiry(body: Record<string, unknown>): number | null | "invalid"
   return typeof body.expires_at === "number" && Number.isSafeInteger(body.expires_at) && body.expires_at > Date.now()
     ? body.expires_at
     : "invalid";
+}
+
+function readRestrictionExpiry(body: Record<string, unknown>): number | null | "invalid" {
+  if (!("expires_at" in body) || body.expires_at === null) return null;
+  return typeof body.expires_at === "number" && Number.isSafeInteger(body.expires_at) && body.expires_at > Date.now()
+    ? body.expires_at
+    : "invalid";
+}
+
+function readRestrictedFeature(value: unknown): RestrictedFeature | null {
+  return value === "chat" || value === "posts" ? value : null;
+}
+
+function featureRestrictionsResponse(snapshot: FeatureRestrictionSnapshot) {
+  const entry = (feature: RestrictedFeature) => ({
+    owner: { paused: snapshot[feature].owner_paused, expires_at: snapshot[feature].owner_expires_at },
+    server: { override: snapshot[feature].server_override, expires_at: snapshot[feature].server_expires_at },
+    effective: { paused: featurePaused(snapshot[feature]) },
+  });
+  return { chat: entry("chat"), posts: entry("posts") };
 }
 
 // Timed bans are restored at the authorization boundary instead of depending on
@@ -1988,6 +2008,57 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   // /api/stronghold/* surface: flat {error:CODE} shape, matching /api/register et
   // al. above - distinct from the /stronghold/* dev-convenience routes above it, which
   // are untouched and keep serving stronghold/room creation, WS tokens and upgrades.
+
+  m = match("/api/stronghold/:id/feature-restrictions", path);
+  if (m && method === "GET") {
+    const gate = await resolveGuestOrMember(request, env, m.id!);
+    if (gate instanceof Response) return gate;
+    const snapshot = await env.STRONGHOLD_DO.getByName(m.id!).getFeatureRestrictions();
+    if (!snapshot) return apiError(404, "NOT_FOUND");
+    return json(featureRestrictionsResponse(snapshot));
+  }
+  m = match("/api/stronghold/:id/feature-restrictions/owner", path);
+  if (m && method === "PATCH") {
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const [config, member] = await Promise.all([stub.getConfig(), stub.getMember(session.actor)]);
+    // This is deliberately an actual-owner gate, not effectiveRole: neither a
+    // moderator nor the server-role overlay may change the owner's policy.
+    if (!config || config.owner_actor !== session.actor || member?.role !== "owner" || member.banned_at) return apiError(403, "FORBIDDEN");
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    const feature = readRestrictedFeature(body.feature);
+    if (!feature || typeof body.paused !== "boolean") return apiError(400, "CONFIG_INVALID");
+    const expiresAt = readRestrictionExpiry(body);
+    if (expiresAt === "invalid") return apiError(400, "EXPIRY_INVALID");
+    const snapshot = await stub.updateOwnerFeatureRestriction(feature, body.paused, expiresAt);
+    if (!snapshot) return apiError(404, "NOT_FOUND");
+    return json(featureRestrictionsResponse(snapshot));
+  }
+
+  m = match("/api/stronghold/:id/feature-restrictions/server", path);
+  if (m && method === "PATCH") {
+    const gate = await requireServerRole(request, env, "admin");
+    if (gate instanceof Response) return gate;
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    const feature = readRestrictedFeature(body.feature);
+    const override = body.mode as ServerFeatureOverride;
+    if (!feature || (override !== "inherit" && override !== "force_allow" && override !== "force_pause")) return apiError(400, "CONFIG_INVALID");
+    const expiresAt = readRestrictionExpiry(body);
+    if (expiresAt === "invalid") return apiError(400, "EXPIRY_INVALID");
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    if (!(await stub.getConfig())) return apiError(404, "NOT_FOUND");
+    const persistedExpiry = override === "inherit" ? null : expiresAt;
+    await env.DB.prepare(
+      "INSERT INTO stronghold_feature_overrides (stronghold_id, feature, mode, expires_at, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?) " +
+        "ON CONFLICT(stronghold_id, feature) DO UPDATE SET mode = excluded.mode, expires_at = excluded.expires_at, updated_by = excluded.updated_by, updated_at = excluded.updated_at"
+    ).bind(m.id!, feature, override, persistedExpiry, gate.actor, Date.now()).run();
+    const snapshot = await stub.refreshFeatureRestrictions();
+    if (!snapshot) return apiError(404, "NOT_FOUND");
+    return json(featureRestrictionsResponse(snapshot));
+  }
 
   m = match("/api/stronghold/:id/config", path);
   if (m && method === "GET") {

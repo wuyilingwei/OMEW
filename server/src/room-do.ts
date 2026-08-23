@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { verifyToken } from "./auth";
-import type { EditConfigSnapshot, MemberRevokePayload } from "./stronghold-do";
+import { featurePaused, type EditConfigSnapshot, type FeatureRestrictionSnapshot, type MemberRevokePayload } from "./stronghold-do";
 import {
   DENY_CHANNEL_SPEAK,
   DENY_SECTION_POST,
@@ -203,6 +203,42 @@ export class RoomDO extends DurableObject<Env> {
     this.persistEditConfig(cfg);
   }
 
+  private readFeatureRestrictions(): FeatureRestrictionSnapshot | null {
+    const rows = this.ctx.storage.sql.exec<{ key: string; value: string }>(
+      "SELECT key, value FROM meta WHERE key = 'feature_restrictions'"
+    ).toArray();
+    if (!rows[0]) return null;
+    try {
+      const value = JSON.parse(rows[0].value) as FeatureRestrictionSnapshot;
+      return value?.chat && value?.posts ? value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private persistFeatureRestrictions(snapshot: FeatureRestrictionSnapshot): void {
+    this.ctx.storage.sql.exec(
+      "INSERT INTO meta (key, value) VALUES ('feature_restrictions', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      JSON.stringify(snapshot)
+    );
+  }
+
+  async setFeatureRestrictions(snapshot: FeatureRestrictionSnapshot): Promise<void> {
+    this.persistFeatureRestrictions(snapshot);
+  }
+
+  private async ensureFeatureRestrictions(strongholdId: string): Promise<FeatureRestrictionSnapshot> {
+    const cached = this.readFeatureRestrictions();
+    if (cached) return cached;
+    const fetched = await this.env.STRONGHOLD_DO.getByName(strongholdId).getFeatureRestrictions();
+    const snapshot = fetched ?? {
+      chat: { owner_paused: false, owner_expires_at: null, server_override: "inherit" as const, server_expires_at: null },
+      posts: { owner_paused: false, owner_expires_at: null, server_override: "inherit" as const, server_expires_at: null },
+    };
+    this.persistFeatureRestrictions(snapshot);
+    return snapshot;
+  }
+
   // ---- revocation propagation (m0-protocol §7.3) --------------------------------
   // DO-to-DO push target, called by StrongholdDO on ban/kick/role-deny/group
   // mutations. Local-only (no seq, no dedupe table, never federated). Scans every
@@ -343,7 +379,7 @@ export class RoomDO extends DurableObject<Env> {
 
   // ---- item.* handlers -----------------------------------------------------
 
-  private handleItemCreate(ws: WebSocket, attachment: Attachment, frame: Record<string, unknown>): void {
+  private async handleItemCreate(ws: WebSocket, attachment: Attachment, frame: Record<string, unknown>): Promise<void> {
     const clientId = String(frame.client_id ?? "");
     const kind = String(frame.kind ?? "");
     const parentSeq = frame.parent_seq == null ? null : Number(frame.parent_seq);
@@ -397,6 +433,13 @@ export class RoomDO extends DurableObject<Env> {
     }
 
     const isSectionPost = roomKind === "sec" && isTopLevel;
+    const feature = roomKind === "ch" ? "chat" : "posts";
+    const strongholdId = attachment.room.split("/")[0]!;
+    const restrictions = await this.ensureFeatureRestrictions(strongholdId);
+    if (featurePaused(restrictions[feature])) {
+      this.sendError(ws, feature === "chat" ? "OMEW_CHAT_PAUSED" : "OMEW_POSTS_PAUSED", "feature is temporarily paused");
+      return;
+    }
 
     const requiredBit = parentSeq != null
       ? DENY_SECTION_REPLY

@@ -22,6 +22,10 @@ export type ConfigRow = {
   allow_message_edit: number;
   allow_message_retract: number;
   edit_window_secs: number;
+  owner_chat_paused: number;
+  owner_chat_expires_at: number | null;
+  owner_posts_paused: number;
+  owner_posts_expires_at: number | null;
   owner_actor: string;
   created_at: number;
   slug: string;
@@ -80,6 +84,27 @@ export interface EditConfigSnapshot {
   allow_message_edit: boolean;
   allow_message_retract: boolean;
   edit_window_secs: number;
+}
+
+export type RestrictedFeature = "chat" | "posts";
+export type ServerFeatureOverride = "inherit" | "force_allow" | "force_pause";
+
+export interface FeatureRestrictionRule {
+  owner_paused: boolean;
+  owner_expires_at: number | null;
+  server_override: ServerFeatureOverride;
+  server_expires_at: number | null;
+}
+
+export interface FeatureRestrictionSnapshot {
+  chat: FeatureRestrictionRule;
+  posts: FeatureRestrictionRule;
+}
+
+export function featurePaused(rule: FeatureRestrictionRule, now = Date.now()): boolean {
+  const serverActive = rule.server_override !== "inherit" && (rule.server_expires_at === null || rule.server_expires_at > now);
+  if (serverActive) return rule.server_override === "force_pause";
+  return rule.owner_paused && (rule.owner_expires_at === null || rule.owner_expires_at > now);
 }
 
 // m0-protocol §7.3 revocation propagation: local-only DO-to-DO frame (never
@@ -180,6 +205,10 @@ export class StrongholdDO extends DurableObject<Env> {
     this.addColumnIfMissing("config", "allow_message_edit", "INTEGER NOT NULL DEFAULT 1");
     this.addColumnIfMissing("config", "allow_message_retract", "INTEGER NOT NULL DEFAULT 1");
     this.addColumnIfMissing("config", "edit_window_secs", "INTEGER NOT NULL DEFAULT 300");
+    this.addColumnIfMissing("config", "owner_chat_paused", "INTEGER NOT NULL DEFAULT 0");
+    this.addColumnIfMissing("config", "owner_chat_expires_at", "INTEGER");
+    this.addColumnIfMissing("config", "owner_posts_paused", "INTEGER NOT NULL DEFAULT 0");
+    this.addColumnIfMissing("config", "owner_posts_expires_at", "INTEGER");
   }
 
   private addColumnIfMissing(table: string, column: string, definition: string): void {
@@ -224,8 +253,8 @@ export class StrongholdDO extends DurableObject<Env> {
     const createdAt = Date.now();
     const resolvedSlug = slug ?? id;
     this.ctx.storage.sql.exec(
-      "INSERT INTO config (id, name, description, visibility, icon, avatar, cover, allow_message_edit, allow_message_retract, edit_window_secs, owner_actor, created_at, slug) " +
-        "VALUES (?, ?, ?, ?, ?, NULL, NULL, 1, 1, 300, ?, ?, ?)",
+      "INSERT INTO config (id, name, description, visibility, icon, avatar, cover, allow_message_edit, allow_message_retract, edit_window_secs, owner_chat_paused, owner_chat_expires_at, owner_posts_paused, owner_posts_expires_at, owner_actor, created_at, slug) " +
+        "VALUES (?, ?, ?, ?, ?, NULL, NULL, 1, 1, 300, 0, NULL, 0, NULL, ?, ?, ?)",
       id, name, description ?? null, visibility, icon ?? null, ownerActor, createdAt, resolvedSlug
     );
     this.ctx.storage.sql.exec(
@@ -236,6 +265,7 @@ export class StrongholdDO extends DurableObject<Env> {
     return {
       id, name, description: description ?? null, visibility, icon: icon ?? null, avatar: null, cover: null,
       allow_message_edit: 1, allow_message_retract: 1, edit_window_secs: 300,
+      owner_chat_paused: 0, owner_chat_expires_at: null, owner_posts_paused: 0, owner_posts_expires_at: null,
       owner_actor: ownerActor, created_at: createdAt, slug: resolvedSlug,
     };
   }
@@ -301,6 +331,50 @@ export class StrongholdDO extends DurableObject<Env> {
         });
       })
     );
+  }
+
+  async getFeatureRestrictions(): Promise<FeatureRestrictionSnapshot | null> {
+    const config = await this.getConfig();
+    if (!config) return null;
+    const { results } = await this.env.DB.prepare(
+      "SELECT feature, mode, expires_at FROM stronghold_feature_overrides WHERE stronghold_id = ?"
+    ).bind(config.id).all<{ feature: RestrictedFeature; mode: ServerFeatureOverride; expires_at: number | null }>();
+    const overrides = new Map(results.map((row) => [row.feature, row]));
+    const rule = (feature: RestrictedFeature, paused: number, expiresAt: number | null): FeatureRestrictionRule => {
+      const override = overrides.get(feature);
+      return {
+        owner_paused: Boolean(paused), owner_expires_at: expiresAt,
+        server_override: override?.mode ?? "inherit", server_expires_at: override?.expires_at ?? null,
+      };
+    };
+    return {
+      chat: rule("chat", config.owner_chat_paused, config.owner_chat_expires_at),
+      posts: rule("posts", config.owner_posts_paused, config.owner_posts_expires_at),
+    };
+  }
+
+  async updateOwnerFeatureRestriction(feature: RestrictedFeature, paused: boolean, expiresAt: number | null): Promise<FeatureRestrictionSnapshot | null> {
+    const config = await this.getConfig();
+    if (!config) return null;
+    const pausedColumn = feature === "chat" ? "owner_chat_paused" : "owner_posts_paused";
+    const expiresColumn = feature === "chat" ? "owner_chat_expires_at" : "owner_posts_expires_at";
+    this.ctx.storage.sql.exec(`UPDATE config SET ${pausedColumn} = ?, ${expiresColumn} = ? WHERE id = ?`, paused ? 1 : 0, paused ? expiresAt : null, config.id);
+    const snapshot = await this.getFeatureRestrictions();
+    if (snapshot) await this.pushFeatureRestrictionsToRooms(config, snapshot);
+    return snapshot;
+  }
+
+  async refreshFeatureRestrictions(): Promise<FeatureRestrictionSnapshot | null> {
+    const config = await this.getConfig();
+    const snapshot = await this.getFeatureRestrictions();
+    if (config && snapshot) await this.pushFeatureRestrictionsToRooms(config, snapshot);
+    return snapshot;
+  }
+
+  private async pushFeatureRestrictionsToRooms(config: ConfigRow, snapshot: FeatureRestrictionSnapshot): Promise<void> {
+    const rooms = await this.listRooms();
+    await Promise.all(rooms.map((room) => this.env.ROOM_DO.getByName(`${config.id}/${typeToKind(room.type)}/${room.res_id}`)
+      .setFeatureRestrictions(snapshot).catch(() => {})));
   }
 
   // ---- revocation propagation (m0-protocol §7.3) --------------------------------
