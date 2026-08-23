@@ -137,6 +137,7 @@ export interface PublicUser {
   display_name: string;
   avatar: string | null;
   cover: string | null;
+  bio: string | null;
   actor: string;
   server_role: ServerRole;
   is_admin: boolean;

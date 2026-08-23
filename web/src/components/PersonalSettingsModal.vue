@@ -58,6 +58,10 @@ function onPanelTabSelect(item: { value: PanelTab }) {
 const displayName = ref('')
 const avatar = ref<string | null>(null)
 const cover = ref<string | null>(null)
+const bio = ref('')
+const bioError = ref('')
+const bioSaving = ref(false)
+const bioSaved = ref(false)
 const displayNameError = ref('')
 const displayNameSaving = ref(false)
 const displayNameSaved = ref(false)
@@ -69,8 +73,33 @@ function resetDisplayNameForm() {
   displayName.value = auth.user.value?.display_name || auth.user.value?.username || ''
   avatar.value = auth.user.value?.avatar ?? null
   cover.value = auth.user.value?.cover ?? null
+  bio.value = auth.user.value?.bio ?? ''
+  bioError.value = ''
+  bioSaved.value = false
   displayNameError.value = ''
   displayNameSaved.value = false
+}
+
+async function submitBio() {
+  if (!auth.token.value) return
+  const trimmed = bio.value.trim()
+  if ([...trimmed].length > 512) {
+    bioError.value = '自我介绍最多 512 个字符'
+    return
+  }
+  bioSaving.value = true
+  bioSaved.value = false
+  bioError.value = ''
+  try {
+    const result = await api.setBio(auth.token.value, bio.value)
+    bio.value = result.bio ?? ''
+    auth.updateUser({ bio: result.bio })
+    bioSaved.value = true
+  } catch {
+    bioError.value = '保存失败，请稍后重试'
+  } finally {
+    bioSaving.value = false
+  }
 }
 
 function onAvatarChange(nextAvatar: string | null) {
@@ -80,6 +109,11 @@ function onAvatarChange(nextAvatar: string | null) {
 function onCoverChange(nextCover: string | null) {
   cover.value = nextCover
   auth.updateUser({ cover: nextCover })
+}
+
+function limitBio() {
+  const characters = [...bio.value]
+  if (characters.length > 512) bio.value = characters.slice(0, 512).join('')
 }
 
 async function submitDisplayName() {
@@ -414,6 +448,16 @@ watch(
                   <WinButton Style="AccentButtonStyle" :IsEnabled="!displayNameSaving" @click="submitDisplayName">
                     {{ displayNameSaving ? '保存中…' : '保存' }}
                   </WinButton>
+                </form>
+                <form class="profile-form" @submit.prevent="submitBio">
+                  <div class="field">
+                    <label class="field__label" for="profile-bio">自我介绍</label>
+                    <textarea id="profile-bio" v-model="bio" rows="4" placeholder="介绍一下自己…" @input="limitBio" />
+                    <p class="field__hint">{{ [...bio.trim()].length }}/512</p>
+                  </div>
+                  <WinInfoBar v-if="bioError" :IsOpen="true" :IsClosable="false" Severity="Error">{{ bioError }}</WinInfoBar>
+                  <WinInfoBar v-else-if="bioSaved" :IsOpen="true" :IsClosable="false" Severity="Success">已保存</WinInfoBar>
+                  <WinButton Style="AccentButtonStyle" :IsEnabled="!bioSaving" @click="submitBio">{{ bioSaving ? '保存中…' : '保存介绍' }}</WinButton>
                 </form>
               </section>
             </div>

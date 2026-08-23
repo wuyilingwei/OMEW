@@ -126,6 +126,7 @@ const users: MockUser[] = [
     display_name: 'admin',
     avatar: null,
     cover: null,
+    bio: null,
     password: 'admin123',
     is_admin: true,
     server_role: 'owner',
@@ -143,6 +144,7 @@ const users: MockUser[] = [
     display_name: 'mod2',
     avatar: null,
     cover: null,
+    bio: null,
     password: 'mod2pass1',
     is_admin: true,
     server_role: 'admin',
@@ -832,6 +834,14 @@ export const mockApi = {
     return delay({ display_name: trimmed }, 150)
   },
 
+  async setBio(token: string, bio: string): Promise<{ bio: string | null }> {
+    const user = requireUser(token)
+    const trimmed = bio.trim()
+    if ([...trimmed].length > 512) throw new ApiRequestError('BIO_INVALID', 400)
+    user.bio = trimmed || null
+    return delay({ bio: user.bio }, 150)
+  },
+
   async getOwnership(token: string): Promise<OwnershipResponse> {
     const user = requireUser(token)
     return delay({ ownership_pubkey: user.ownership_pubkey, ownership_ciphertext: user.ownership_ciphertext })
@@ -858,6 +868,7 @@ export const mockApi = {
       display_name: payload.username,
       avatar: null,
       cover: null,
+      bio: null,
       password: payload.password,
       is_admin: false,
       server_role: 'user',
@@ -1533,6 +1544,8 @@ export const mockApi = {
           username: member.username,
           display_name: member.display_name,
           avatar: member.avatar,
+          cover: null,
+          bio: users.find((user) => user.actor === member.actor)?.bio ?? null,
           is_guest: member.is_guest,
           home_domain: member.home_domain,
         })

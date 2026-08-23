@@ -508,7 +508,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
       }
       throw err;
     }
-    const user = toPublicUser({ localpart: username, server_role: serverRole, email, email_verified: 0, avatar: null, cover: null }, actor);
+    const user = toPublicUser({ localpart: username, server_role: serverRole, email, email_verified: 0, avatar: null, cover: null, bio: null }, actor);
     return json({ token, user });
   }
 
@@ -520,7 +520,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     await clearExpiredGlobalBan(env, username);
 
     const user = await env.DB.prepare(
-      "SELECT localpart, display_name, avatar, cover, pw_hash, pw_salt, status, server_role, email, email_verified, totp_enabled FROM users WHERE localpart = ?"
+      "SELECT localpart, display_name, avatar, cover, bio, pw_hash, pw_salt, status, server_role, email, email_verified, totp_enabled FROM users WHERE localpart = ?"
     )
       .bind(username)
       .first<{
@@ -528,6 +528,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
         display_name: string;
         avatar: string | null;
         cover: string | null;
+        bio: string | null;
         pw_hash: string | null;
         pw_salt: string | null;
         status: string;
@@ -578,7 +579,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     await clearExpiredGlobalBan(env, localpart);
 
     const user = await env.DB.prepare(
-      "SELECT localpart, display_name, avatar, cover, status, server_role, email, email_verified, totp_secret, totp_enabled FROM users WHERE localpart = ?"
+      "SELECT localpart, display_name, avatar, cover, bio, status, server_role, email, email_verified, totp_secret, totp_enabled FROM users WHERE localpart = ?"
     )
       .bind(localpart)
       .first<{
@@ -586,6 +587,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
         display_name: string;
         avatar: string | null;
         cover: string | null;
+        bio: string | null;
         status: string;
         server_role: ServerRole;
         email: string | null;
@@ -636,6 +638,19 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
       .bind(displayName, localpartOfActor(actor))
       .run();
     return json({ display_name: displayName });
+  }
+
+  if (method === "POST" && path === "/api/me/bio") {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    const body = await readJsonBody(request);
+    if (!body || typeof body.bio !== "string") return apiError(400, "BIO_INVALID");
+    const bio = body.bio.trim();
+    if ([...bio].length > 512) return apiError(400, "BIO_INVALID");
+    await env.DB.prepare("UPDATE users SET bio = ? WHERE localpart = ?")
+      .bind(bio || null, localpartOfActor(actor))
+      .run();
+    return json({ bio: bio || null });
   }
 
   if (path === "/api/me/avatar" && (method === "POST" || method === "DELETE")) {
@@ -1005,7 +1020,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
     const credentialId = response.id;
     const row = await env.DB.prepare(
-      "SELECT w.credential_id, w.public_key, w.counter, w.transports, w.localpart, u.display_name, u.avatar, u.cover, u.status, u.server_role, u.email, u.email_verified, u.totp_enabled FROM webauthn_credentials w JOIN users u ON u.localpart = w.localpart WHERE w.credential_id = ?"
+      "SELECT w.credential_id, w.public_key, w.counter, w.transports, w.localpart, u.display_name, u.avatar, u.cover, u.bio, u.status, u.server_role, u.email, u.email_verified, u.totp_enabled FROM webauthn_credentials w JOIN users u ON u.localpart = w.localpart WHERE w.credential_id = ?"
     )
       .bind(credentialId)
       .first<{
@@ -1017,6 +1032,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
         display_name: string;
         avatar: string | null;
         cover: string | null;
+        bio: string | null;
         status: string;
         server_role: ServerRole;
         email: string | null;
@@ -2456,11 +2472,11 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (!target.startsWith("@") || !target.includes(":")) return apiError(400, "MALFORMED");
 
     if (domainOfActor(target) === instanceDomain(env)) {
-      const row = await env.DB.prepare("SELECT display_name, avatar, cover, created_at FROM users WHERE localpart = ?")
+      const row = await env.DB.prepare("SELECT display_name, avatar, cover, bio, created_at FROM users WHERE localpart = ?")
         .bind(localpartOfActor(target))
-        .first<{ display_name: string; avatar: string | null; cover: string | null; created_at: number }>();
+        .first<{ display_name: string; avatar: string | null; cover: string | null; bio: string | null; created_at: number }>();
       if (!row) return apiError(404, "NOT_FOUND");
-      return json({ actor: target, display_name: row.display_name, avatar: row.avatar, cover: row.cover, created_at: row.created_at, is_guest: false });
+      return json({ actor: target, display_name: row.display_name, avatar: row.avatar, cover: row.cover, bio: row.bio, created_at: row.created_at, is_guest: false });
     }
 
     const row = await env.DB.prepare(
@@ -2473,6 +2489,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
       actor: target,
       display_name: row.display_name ?? target,
       avatar: row.avatar,
+      cover: null,
+      bio: null,
       created_at: row.first_seen_at,
       is_guest: true,
       home_domain: row.registered_origin,

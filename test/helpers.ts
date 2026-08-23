@@ -22,6 +22,7 @@ import migration0016 from "../server/migrations/0016_stronghold_feature_override
 import migration0017 from "../server/migrations/0017_stronghold_directory_index.sql?raw";
 import migration0018 from "../server/migrations/0018_user_cover.sql?raw";
 import migration0019 from "../server/migrations/0019_user_last_active.sql?raw";
+import migration0020 from "../server/migrations/0020_user_bio.sql?raw";
 
 // Must match vitest.config.ts's miniflare.bindings.DEV_TOKEN_SECRET.
 export const TEST_SECRET = "test-secret-do-not-use-in-prod";
@@ -49,16 +50,18 @@ export async function ensureMigrated(): Promise<void> {
   const userColumns = marker ? await env.DB.prepare("PRAGMA table_info(users)").all<{ name: string }>() : null;
   const hasCover = userColumns?.results.some((column) => column.name === "cover") ?? false;
   const hasLastActive = userColumns?.results.some((column) => column.name === "last_active_at") ?? false;
-  if (marker && directoryProjection && hasCover && hasLastActive) return;
+  const hasBio = userColumns?.results.some((column) => column.name === "bio") ?? false;
+  if (marker && directoryProjection && hasCover && hasLastActive && hasBio) return;
   if (marker) {
     if (!directoryProjection) {
       for (const statement of splitStatements(migration0017)) await env.DB.prepare(statement).run();
     }
     if (!hasCover) for (const statement of splitStatements(migration0018)) await env.DB.prepare(statement).run();
     if (!hasLastActive) for (const statement of splitStatements(migration0019)) await env.DB.prepare(statement).run();
+    if (!hasBio) for (const statement of splitStatements(migration0020)) await env.DB.prepare(statement).run();
     return;
   }
-  for (const sql of [migration0001, migration0002, migration0003, migration0004, migration0005, migration0006, migration0007, migration0008, migration0009, migration0010, migration0011, migration0012, migration0013, migration0014, migration0015, migration0016, migration0017, migration0018, migration0019]) {
+  for (const sql of [migration0001, migration0002, migration0003, migration0004, migration0005, migration0006, migration0007, migration0008, migration0009, migration0010, migration0011, migration0012, migration0013, migration0014, migration0015, migration0016, migration0017, migration0018, migration0019, migration0020]) {
     for (const statement of splitStatements(sql)) {
       await env.DB.prepare(statement).run();
     }

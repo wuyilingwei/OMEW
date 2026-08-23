@@ -40,6 +40,7 @@ export interface AuthUser {
   display_name: string
   avatar: string | null
   cover: string | null
+  bio: string | null
   is_admin: boolean
   server_role: ServerRole
   email: string | null
@@ -62,6 +63,7 @@ export interface UserProfile {
   display_name: string
   avatar: string | null
   cover: string | null
+  bio: string | null
   created_at: number
   is_guest: boolean
   home_domain?: string
@@ -231,6 +233,8 @@ export interface PublicUser {
   username: string
   display_name: string
   avatar: string | null
+  cover: string | null
+  bio: string | null
   is_guest: boolean
   home_domain?: string
 }

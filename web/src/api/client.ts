@@ -315,6 +315,13 @@ export const realApi = {
       body: JSON.stringify({ display_name: displayName }),
     }),
 
+  setBio: (token: string, bio: string) =>
+    request<{ bio: string | null }>('/api/me/bio', {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ bio }),
+    }),
+
   getOwnership: (token: string) => request<OwnershipResponse>('/api/me/ownership', { headers: authHeaders(token) }),
 
   getAdminConfig: (token: string) =>
@@ -632,7 +639,7 @@ export const realApi = {
   getGroupsForMembers: (token: string | null, localparts: string[]) => fetchGroupsForLocalparts(token, localparts),
 
   getUser: (token: string, actor: string) =>
-    request<{ actor: string; display_name: string; avatar: string | null; is_guest: boolean; home_domain?: string }>(
+    request<{ actor: string; display_name: string; avatar: string | null; cover: string | null; bio: string | null; is_guest: boolean; home_domain?: string }>(
       `/api/users/${encodeURIComponent(actor)}`,
       { headers: authHeaders(token) },
     ).then(
@@ -641,6 +648,8 @@ export const realApi = {
         username: actorLocalpart(u.actor),
         display_name: u.display_name,
         avatar: u.avatar,
+        cover: u.cover,
+        bio: u.bio,
         is_guest: u.is_guest,
         home_domain: u.home_domain,
       }),
