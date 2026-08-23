@@ -1,33 +1,50 @@
 import { describe, expect, it } from 'vitest'
 import chatRoomSource from '../web/src/composables/useChatRoom.ts?raw'
 import chatPaneSource from '../web/src/components/ChatPane.vue?raw'
+import serverAdminSource from '../web/src/components/ServerAdminModal.vue?raw'
+import avatarUploaderSource from '../web/src/components/StrongholdAvatarUploader.vue?raw'
+import coverUploaderSource from '../web/src/components/CoverUploader.vue?raw'
 import imageEditorSource from '../web/src/components/ImageEditor.vue?raw'
 import composePostSource from '../web/src/components/ComposePostModal.vue?raw'
-import { automaticOutputMime, isGif } from '../web/src/utils/imageProcessing'
+import { isGif } from '../web/src/utils/imageProcessing'
 
 describe('image editor contract', () => {
-  it('uses automatic encoding that prefers modern static formats with a PNG-safe fallback', () => {
-    expect(automaticOutputMime('image/jpeg', true)).toBe('image/webp')
-    expect(automaticOutputMime('image/png', false)).toBe('image/png')
-    expect(automaticOutputMime('image/unknown', true)).toBe('image/png')
-  })
-
   it('recognizes GIF bytes even without a MIME and keeps animations out of canvas editing', async () => {
     const gif = new Blob([Uint8Array.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x00])])
     expect(await isGif(gif)).toBe(true)
     expect(chatPaneSource).toContain('ImageEditor')
   })
 
-  it('previews animated GIFs with a revocable object URL and uses the WinUI format selector in automatic mode', () => {
+  it('previews animated GIFs and exposes only smart/original output modes', () => {
     expect(imageEditorSource).toContain('const gifPreviewUrl = ref(\'\')')
     expect(imageEditorSource).toContain('URL.createObjectURL(file)')
     expect(imageEditorSource).toContain('URL.revokeObjectURL(gifPreviewUrl.value)')
-    expect(imageEditorSource).toContain('<img v-if="gif" class="image-editor__gif" :src="gifPreviewUrl"')
-    expect(imageEditorSource).toContain('WinComboBox')
-    expect(imageEditorSource).toContain('SelectedValuePath="Value"')
-    expect(imageEditorSource).toContain('v-model:SelectedValue="mode"')
-    expect(imageEditorSource).toContain("const mode = ref<ImageOutputMode>('auto')")
-    expect(imageEditorSource).toContain("mode.value = 'auto'")
+    expect(imageEditorSource).toContain('class="image-editor__gif" :src="gifPreviewUrl"')
+    expect(imageEditorSource).toContain('image-editor__format')
+    expect(imageEditorSource).toContain('role="radiogroup"')
+    expect(imageEditorSource).toContain("const mode = ref<ImageOutputMode>('smart')")
+    expect(imageEditorSource).toContain("{ Text: '智能', Value: 'smart' }")
+    expect(imageEditorSource).toContain("{ Text: '原图', Value: 'original' }")
+    expect(imageEditorSource).not.toContain("Value: 'webp'")
+    expect(imageEditorSource).not.toContain('zoom')
+    expect(imageEditorSource).not.toContain('panX')
+    expect(imageEditorSource).toContain('CropRect')
+    expect(imageEditorSource).toContain('cropRatio')
+  })
+
+  it('keeps free cropping for regular images and sends explicit presets only to covers and avatars', () => {
+    expect(imageEditorSource).toContain("cropRatio?: number | null")
+    expect(composePostSource).toContain(':crop-ratio="16 / 9"')
+    expect(composePostSource).toContain('crop-label="帖子封面 16:9"')
+    expect(avatarUploaderSource).toContain('crop-label="头像 1:1"')
+    expect(avatarUploaderSource).toContain(':crop-ratio="1"')
+    expect(coverUploaderSource).toContain(':crop-ratio="cropRatio"')
+    expect(chatPaneSource).toContain('ImageEditor')
+    expect(serverAdminSource).toContain('ImageEditor')
+    expect(imageEditorSource).toContain('createCropPreset')
+    expect(imageEditorSource).toContain('constrainCropRect')
+    expect(imageEditorSource).toContain('mosaicPointerId')
+    expect(imageEditorSource).toContain("corner?: string")
   })
 
   it('keeps the editor locked through parent uploads and restores byte-sniffed GIF selection in chat and posts', () => {

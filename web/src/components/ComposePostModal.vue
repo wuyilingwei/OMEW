@@ -175,7 +175,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             </div>
             <div class="field">
               <span class="field__label">封面（可选）</span>
-              <CoverUploader v-if="auth.token.value" v-model="form.cover" :token="auth.token.value" />
+              <CoverUploader v-if="auth.token.value" v-model="form.cover" :token="auth.token.value" crop-label="帖子封面 16:9" :crop-ratio="16 / 9" />
             </div>
             <div class="field">
               <span class="field__label">配图（可选）</span>
