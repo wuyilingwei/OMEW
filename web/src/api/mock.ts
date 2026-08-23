@@ -967,7 +967,9 @@ export const mockApi = {
 
   async listMyStrongholds(token: string): Promise<StrongholdSummary[]> {
     const user = requireUser(token)
-    const mine = [...strongholds.values()].filter((s) => strongholdMembers.get(s.id)?.some((m) => m.actor === user.actor))
+    const mine = user.is_admin
+      ? [...strongholds.values()]
+      : [...strongholds.values()].filter((s) => strongholdMembers.get(s.id)?.some((m) => m.actor === user.actor))
     return delay(mine.map(toStrongholdSummary))
   },
 
