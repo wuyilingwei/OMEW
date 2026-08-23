@@ -18,6 +18,8 @@ import type {
   EditRetractResult,
   Emote,
   EmotePack,
+  FeatureRestrictionMode,
+  FeatureRestrictions,
   InviteCode,
   ItemBody,
   ItemReactions,
@@ -226,7 +228,7 @@ function randomCode(): string {
 function requireAdmin(token: string): MockUser {
   const actor = sessions.get(token)
   const user = users.find((candidate) => candidate.actor === actor)
-  if (!user?.is_admin) throw new ApiRequestError('AUTH_FAILED', 403)
+  if (!user?.is_admin || isGloballyBanned(user.actor)) throw new ApiRequestError('AUTH_FAILED', 403)
   return user
 }
 
@@ -235,14 +237,14 @@ function requireOwner(token: string): MockUser {
   const actor = sessions.get(token)
   if (!actor) throw new ApiRequestError('AUTH_REQUIRED', 401)
   const user = users.find((candidate) => candidate.actor === actor)
-  if (!user || user.server_role !== 'owner') throw new ApiRequestError('ADMIN_REQUIRED', 403)
+  if (!user || user.server_role !== 'owner' || isGloballyBanned(user.actor)) throw new ApiRequestError('ADMIN_REQUIRED', 403)
   return user
 }
 
 function requireUser(token: string): MockUser {
   const actor = sessions.get(token)
   const user = users.find((candidate) => candidate.actor === actor)
-  if (!user) throw new ApiRequestError('AUTH_FAILED', 401)
+  if (!user || isGloballyBanned(user.actor)) throw new ApiRequestError('AUTH_FAILED', 401)
   return user
 }
 
@@ -321,6 +323,8 @@ const strongholds = new Map<string, MockStrongholdState>()
 const strongholdMembers = new Map<string, StrongholdMember[]>()
 const strongholdBans = new Map<string, BanEntry[]>()
 const globalBans: BanEntry[] = []
+type MockFeatureRestriction = { paused: boolean; expires_at: number | null; mode: FeatureRestrictionMode }
+const featureRestrictions = new Map<string, Record<'chat' | 'posts', { owner: MockFeatureRestriction; server: MockFeatureRestriction }>>()
 
 // task 048: server-level user groups, and each local user's group membership
 // as a set of group ids - mirrors the server's `server_groups` /
@@ -349,6 +353,49 @@ function minutesAgo(mins: number): number {
 function activeBans(bans: BanEntry[]): BanEntry[] {
   const now = Date.now()
   return bans.filter((ban) => ban.expires_at == null || Date.parse(ban.expires_at) > now)
+}
+
+function isGloballyBanned(actor: string): boolean {
+  const active = activeBans(globalBans)
+  globalBans.splice(0, globalBans.length, ...active)
+  return active.some((ban) => ban.actor === actor)
+}
+
+function restrictionsFor(nodeId: string) {
+  let restrictions = featureRestrictions.get(nodeId)
+  if (!restrictions) {
+    restrictions = {
+      chat: { owner: { paused: false, expires_at: null, mode: 'inherit' }, server: { paused: false, expires_at: null, mode: 'inherit' } },
+      posts: { owner: { paused: false, expires_at: null, mode: 'inherit' }, server: { paused: false, expires_at: null, mode: 'inherit' } },
+    }
+    featureRestrictions.set(nodeId, restrictions)
+  }
+  return restrictions
+}
+
+function toFeatureRestrictions(nodeId: string): FeatureRestrictions {
+  const restrictions = restrictionsFor(nodeId)
+  const now = Date.now()
+  return Object.fromEntries((['chat', 'posts'] as const).map((feature) => {
+    const entry = restrictions[feature]
+    if (entry.owner.expires_at != null && entry.owner.expires_at <= now) {
+      entry.owner.paused = false
+      entry.owner.expires_at = null
+    }
+    if (entry.server.expires_at != null && entry.server.expires_at <= now) {
+      entry.server.mode = 'inherit'
+      entry.server.expires_at = null
+    }
+    const serverForced = entry.server.mode !== 'inherit'
+    const paused = serverForced ? entry.server.mode === 'force_pause' : entry.owner.paused
+    const source = serverForced ? 'server' : entry.owner.paused ? 'owner' : 'none'
+    const expires_at = serverForced ? entry.server.expires_at : entry.owner.paused ? entry.owner.expires_at : null
+    return [feature, {
+      owner: { paused: entry.owner.paused, expires_at: entry.owner.expires_at == null ? null : new Date(entry.owner.expires_at).toISOString() },
+      server: { mode: entry.server.mode, expires_at: entry.server.expires_at == null ? null : new Date(entry.server.expires_at).toISOString() },
+      effective: { paused, source, expires_at: expires_at == null ? null : new Date(expires_at).toISOString() },
+    }]
+  })) as unknown as FeatureRestrictions
 }
 
 function makeRoom(resId: string, type: RoomType, name: string, position = 0, description: string | null = null): MockRoomState {
@@ -804,6 +851,7 @@ export const mockApi = {
   async login(payload: LoginPayload): Promise<TotpLoginResult> {
     const user = users.find((u) => u.username === payload.username && u.password === payload.password)
     if (!user) throw new ApiRequestError('AUTH_FAILED', 401)
+    if (isGloballyBanned(user.actor)) throw new ApiRequestError('AUTH_FAILED', 403)
     if (user.totp_enabled) {
       const pending = makeToken()
       totpPending.set(pending, { actor: user.actor, exp: Date.now() + 300_000 })
@@ -849,6 +897,7 @@ export const mockApi = {
     if (!claims || claims.exp < Date.now()) throw new ApiRequestError('AUTH_FAILED', 401)
     const user = users.find((u) => u.actor === claims.actor)
     if (!user) throw new ApiRequestError('AUTH_FAILED', 401)
+    if (isGloballyBanned(user.actor)) throw new ApiRequestError('AUTH_FAILED', 403)
     if (totpCodeError(code)) throw new ApiRequestError('TOTP_INVALID', 401)
     const token = makeToken()
     sessions.set(token, user.actor)
@@ -942,6 +991,7 @@ export const mockApi = {
     if (!passkey) throw new ApiRequestError('AUTH_FAILED', 401)
     const user = users.find((u) => u.actor === passkey.actor)
     if (!user) throw new ApiRequestError('AUTH_FAILED', 401)
+    if (isGloballyBanned(user.actor)) throw new ApiRequestError('AUTH_FAILED', 403)
     const token = makeToken()
     sessions.set(token, user.actor)
     return delay({ token, user: stripPassword(user) })
@@ -1161,6 +1211,32 @@ export const mockApi = {
     return delay(toStrongholdConfig(state))
   },
 
+  async getFeatureRestrictions(token: string, nodeId: string): Promise<FeatureRestrictions> {
+    requireUser(token)
+    if (!strongholds.has(nodeId)) throw new ApiRequestError('NOT_FOUND', 404)
+    return delay(toFeatureRestrictions(nodeId))
+  },
+
+  async patchOwnerFeatureRestriction(token: string, nodeId: string, feature: 'chat' | 'posts', paused: boolean, expiresAt: number | null): Promise<void> {
+    const user = requireUser(token)
+    const state = strongholds.get(nodeId)
+    if (!state) throw new ApiRequestError('NOT_FOUND', 404)
+    if (state.owner_actor !== user.actor) throw new ApiRequestError('FORBIDDEN', 403)
+    const restriction = restrictionsFor(nodeId)[feature].owner
+    restriction.paused = paused
+    restriction.expires_at = paused ? expiresAt : null
+    return delay(undefined)
+  },
+
+  async patchServerFeatureRestriction(token: string, nodeId: string, feature: 'chat' | 'posts', mode: FeatureRestrictionMode, expiresAt: number | null): Promise<void> {
+    requireAdmin(token)
+    if (!strongholds.has(nodeId)) throw new ApiRequestError('NOT_FOUND', 404)
+    const restriction = restrictionsFor(nodeId)[feature].server
+    restriction.mode = mode
+    restriction.expires_at = mode === 'inherit' ? null : expiresAt
+    return delay(undefined)
+  },
+
   async patchStrongholdConfig(token: string, nodeId: string, patch: StrongholdConfigPatch): Promise<StrongholdConfig> {
     const { member } = requireManager(token, nodeId)
     if (patch.visibility !== undefined && member.role !== 'owner') throw new ApiRequestError('FORBIDDEN', 403)
@@ -1274,7 +1350,8 @@ export const mockApi = {
     // owner/admin overlay, but not an unrelated authenticated account.
     if (!user.is_admin && !findMember(nodeId, user.actor)) throw new ApiRequestError('FORBIDDEN', 403)
     if (tab === 'banned') {
-      const banned = strongholdBans.get(nodeId) ?? []
+      const banned = activeBans(strongholdBans.get(nodeId) ?? [])
+      strongholdBans.set(nodeId, banned)
       return delay({
         members: banned.map((ban) => ({
           actor: ban.actor,
@@ -1292,7 +1369,8 @@ export const mockApi = {
         next_cursor: null,
       })
     }
-    const all = strongholdMembers.get(nodeId) ?? []
+    const activeBanActors = new Set(activeBans(strongholdBans.get(nodeId) ?? []).map((ban) => ban.actor))
+    const all = (strongholdMembers.get(nodeId) ?? []).filter((member) => !activeBanActors.has(member.actor))
     const filtered =
       tab === 'restricted'
         ? all.filter((member) => member.deny_discussion || member.deny_idea || member.deny_comment)
@@ -1351,7 +1429,6 @@ export const mockApi = {
     if (!target) throw new ApiRequestError('NOT_FOUND', 404)
     if (target.role === 'owner') throw new ApiRequestError('FORBIDDEN', 403)
     if (target.role === 'mod' && manager.role !== 'owner') throw new ApiRequestError('FORBIDDEN', 403)
-    strongholdMembers.set(nodeId, (strongholdMembers.get(nodeId) ?? []).filter((m) => m.actor !== actor))
     const bans = strongholdBans.get(nodeId) ?? []
     const expires_at = expiresAt == null ? null : new Date(expiresAt).toISOString()
     bans.splice(0, bans.length, ...activeBans(bans).filter((ban) => ban.actor !== target.actor))
@@ -1385,7 +1462,11 @@ export const mockApi = {
   },
 
   async unbanAccountGlobally(token: string, actor: string): Promise<void> {
-    requireAdmin(token)
+    const operator = requireAdmin(token)
+    const target = users.find((user) => user.actor === actor)
+    if (!target) throw new ApiRequestError('NOT_FOUND', 404)
+    if (target.server_role === 'owner') throw new ApiRequestError('FORBIDDEN', 403)
+    if (operator.server_role !== 'owner' && target.server_role !== 'user') throw new ApiRequestError('FORBIDDEN', 403)
     globalBans.splice(0, globalBans.length, ...globalBans.filter((ban) => ban.actor !== actor))
     return delay(undefined)
   },

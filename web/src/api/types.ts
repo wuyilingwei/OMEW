@@ -116,6 +116,22 @@ export interface StrongholdConfigPatch {
   edit_window_secs?: number
 }
 
+export type RestrictedFeature = 'chat' | 'posts'
+export type FeatureRestrictionMode = 'inherit' | 'force_allow' | 'force_pause'
+
+export interface FeatureRestrictionState {
+  owner: { paused: boolean; expires_at: string | null }
+  server: { mode: FeatureRestrictionMode; expires_at: string | null }
+  effective: { paused: boolean; source: 'none' | 'owner' | 'server'; expires_at: string | null }
+}
+
+// Chat and posts are independently governed: a server override takes priority
+// over the actual stronghold owner's temporary pause for that one feature.
+export interface FeatureRestrictions {
+  chat: FeatureRestrictionState
+  posts: FeatureRestrictionState
+}
+
 // task 048: a member's server-level group badge, as returned by the batch
 // read-only lookup (GET /api/server-groups/members) - deliberately thin,
 // just enough to render a badge. Read-only on the stronghold side; group

@@ -8,6 +8,8 @@ import type {
   DirectoryEntry,
   Emote,
   EmotePack,
+  FeatureRestrictionMode,
+  FeatureRestrictions,
   InviteCode,
   MemberGroupRef,
   RootRequirement,
@@ -19,7 +21,7 @@ import type {
 import { useAuth } from '../composables/useAuth'
 import { useStorageUsage } from '../composables/useStorageUsage'
 import { fileUploadError } from '../utils/validate'
-import { WinButton, WinInfoBar, WinSelectorBar } from '../vendor/winui'
+import { WinButton, WinComboBox, WinInfoBar, WinSelectorBar } from '../vendor/winui'
 import GroupEditorModal from './GroupEditorModal.vue'
 import ImageEditor from './ImageEditor.vue'
 
@@ -109,6 +111,12 @@ function canGloballyUnban(ban: BanEntry) {
   return users.value.find((user) => user.localpart === localpart)?.server_role === 'user'
 }
 
+function actorForLocalpart(localpart: string) {
+  const actor = auth.user.value?.actor
+  const domain = actor?.slice(actor.indexOf(':') + 1)
+  return domain ? `@${localpart}:${domain}` : null
+}
+
 async function loadGlobalBans() {
   if (!auth.token.value || !auth.isAdmin.value) return
   globalBansError.value = ''
@@ -120,7 +128,8 @@ async function loadGlobalBans() {
 }
 
 async function banGlobally(user: AdminUserEntry) {
-  if (!auth.token.value || !canGloballyBan(user) || globalBanBusyActor.value) return
+  const actor = actorForLocalpart(user.localpart)
+  if (!auth.token.value || !actor || !canGloballyBan(user) || globalBanBusyActor.value) return
   const expiresAt = selectedGlobalExpiry()
   if (expiresAt === undefined) return
   const duration = expiresAt == null ? '永久' : `至 ${new Date(expiresAt).toLocaleString()}`
@@ -128,7 +137,7 @@ async function banGlobally(user: AdminUserEntry) {
   globalBanBusyActor.value = user.localpart
   globalBansError.value = ''
   try {
-    await api.banAccountGlobally(auth.token.value, `@${user.localpart}:local`, expiresAt)
+    await api.banAccountGlobally(auth.token.value, actor, expiresAt)
     await loadGlobalBans()
   } catch {
     globalBansError.value = '全局封禁失败，请稍后重试'
@@ -471,11 +480,91 @@ const editingSlugId = ref('')
 const editingSlugValue = ref('')
 const slugError = ref('')
 const slugBusy = ref(false)
+const serverRestrictions = ref<Record<string, FeatureRestrictions>>({})
+const serverRestrictionDrafts = reactive<Record<string, { mode: FeatureRestrictionMode; expiresAt: string }>>({})
+const serverRestrictionsError = ref('')
+const serverRestrictionBusy = ref('')
+const FEATURE_LABEL = { chat: '聊天', posts: '发帖' } as const
+const SERVER_RESTRICTION_OPTIONS = [
+  { Text: '继承据点领主设置', Value: 'inherit' },
+  { Text: '服务器强制允许', Value: 'force_allow' },
+  { Text: '服务器强制暂停', Value: 'force_pause' },
+]
+
+function restrictionDraftKey(nodeId: string, feature: 'chat' | 'posts') {
+  return `${nodeId}:${feature}`
+}
+
+function toDateTimeLocal(value: string | null) {
+  if (!value) return ''
+  const date = new Date(value)
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
+}
+
+function getServerRestrictionDraft(nodeId: string, feature: 'chat' | 'posts') {
+  return serverRestrictionDrafts[restrictionDraftKey(nodeId, feature)] ?? { mode: 'inherit' as const, expiresAt: '' }
+}
+
+function setServerRestrictionMode(nodeId: string, feature: 'chat' | 'posts', mode: FeatureRestrictionMode) {
+  const key = restrictionDraftKey(nodeId, feature)
+  const current = getServerRestrictionDraft(nodeId, feature)
+  serverRestrictionDrafts[key] = { ...current, mode, expiresAt: mode === 'inherit' ? '' : current.expiresAt }
+}
+
+function setServerRestrictionExpiry(nodeId: string, feature: 'chat' | 'posts', event: Event) {
+  const key = restrictionDraftKey(nodeId, feature)
+  const current = getServerRestrictionDraft(nodeId, feature)
+  serverRestrictionDrafts[key] = { ...current, expiresAt: (event.target as HTMLInputElement).value }
+}
+
+function effectiveRestrictionSummary(nodeId: string, feature: 'chat' | 'posts') {
+  const effective = serverRestrictions.value[nodeId]?.[feature].effective
+  if (!effective) return '状态加载中'
+  if (!effective.paused) return '当前可用'
+  const source = effective.source === 'server' ? '服务器覆盖' : '据点领主'
+  return effective.expires_at ? `当前已暂停（${source}，自动恢复：${new Date(effective.expires_at).toLocaleString()}）` : `当前已暂停（${source}，未设置自动恢复）`
+}
+
+async function loadServerRestrictions(nodeId: string) {
+  if (!auth.token.value || !auth.isAdmin.value) return
+  const restrictions = await api.getFeatureRestrictions(auth.token.value, nodeId)
+  serverRestrictions.value = { ...serverRestrictions.value, [nodeId]: restrictions }
+  for (const feature of ['chat', 'posts'] as const) {
+    serverRestrictionDrafts[restrictionDraftKey(nodeId, feature)] = {
+      mode: restrictions[feature].server.mode,
+      expiresAt: toDateTimeLocal(restrictions[feature].server.expires_at),
+    }
+  }
+}
+
+async function saveServerRestriction(nodeId: string, feature: 'chat' | 'posts') {
+  if (!auth.token.value || !auth.isAdmin.value || serverRestrictionBusy.value) return
+  const draft = getServerRestrictionDraft(nodeId, feature)
+  let expiresAt: number | null = null
+  if (draft.mode !== 'inherit' && draft.expiresAt) {
+    expiresAt = new Date(draft.expiresAt).getTime()
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+      serverRestrictionsError.value = '自动恢复时间必须晚于当前时间'
+      return
+    }
+  }
+  serverRestrictionBusy.value = restrictionDraftKey(nodeId, feature)
+  serverRestrictionsError.value = ''
+  try {
+    await api.patchServerFeatureRestriction(auth.token.value, nodeId, feature, draft.mode, expiresAt)
+    await loadServerRestrictions(nodeId)
+  } catch {
+    serverRestrictionsError.value = '保存服务器覆盖失败，请稍后重试'
+  } finally {
+    serverRestrictionBusy.value = ''
+  }
+}
 
 async function loadStrongholdsList() {
   strongholdsError.value = ''
   try {
     strongholds.value = await api.getDirectory()
+    if (auth.isAdmin.value) await Promise.all(strongholds.value.map((stronghold) => loadServerRestrictions(stronghold.id)))
   } catch {
     strongholdsError.value = '无法加载据点列表'
   }
@@ -636,6 +725,34 @@ watch(
                     </template>
                   </li>
                 </ul>
+              </section>
+
+              <section v-if="auth.isAdmin.value" class="admin-card">
+                <h2 class="admin-card__title">据点聊天与发帖覆盖</h2>
+                <WinInfoBar :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Informational">
+                  服务器覆盖优先于据点领主设置。聊天与发帖可分别设置；选择继承会立刻恢复领主设置的优先级。
+                </WinInfoBar>
+                <p v-if="serverRestrictionsError" class="field__error">{{ serverRestrictionsError }}</p>
+                <div v-for="s in strongholds" :key="`restrictions-${s.id}`" class="admin-feature-restriction">
+                  <h3>{{ s.name }}</h3>
+                  <div v-for="feature in (['chat', 'posts'] as const)" :key="feature" class="admin-feature-restriction__row">
+                    <strong>{{ FEATURE_LABEL[feature] }}</strong>
+                    <span class="field__hint">{{ effectiveRestrictionSummary(s.id, feature) }}</span>
+                    <WinComboBox
+                      :ItemsSource="SERVER_RESTRICTION_OPTIONS"
+                      SelectedValuePath="Value"
+                      :SelectedValue="getServerRestrictionDraft(s.id, feature).mode"
+                      @update:SelectedValue="setServerRestrictionMode(s.id, feature, $event as FeatureRestrictionMode)"
+                    />
+                    <div v-if="getServerRestrictionDraft(s.id, feature).mode !== 'inherit'" class="field">
+                      <label class="field__label" :for="`server-${s.id}-${feature}-resume-at`">自动恢复时间（可选）</label>
+                      <input :id="`server-${s.id}-${feature}-resume-at`" :value="getServerRestrictionDraft(s.id, feature).expiresAt" type="datetime-local" @input="setServerRestrictionExpiry(s.id, feature, $event)" />
+                    </div>
+                    <WinButton Style="AccentButtonStyle" :IsEnabled="!serverRestrictionBusy" @click="saveServerRestriction(s.id, feature)">
+                      {{ serverRestrictionBusy === restrictionDraftKey(s.id, feature) ? '保存中…' : '保存服务器覆盖' }}
+                    </WinButton>
+                  </div>
+                </div>
               </section>
 
               <section v-if="config?.stronghold_creation_policy === 'application'" class="admin-card">

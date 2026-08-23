@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { api } from '../api'
-import type { BanEntry, MemberPatch, MemberTab, StrongholdConfigPatch, StrongholdMember } from '../api/types'
+import type { BanEntry, FeatureRestrictions, MemberPatch, MemberTab, RestrictedFeature, StrongholdConfigPatch, StrongholdMember } from '../api/types'
 import { EMPTY_STATE } from '../assets/mew'
 import { useAuth } from '../composables/useAuth'
 import { useStorageUsage } from '../composables/useStorageUsage'
@@ -187,6 +187,14 @@ const settingsSaving = ref(false)
 const settingsSaveOk = ref(false)
 const strongholdDeleting = ref(false)
 const strongholdDeleteError = ref('')
+const restrictions = ref<FeatureRestrictions | null>(null)
+const restrictionsError = ref('')
+const restrictionsSaving = ref<RestrictedFeature | null>(null)
+const FEATURE_LABEL: Record<RestrictedFeature, string> = { chat: '聊天', posts: '发帖' }
+const ownerRestrictionDraft = reactive<Record<RestrictedFeature, { paused: boolean; expiresAt: string }>>({
+  chat: { paused: false, expiresAt: '' },
+  posts: { paused: false, expiresAt: '' },
+})
 const form = reactive({
   name: '',
   description: '',
@@ -202,8 +210,12 @@ async function loadSettings() {
   if (!auth.token.value || !props.open) return
   settingsLoading.value = true
   settingsError.value = ''
+  restrictionsError.value = ''
   try {
-    const config = await api.getStrongholdConfig(auth.token.value, selectedNodeId.value)
+    const [config, nextRestrictions] = await Promise.all([
+      api.getStrongholdConfig(auth.token.value, selectedNodeId.value),
+      api.getFeatureRestrictions(auth.token.value, selectedNodeId.value),
+    ])
     form.name = config.name
     form.description = config.description
     form.avatar = config.avatar ?? ''
@@ -212,10 +224,53 @@ async function loadSettings() {
     form.allow_message_edit = config.allow_message_edit
     form.allow_message_retract = config.allow_message_retract
     form.edit_window_secs = config.edit_window_secs
+    restrictions.value = nextRestrictions
+    for (const feature of ['chat', 'posts'] as const) {
+      ownerRestrictionDraft[feature].paused = nextRestrictions[feature].owner.paused
+      ownerRestrictionDraft[feature].expiresAt = toDateTimeLocal(nextRestrictions[feature].owner.expires_at)
+    }
   } catch {
     settingsError.value = '无法加载据点设置'
   } finally {
     settingsLoading.value = false
+  }
+}
+
+function toDateTimeLocal(value: string | null) {
+  if (!value) return ''
+  const date = new Date(value)
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
+}
+
+function restrictionSummary(feature: RestrictedFeature) {
+  const restriction = restrictions.value?.[feature]
+  if (!restriction) return '状态加载中'
+  if (!restriction.effective.paused) return '当前可用'
+  const scope = restriction.effective.source === 'server' ? '服务器覆盖' : '据点领主'
+  const ends = restriction.effective.expires_at ? `，自动恢复：${new Date(restriction.effective.expires_at).toLocaleString()}` : '，未设置自动恢复'
+  return `当前已暂停（${scope}${ends}）`
+}
+
+async function saveOwnerFeatureRestriction(feature: RestrictedFeature) {
+  if (!auth.token.value || !isOwner.value || restrictionsSaving.value) return
+  const draft = ownerRestrictionDraft[feature]
+  let expiresAt: number | null = null
+  if (draft.paused && draft.expiresAt) {
+    expiresAt = new Date(draft.expiresAt).getTime()
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+      restrictionsError.value = '自动恢复时间必须晚于当前时间'
+      return
+    }
+  }
+  restrictionsSaving.value = feature
+  restrictionsError.value = ''
+  try {
+    await api.patchOwnerFeatureRestriction(auth.token.value, selectedNodeId.value, feature, draft.paused, expiresAt)
+    restrictions.value = await api.getFeatureRestrictions(auth.token.value, selectedNodeId.value)
+  } catch {
+    restrictionsError.value = '保存功能暂停设置失败，请稍后重试'
+  } finally {
+    restrictionsSaving.value = null
   }
 }
 
@@ -454,6 +509,28 @@ watch(
                   <label class="field__label" for="sh-window">编辑/撤回窗口（秒，0 表示不限）</label>
                   <input id="sh-window" v-model.number="form.edit_window_secs" type="number" min="0" step="1" />
                 </div>
+
+                <section class="stronghold-feature-restrictions" aria-label="聊天与发帖暂停">
+                  <h2>聊天与发帖暂停</h2>
+                  <p v-if="restrictionsError" class="field__error">{{ restrictionsError }}</p>
+                  <div v-for="feature in (['chat', 'posts'] as RestrictedFeature[])" :key="feature" class="stronghold-feature-restrictions__row">
+                    <div>
+                      <strong>{{ FEATURE_LABEL[feature] }}</strong>
+                      <p class="field__hint">{{ restrictionSummary(feature) }}</p>
+                    </div>
+                    <template v-if="isOwner">
+                      <WinToggleSwitch v-model="ownerRestrictionDraft[feature].paused">暂停{{ FEATURE_LABEL[feature] }}</WinToggleSwitch>
+                      <div v-if="ownerRestrictionDraft[feature].paused" class="field">
+                        <label class="field__label" :for="`owner-${feature}-resume-at`">自动恢复时间（可选）</label>
+                        <input :id="`owner-${feature}-resume-at`" v-model="ownerRestrictionDraft[feature].expiresAt" type="datetime-local" />
+                      </div>
+                      <WinButton Style="AccentButtonStyle" :IsEnabled="restrictionsSaving !== feature" @click="saveOwnerFeatureRestriction(feature)">
+                        {{ restrictionsSaving === feature ? '保存中…' : `保存${FEATURE_LABEL[feature]}设置` }}
+                      </WinButton>
+                    </template>
+                  </div>
+                  <p v-if="!isOwner" class="field__hint">仅据点实际领主可设置据点级暂停；服务器覆盖请在服务器管理中操作。</p>
+                </section>
 
                 <div class="admin-modal__save">
                   <p v-if="settingsSaveOk" class="admin-modal__save-ok">已保存</p>

@@ -19,6 +19,12 @@ describe('global and timed ban web contract', () => {
     expect(client).toMatch(/`\/api\/admin\/bans\/\$\{encodeURIComponent\(actor\)\}`/)
     expect(mock).toMatch(/function activeBans[\s\S]*?Date\.parse\(ban\.expires_at\) > now/)
     expect(mock).toMatch(/operator\.server_role !== 'owner' && target\.server_role !== 'user'/)
+    expect(mock).toMatch(/async unbanAccountGlobally[\s\S]*?operator\.server_role !== 'owner' && target\.server_role !== 'user'/)
+    expect(serverAdminModal).toMatch(/function actorForLocalpart[\s\S]*?auth\.user\.value\?\.actor/)
+    expect(serverAdminModal).not.toContain('`@${user.localpart}:local`')
+    expect(mock).toMatch(/function isGloballyBanned[\s\S]*?activeBans\(globalBans\)/)
+    expect(mock).toMatch(/if \(!user \|\| isGloballyBanned\(user\.actor\)\) throw new ApiRequestError\('AUTH_FAILED', 401\)/)
+    expect(mock).toMatch(/const activeBanActors = new Set\(activeBans\(strongholdBans\.get\(nodeId\) \?\? \[\]\)/)
   })
 
   it('separates global and stronghold scope, keeps ordinary users out, and exposes optional automatic unban times', () => {
