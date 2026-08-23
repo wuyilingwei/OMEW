@@ -55,6 +55,8 @@ describe("DELETE /api/stronghold/:id", () => {
     await env.DB.prepare(
       "INSERT INTO guest_identity (actor, registered_origin, first_seen_at, last_assertion_at) VALUES (?, ?, ?, ?)"
     ).bind(member, "remote.example", Date.now(), Date.now()).run();
+    await env.MEDIA.put("archive/keep-index-test", new Uint8Array([1]));
+    await env.MEDIA.put("archive/foreign-index-test", new Uint8Array([2]));
     await env.DB.batch([
       env.DB.prepare("INSERT INTO stronghold_slug_index (slug, stronghold_id) VALUES (?, ?)").bind(`cleanup-${sequence}`, id),
       env.DB.prepare("INSERT INTO guest_member_state (actor, stronghold_id) VALUES (?, ?)").bind(member, id),
@@ -86,6 +88,8 @@ describe("DELETE /api/stronghold/:id", () => {
     expect(await env.DB.prepare("SELECT * FROM guest_member_state WHERE stronghold_id = ?").bind(id).all()).toEqual({ results: [], success: true, meta: expect.any(Object) });
     expect(await env.DB.prepare("SELECT * FROM archive_index WHERE do_key = ? OR instr(do_key, ?) = 1").bind(id, `${id}/`).all()).toEqual({ results: [], success: true, meta: expect.any(Object) });
     expect(await env.DB.prepare("SELECT do_key FROM archive_index WHERE do_key = ?").bind(foreignArchiveRef).first()).toEqual({ do_key: foreignArchiveRef });
+    expect(await env.MEDIA.get("archive/keep-index-test")).toBeNull();
+    expect(await env.MEDIA.get("archive/foreign-index-test")).not.toBeNull();
     expect(await env.DB.prepare("SELECT id FROM media WHERE id = ?").bind(`media-${sequence}`).first()).toEqual({ id: `media-${sequence}` });
   });
 
@@ -104,5 +108,23 @@ describe("DELETE /api/stronghold/:id", () => {
       method: "POST", headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify({ res_id: "nope", name: "Nope" }),
     });
     expect(legacy.status).toBe(404);
+
+    const stalePaths = [
+      `/stronghold/${id}`,
+      `/api/stronghold/${id}/config`,
+      `/api/stronghold/${id}/rooms`,
+      `/stronghold/${id}/rooms/nope/history`,
+      `/stronghold/${id}/rooms/nope/token`,
+      `/stronghold/${id}/tips-token`,
+    ];
+    for (const path of stalePaths) {
+      const response = await apiRequest(path, { method: path.endsWith("token") ? "POST" : "GET", headers: { Authorization: `Bearer ${token}` } });
+      expect(response.status).toBe(404);
+    }
+  });
+
+  it("does not retain the retired client-specified creation endpoint", async () => {
+    const response = await apiRequest("/stronghold", { method: "POST", body: JSON.stringify({ id: "revive-me", name: "No" }) });
+    expect(response.status).toBe(404);
   });
 });

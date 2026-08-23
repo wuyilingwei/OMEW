@@ -1448,20 +1448,6 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
   // ---- stronghold CRUD ----------------------------------------------------------
 
-  if (method === "POST" && path === "/stronghold") {
-    const actor = await requireActor(request, env);
-    if (!actor) return errorResponse(401, "OMEW_SESSION_INVALID", "auth required");
-    const body = await readJsonBody(request);
-    if (!body) return errorResponse(413, "OMEW_ENVELOPE_TOO_LARGE", "body too large or malformed");
-    const id = String(body.id ?? "");
-    const name = String(body.name ?? "");
-    const visibility = body.visibility === "private" ? "private" : "public";
-    if (!RES_ID_RE.test(id) || !name) return errorResponse(400, "OMEW_MALFORMED", "invalid id or name");
-    const stub = env.STRONGHOLD_DO.getByName(id);
-    const config = await stub.initConfig(id, name, visibility, actor, asOptionalString(body.description), asOptionalString(body.icon));
-    return json(config, 201);
-  }
-
   let m = match("/stronghold/:id", path);
   if (m && method === "GET") {
     const stub = env.STRONGHOLD_DO.getByName(m.id!);
@@ -1958,9 +1944,16 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     // StrongholdDO intact, so a retry is safe and cannot strand inaccessible
     // room state behind an already-deleted config.
     const rooms = await stub.listRoomsForDeletion();
+    const { results: archiveRows } = await env.DB.prepare(
+      "SELECT r2_key FROM archive_index WHERE do_key = ? OR instr(do_key, ?) = 1"
+    ).bind(strongholdId, `${strongholdId}/`).all<{ r2_key: string }>();
     await Promise.all(
       rooms.map((room) => env.ROOM_DO.getByName(`${strongholdId}/${typeToKind(room.type)}/${room.res_id}`).purgeForStrongholdDeletion())
     );
+
+    // A failed archive deletion keeps the config and indexes intact so the
+    // owner can retry; child RoomDO deletion is idempotent.
+    await Promise.all([...new Set(archiveRows.map((row) => row.r2_key))].map((key) => env.MEDIA.delete(key)));
 
     // D1 is only an index/auxiliary state for this graph.  These deletes are
     // deliberately scoped by the stronghold id; media is not touched because
@@ -2205,6 +2198,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const session = await requireSession(request, env);
     if (session instanceof Response) return errorResponse(401, "OMEW_SESSION_INVALID", "auth required");
     const strongholdStub = env.STRONGHOLD_DO.getByName(m.id!);
+    if (!await strongholdStub.getConfig()) return errorResponse(404, "OMEW_NOT_FOUND", "stronghold not found");
     // task 037: role/deny baked into the token are the group-synthesized
     // effective values (permissions.ts) - RoomDO itself is unchanged, it just
     // reads whatever role/deny the token carries.
@@ -2229,6 +2223,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const session = await requireSession(request, env);
     if (session instanceof Response) return errorResponse(401, "OMEW_SESSION_INVALID", "auth required");
     const strongholdStub = env.STRONGHOLD_DO.getByName(m.id!);
+    if (!await strongholdStub.getConfig()) return errorResponse(404, "OMEW_NOT_FOUND", "stronghold not found");
     const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
     if (!eff) return errorResponse(403, "OMEW_BANNED", "not a member or banned");
     const claims: StrongholdTokenClaims = {

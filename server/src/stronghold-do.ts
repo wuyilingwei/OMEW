@@ -405,13 +405,21 @@ export class StrongholdDO extends DurableObject<Env> {
   }
 
   async listRooms(): Promise<RoomRow[]> {
-    return this.ctx.storage.sql.exec<RoomRow>("SELECT * FROM room WHERE archived = 0 ORDER BY position, created_at").toArray();
+    try {
+      return this.ctx.storage.sql.exec<RoomRow>("SELECT * FROM room WHERE archived = 0 ORDER BY position, created_at").toArray();
+    } catch {
+      return [];
+    }
   }
 
   // Deletion must also purge archived rooms: their res_id is deliberately never
   // reused, but their RoomDO can still contain historical content.
   async listRoomsForDeletion(): Promise<RoomRow[]> {
-    return this.ctx.storage.sql.exec<RoomRow>("SELECT * FROM room ORDER BY position, created_at").toArray();
+    try {
+      return this.ctx.storage.sql.exec<RoomRow>("SELECT * FROM room ORDER BY position, created_at").toArray();
+    } catch {
+      return [];
+    }
   }
 
   // Called only by the HTTP deletion orchestrator after every child RoomDO has
@@ -429,8 +437,12 @@ export class StrongholdDO extends DurableObject<Env> {
   }
 
   async getRoom(resId: string): Promise<RoomRow | null> {
-    const rows = this.ctx.storage.sql.exec<RoomRow>("SELECT * FROM room WHERE res_id = ?", resId).toArray();
-    return rows[0] ?? null;
+    try {
+      const rows = this.ctx.storage.sql.exec<RoomRow>("SELECT * FROM room WHERE res_id = ?", resId).toArray();
+      return rows[0] ?? null;
+    } catch {
+      return null;
+    }
   }
 
   async updateRoom(
@@ -506,7 +518,11 @@ export class StrongholdDO extends DurableObject<Env> {
   }
 
   async listMembers(): Promise<MemberRow[]> {
-    return this.ctx.storage.sql.exec<MemberRow>("SELECT * FROM member ORDER BY joined_at").toArray();
+    try {
+      return this.ctx.storage.sql.exec<MemberRow>("SELECT * FROM member ORDER BY joined_at").toArray();
+    } catch {
+      return [];
+    }
   }
 
   // proposal §9: deny bits only apply to `member`; role/deny changes here never
@@ -630,6 +646,7 @@ export class StrongholdDO extends DurableObject<Env> {
   // ---- tips WS ------------------------------------------------------------------
 
   async fetch(request: Request): Promise<Response> {
+    if (!await this.getConfig()) return new Response("stronghold not found", { status: 404 });
     if (request.headers.get("Upgrade") !== "websocket") {
       return new Response("expected websocket", { status: 426 });
     }

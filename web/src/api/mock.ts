@@ -383,11 +383,10 @@ function appendItem(
 ): RoomItem {
   const seq = room.nextSeq++
   const rootSeq = parentSeq ?? seq
-  const { topics: _discardedTopics, ...bodyWithoutTopics } = body as ItemBody & { topics?: unknown }
   const finalBody: ItemBody =
     room.type === 'section' && parentSeq == null
-      ? { ...bodyWithoutTopics, preview: (body.text ?? '').slice(0, PREVIEW_LEN) }
-      : bodyWithoutTopics
+      ? { ...body, preview: (body.text ?? '').slice(0, PREVIEW_LEN) }
+      : body
   const item: RoomItem = { seq, parent_seq: parentSeq, root_seq: rootSeq, actor, kind, ts, body: finalBody }
   room.items.push(item)
   if (room.type === 'section' && parentSeq == null) {
@@ -590,7 +589,7 @@ export class MockRoomTransport implements RoomTransport {
 
   createItem(clientId: string, kind: 'post' | 'reply', body: Record<string, unknown>, parentSeq?: number | null): boolean {
     const room = strongholds.get(this.nodeId)?.rooms.get(this.resId)
-    if (!room) return false
+    if (!room || 'topics' in body) return false
     const item = appendItem(room, this.actor, kind, body as ItemBody, parentSeq ?? null, Date.now())
     queueMicrotask(() => {
       this.handlers.onAck?.({ status: 'ok', client_id: clientId, seq: item.seq })
@@ -613,7 +612,7 @@ export class MockRoomTransport implements RoomTransport {
   editItem(targetSeq: number, body: Record<string, unknown>): boolean {
     const room = strongholds.get(this.nodeId)?.rooms.get(this.resId)
     const item = room?.items.find((i) => i.seq === targetSeq)
-    if (!room || !item) return false
+    if (!room || !item || 'topics' in body) return false
     item.body = body as ItemBody
     item.edited_at = Date.now()
     queueMicrotask(() => this.handlers.onUpdate?.({ seq: targetSeq, target_seq: targetSeq, body: item.body, edited_at: item.edited_at! }))
