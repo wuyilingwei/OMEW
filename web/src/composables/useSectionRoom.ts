@@ -3,6 +3,7 @@ import { api } from '../api'
 import { createRoomTransport } from '../api/transport'
 import type { ItemBody, MediaAttachment, PostReply, PostSummary, PostThread, ReactionEntry, RoomSummary } from '../api/types'
 import type { RoomTransport } from '../api/roomSocket'
+import { canCommitPostPage } from '../utils/postLoad'
 import { applyReactionToggle, invertReactionOp } from '../utils/reactions'
 import { useAuth } from './useAuth'
 import { usePostModal } from './usePostModal'
@@ -31,6 +32,10 @@ let transport: RoomTransport | null = null
 // roomKey identifies the WS and loadKey suppresses duplicate loads.
 let roomKey = ''
 let loadKey = ''
+// Incremented for every room transition so an older listPosts response cannot
+// repopulate the shared list after the user has moved to another room (or back
+// to a room with the same key).
+let loadGeneration = 0
 
 // item.create's broadcast excludes the sender (room-do.ts enqueueBroadcast
 // passes the sender's own ws to exclude it from the batch fan-out) - the
@@ -70,6 +75,7 @@ async function connectRoom(nodeId: string, room: RoomSummary) {
   const key = wsKey
   if (key === loadKey) return
   loadKey = key
+  const generation = ++loadGeneration
   const wsNeedsReconnect = wsKey !== roomKey
   roomKey = wsKey
   if (wsNeedsReconnect) {
@@ -84,8 +90,8 @@ async function connectRoom(nodeId: string, room: RoomSummary) {
   thread.value = null
   openPostSeq = null
 
-  await loadMorePosts(true)
-  if (loadKey !== key) return
+  await loadMorePosts(true, generation, key)
+  if (loadKey !== key || loadGeneration !== generation) return
 
   if (!wsNeedsReconnect) return
 
@@ -282,7 +288,7 @@ function currentMine(targetSeq: number): string[] {
   return posts.value.find((p) => p.post_seq === targetSeq)?.reactions?.mine ?? []
 }
 
-async function loadMorePosts(reset = false) {
+async function loadMorePosts(reset = false, expectedGeneration = loadGeneration, expectedKey = loadKey) {
   const { selectedNodeId } = useStronghold()
   const { selectedSection } = useSection()
   const auth = useAuth()
@@ -298,13 +304,17 @@ async function loadMorePosts(reset = false) {
       reset ? null : postsCursor.value,
       POSTS_PAGE_SIZE,
     )
+    // A room switch can happen while REST is in flight. Only the latest
+    // request may commit, otherwise the old page briefly flashes and then
+    // disappears when the new room load completes.
+    if (!canCommitPostPage(loadGeneration, loadKey, expectedGeneration, expectedKey)) return
     posts.value = reset ? page.posts : [...posts.value, ...page.posts]
     postsCursor.value = page.next_cursor
     hasMorePosts.value = page.next_cursor != null
   } catch {
     // keep whatever we already had
   } finally {
-    postsLoading.value = false
+    if (canCommitPostPage(loadGeneration, loadKey, expectedGeneration, expectedKey)) postsLoading.value = false
   }
 }
 
@@ -318,10 +328,12 @@ export function useSectionRoom() {
     ([nodeId, room]) => {
       if (nodeId && room) void connectRoom(nodeId, room)
       else {
+        loadGeneration += 1
         transport?.close()
         transport = null
         roomKey = ''
         loadKey = ''
+        postsLoading.value = false
         posts.value = []
         thread.value = null
       }
