@@ -179,30 +179,31 @@ function closeCompose() {
 
 .left-column__section-button {
   flex: 0 0 auto;
-  width: 3.5rem;
-  height: 3.5rem;
-  min-width: 3.5rem;
-  padding: 0.3rem;
+  min-width: 0;
+  max-width: 12rem;
+  min-height: 2.25rem;
+  padding: 0.35rem 0.65rem;
   border-radius: 0.25rem;
-  font-size: 0.72rem;
-  flex-direction: column;
-  gap: 0.15rem;
+  font-size: 0.82rem;
+  flex-direction: row;
+  gap: 0.3rem;
 }
 
 .left-column__section-hash {
   display: block;
-  font-size: 1.2rem;
+  flex: 0 0 auto;
+  font-size: 1rem;
   line-height: 1;
   font-weight: 700;
 }
 
 .left-column__section-label {
   display: block;
-  width: 100%;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  line-height: 1.1;
+  line-height: 1.2;
 }
 
 .left-column__section-placeholder {
