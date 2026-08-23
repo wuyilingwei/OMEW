@@ -15,7 +15,7 @@ const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 
 const auth = useAuth()
-const { nodes, selectedNodeId, loadStrongholds } = useStronghold()
+const { joinedNodeIds, selectedNodeId, loadStrongholds } = useStronghold()
 
 const entries = ref<DirectoryEntry[]>([])
 const loading = ref(false)
@@ -23,7 +23,7 @@ const loadError = ref('')
 const joiningId = ref('')
 
 function isJoined(id: string): boolean {
-  return nodes.value.some((n) => n.id === id)
+  return joinedNodeIds.value.has(id)
 }
 
 async function loadDirectory() {

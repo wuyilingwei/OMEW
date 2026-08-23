@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useAuth } from '../composables/useAuth'
 import { useStronghold } from '../composables/useStronghold'
 import CreateStrongholdCard from './CreateStrongholdCard.vue'
 import DirectoryModal from './DirectoryModal.vue'
 import AppIcon from './icons/AppIcon.vue'
 
-const { nodes, selectedNodeId, selectNode, isGuestMode } = useStronghold()
+const auth = useAuth()
+const { nodes, selectedNodeId, selectNode } = useStronghold()
 const showCreate = ref(false)
 const showDirectory = ref(false)
 
@@ -40,12 +42,12 @@ function onCreated() {
           <span v-else>{{ node.name.slice(0, 1) }}</span>
         </button>
       </li>
-      <li v-if="!isGuestMode">
+      <li v-if="auth.isAuthenticated.value">
         <button class="node-rail__item node-rail__item--add" type="button" title="发现据点" aria-label="发现据点" @click="showDirectory = true">
           <AppIcon name="compass" :size="18" />
         </button>
       </li>
-      <li v-if="!isGuestMode">
+      <li v-if="auth.isAuthenticated.value">
         <button class="node-rail__item node-rail__item--add" type="button" title="创建据点" aria-label="创建据点" @click="showCreate = true">
           <AppIcon name="add" :size="18" />
         </button>

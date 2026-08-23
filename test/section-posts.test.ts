@@ -198,7 +198,7 @@ describe("GET /api/stronghold/:id/rooms/:resId/posts", () => {
     ws.close();
   });
 
-  it("rejects a non-member and a channel room", async () => {
+  it("lets a non-member preview public posts but still rejects a channel room", async () => {
     const owner = "@postlist2:local";
     const { id, resId } = await freshSectionStronghold(owner);
     const outsider = await sessionToken("@postlistoutsider1:local");
@@ -206,8 +206,8 @@ describe("GET /api/stronghold/:id/rooms/:resId/posts", () => {
     const res = await apiRequest(`/api/stronghold/${id}/rooms/${resId}/posts`, {
       headers: { Authorization: `Bearer ${outsider}` },
     });
-    expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: "FORBIDDEN" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ posts: [], next_cursor: null });
 
     const ownerToken = await sessionToken(owner);
     await env.STRONGHOLD_DO.getByName(id).createRoom("general", "channel", "General", ["text"], false);

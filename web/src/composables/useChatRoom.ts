@@ -104,8 +104,8 @@ function startGuestPolling(nodeId: string, resId: string, key: string) {
   guestPollTimer = setInterval(() => void pollLatest(nodeId, resId, key), GUEST_POLL_MS)
 }
 
-async function connectRoom(nodeId: string, room: RoomSummary) {
-  const key = `${nodeId}/${room.id}`
+async function connectRoom(nodeId: string, room: RoomSummary, readOnly: boolean) {
+  const key = `${nodeId}/${room.id}/${readOnly ? 'preview' : 'member'}`
   if (key === roomKey) return
   roomKey = key
   transport?.close()
@@ -124,8 +124,8 @@ async function connectRoom(nodeId: string, room: RoomSummary) {
   await loadHistory(nodeId, room.id, null)
   if (roomKey !== key) return // superseded by another switch while awaiting history
 
-  if (!auth.token.value) {
-    // guest: read-only, no room WS - light polling stands in for live updates
+  if (readOnly || !auth.token.value) {
+    // Public preview: read-only, no room WS; light polling provides updates.
     startGuestPolling(nodeId, room.id, key)
     return
   }
@@ -245,13 +245,13 @@ async function loadHistory(nodeId: string, resId: string, before: number | null)
 }
 
 export function useChatRoom() {
-  const { selectedNodeId } = useStronghold()
+  const { selectedNodeId, isReadOnly } = useStronghold()
   const { selectedChannel } = useChannel()
 
   watch(
-    [selectedNodeId, selectedChannel],
-    ([nodeId, room]) => {
-      if (nodeId && room) void connectRoom(nodeId, room)
+    [selectedNodeId, selectedChannel, isReadOnly],
+    ([nodeId, room, readOnly]) => {
+      if (nodeId && room) void connectRoom(nodeId, room, readOnly)
       else {
         transport?.close()
         transport = null

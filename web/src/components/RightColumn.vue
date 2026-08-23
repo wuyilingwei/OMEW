@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { api } from '../api'
 import { DEFAULT_NODE_PAGE_BG } from '../assets/mew'
 import { useAuth } from '../composables/useAuth'
 import { useAuthModal } from '../composables/useAuthModal'
@@ -15,7 +16,7 @@ const emit = defineEmits<{ 'open-server-admin': []; 'open-panel': ['members' | '
 
 const { mode, cycleTheme } = useTheme()
 const auth = useAuth()
-const { currentNode, isGuestMode } = useStronghold()
+const { currentNode, selectedNodeId, isPublicPreview, isReadOnly, loadStrongholds } = useStronghold()
 const { config } = useStrongholdConfig()
 const { myRole } = useStrongholdMembers()
 const { openAuthModal } = useAuthModal()
@@ -37,6 +38,8 @@ const modeLabel: Record<string, string> = {
 const canManage = computed(() => myRole.value === 'owner' || myRole.value === 'mod' || auth.isAdmin.value)
 
 const showPersonalSettings = ref(false)
+const joining = ref(false)
+const joinError = ref('')
 
 const userMenu = computed(() => ({
   Items: [
@@ -50,6 +53,20 @@ function onUserMenuSelect(item: { Value: string }) {
   if (item.Value === 'server-admin') emit('open-server-admin')
   else if (item.Value === 'personal-settings') showPersonalSettings.value = true
   else if (item.Value === 'logout') auth.logout()
+}
+
+async function joinCurrentStronghold() {
+  if (!auth.token.value || !selectedNodeId.value || joining.value) return
+  joining.value = true
+  joinError.value = ''
+  try {
+    await api.joinStronghold(auth.token.value, selectedNodeId.value)
+    await loadStrongholds(true)
+  } catch {
+    joinError.value = '加入失败，请稍后重试'
+  } finally {
+    joining.value = false
+  }
 }
 </script>
 
@@ -86,7 +103,7 @@ function onUserMenuSelect(item: { Value: string }) {
     </div>
 
     <div class="right-column__actions">
-      <template v-if="!isGuestMode">
+      <template v-if="!isReadOnly">
         <WinButton Style="DefaultButtonStyle" class="right-column__action" @click="emit('open-panel', 'members')">
           成员列表
         </WinButton>
@@ -98,6 +115,17 @@ function onUserMenuSelect(item: { Value: string }) {
         >
           据点设置
         </WinButton>
+      </template>
+      <template v-else-if="isPublicPreview">
+        <WinButton
+          Style="AccentButtonStyle"
+          class="right-column__action"
+          :IsEnabled="!joining"
+          @click="joinCurrentStronghold"
+        >
+          {{ joining ? '加入中…' : '加入据点' }}
+        </WinButton>
+        <p v-if="joinError" class="right-column__join-error">{{ joinError }}</p>
       </template>
       <WinButton v-else Style="AccentButtonStyle" class="right-column__action" @click="openAuthModal">
         登录以加入据点
@@ -209,6 +237,12 @@ function onUserMenuSelect(item: { Value: string }) {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+}
+
+.right-column__join-error {
+  margin: 0;
+  color: var(--critical-text);
+  font-size: 0.78rem;
 }
 
 .right-column__action {
