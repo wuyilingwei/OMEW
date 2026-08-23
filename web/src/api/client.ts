@@ -11,6 +11,7 @@ import type {
   CreateRoomPayload,
   CreateStrongholdPayload,
   DirectoryEntry,
+  DirectMessage,
   EditRetractResult,
   Emote,
   EmotePack,
@@ -639,7 +640,7 @@ export const realApi = {
   getGroupsForMembers: (token: string | null, localparts: string[]) => fetchGroupsForLocalparts(token, localparts),
 
   getUser: (token: string, actor: string) =>
-    request<{ actor: string; display_name: string; avatar: string | null; cover: string | null; bio: string | null; is_guest: boolean; home_domain?: string }>(
+    request<{ actor: string; display_name: string; avatar: string | null; cover: string | null; created_at?: number; bio: string | null; is_guest: boolean; home_domain?: string }>(
       `/api/users/${encodeURIComponent(actor)}`,
       { headers: authHeaders(token) },
     ).then(
@@ -649,11 +650,39 @@ export const realApi = {
         display_name: u.display_name,
         avatar: u.avatar,
         cover: u.cover,
+        created_at: u.created_at == null ? undefined : new Date(u.created_at).toISOString(),
         bio: u.bio,
         is_guest: u.is_guest,
         home_domain: u.home_domain,
       }),
     ),
+
+  isUserBlocked: (token: string, nodeId: string, actor: string) =>
+    request<{ blocked: boolean }>(`/api/stronghold/${nodeId}/blocks/${encodeURIComponent(actor)}`, {
+      headers: authHeaders(token),
+    }).then((r) => r.blocked),
+
+  blockUser: (token: string, nodeId: string, actor: string) =>
+    request<void>(`/api/stronghold/${nodeId}/blocks/${encodeURIComponent(actor)}`, {
+      method: 'PUT', headers: authHeaders(token),
+    }),
+
+  unblockUser: (token: string, nodeId: string, actor: string) =>
+    request<void>(`/api/stronghold/${nodeId}/blocks/${encodeURIComponent(actor)}`, {
+      method: 'DELETE', headers: authHeaders(token),
+    }),
+
+  getDirectMessages: (token: string, nodeId: string, actor: string) =>
+    request<{ messages: Array<Omit<DirectMessage, 'created_at'> & { created_at: number }> }>(
+      `/api/stronghold/${nodeId}/direct-messages/${encodeURIComponent(actor)}`,
+      { headers: authHeaders(token) },
+    ).then((r) => r.messages.map((message) => ({ ...message, created_at: new Date(message.created_at).toISOString() }))),
+
+  sendDirectMessage: (token: string, nodeId: string, actor: string, body: string) =>
+    request<Omit<DirectMessage, 'created_at'> & { created_at: number }>(
+      `/api/stronghold/${nodeId}/direct-messages/${encodeURIComponent(actor)}`,
+      { method: 'POST', headers: authHeaders(token), body: JSON.stringify({ body }) },
+    ).then((message) => ({ ...message, created_at: new Date(message.created_at).toISOString() })),
 
   // ---- emotes -----------------------------------------------------------------
 

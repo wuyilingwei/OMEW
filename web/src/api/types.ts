@@ -170,6 +170,8 @@ export interface StrongholdMember {
   is_guest: boolean
   home_domain?: string
   groups: MemberGroupRef[]
+  /** Optional profile summary; older servers may omit it. */
+  bio?: string | null
 }
 
 // tri-state permission value used by server groups: -1 deny / 0 inherit / 1 allow.
@@ -234,9 +236,18 @@ export interface PublicUser {
   display_name: string
   avatar: string | null
   cover: string | null
+  created_at?: string
   bio: string | null
   is_guest: boolean
   home_domain?: string
+}
+
+export interface DirectMessage {
+  id: string
+  sender_actor: string
+  recipient_actor: string
+  body: string
+  created_at: string
 }
 
 // GET /api/admin/users is available to server owners and admins; only PATCH

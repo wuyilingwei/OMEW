@@ -295,6 +295,27 @@ async function effectiveRole(
   return synthesizeEffectivePermissions("member", member.deny, groups);
 }
 
+function isActorIdentifier(actor: string): boolean {
+  return actor.startsWith("@") && actor.includes(":");
+}
+
+// Direct messages are available only inside the shared member surface that
+// exposed the target. This keeps an authenticated account from probing or
+// messaging arbitrary actors, while keeping the ordinary server-role overlay
+// consistent with other stronghold member routes.
+async function requireDirectMessageMembership(
+  env: Env,
+  strongholdId: string,
+  session: SessionTokenClaims,
+  targetActor: string
+): Promise<Response | null> {
+  const stub = env.STRONGHOLD_DO.getByName(strongholdId);
+  const [requester, target] = await Promise.all([stub.getMember(session.actor), stub.getMember(targetActor)]);
+  if (!overlayRole(session.server_role, requester)) return apiError(403, "FORBIDDEN");
+  if (!target || target.banned_at) return apiError(404, "NOT_FOUND");
+  return null;
+}
+
 // task 048 (m0-protocol §7.10a revocation propagation): a server group
 // definition or assignment change re-derives every affected local user's
 // effective role/deny in every stronghold they belong to. Fan-out is
@@ -2460,6 +2481,79 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const result = await roomStub.retractItem(session.actor, eff.role, roomRef, seq);
     if (!result.ok) return apiError(roomErrorStatus(result.code), result.code);
     return json({ seq: result.seq, target_seq: seq });
+  }
+
+  // ---- member-to-member private messaging and ordinary user blocks ------------
+
+  // Both actions are scoped to a shared stronghold membership at the API
+  // boundary. A user block itself is global, but it never reuses (or changes)
+  // administrator account/stronghold bans.
+  m = match("/api/stronghold/:id/blocks/:actor", path);
+  if (m && (method === "GET" || method === "PUT" || method === "DELETE")) {
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
+    const target = m.actor!;
+    if (!isActorIdentifier(target)) return apiError(400, "MALFORMED");
+    if (session.actor === target) return apiError(400, "SELF_TARGET");
+    const permitted = await requireDirectMessageMembership(env, m.id!, session, target);
+    if (permitted instanceof Response) return permitted;
+
+    if (method === "GET") {
+      const row = await env.DB.prepare(
+        "SELECT 1 FROM user_blocks WHERE blocker_actor = ? AND blocked_actor = ?"
+      ).bind(session.actor, target).first();
+      return json({ blocked: Boolean(row) });
+    }
+    if (method === "PUT") {
+      await env.DB.prepare(
+        "INSERT INTO user_blocks (blocker_actor, blocked_actor, created_at) VALUES (?, ?, ?) " +
+          "ON CONFLICT(blocker_actor, blocked_actor) DO NOTHING"
+      ).bind(session.actor, target, Date.now()).run();
+      return json({ blocked: true });
+    }
+    await env.DB.prepare(
+      "DELETE FROM user_blocks WHERE blocker_actor = ? AND blocked_actor = ?"
+    ).bind(session.actor, target).run();
+    return json({ blocked: false });
+  }
+
+  m = match("/api/stronghold/:id/direct-messages/:actor", path);
+  if (m && (method === "GET" || method === "POST")) {
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
+    const target = m.actor!;
+    if (!isActorIdentifier(target)) return apiError(400, "MALFORMED");
+    if (session.actor === target) return apiError(400, "SELF_TARGET");
+    const permitted = await requireDirectMessageMembership(env, m.id!, session, target);
+    if (permitted instanceof Response) return permitted;
+
+    if (method === "GET") {
+      const { results } = await env.DB.prepare(
+        "SELECT id, sender_actor, recipient_actor, body, created_at FROM direct_messages " +
+          "WHERE stronghold_id = ? AND ((sender_actor = ? AND recipient_actor = ?) OR (sender_actor = ? AND recipient_actor = ?)) " +
+          "ORDER BY created_at ASC LIMIT 100"
+      ).bind(m.id!, session.actor, target, target, session.actor).all<{
+        id: string; sender_actor: string; recipient_actor: string; body: string; created_at: number;
+      }>();
+      return json({ messages: results });
+    }
+
+    const body = await readJsonBody(request);
+    if (!body || typeof body.body !== "string") return apiError(400, "MESSAGE_INVALID");
+    const text = body.body.trim();
+    if (!text || text.length > 2_000) return apiError(400, "MESSAGE_INVALID");
+    const blocked = await env.DB.prepare(
+      "SELECT 1 FROM user_blocks WHERE (blocker_actor = ? AND blocked_actor = ?) OR (blocker_actor = ? AND blocked_actor = ?)"
+    ).bind(session.actor, target, target, session.actor).first();
+    if (blocked) return apiError(403, "DIRECT_MESSAGE_BLOCKED");
+    const message = {
+      id: crypto.randomUUID(), stronghold_id: m.id!, sender_actor: session.actor,
+      recipient_actor: target, body: text, created_at: Date.now(),
+    };
+    await env.DB.prepare(
+      "INSERT INTO direct_messages (id, stronghold_id, sender_actor, recipient_actor, body, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+    ).bind(message.id, message.stronghold_id, message.sender_actor, message.recipient_actor, message.body, message.created_at).run();
+    return json({ id: message.id, sender_actor: message.sender_actor, recipient_actor: message.recipient_actor, body: message.body, created_at: message.created_at }, 201);
   }
 
   // ---- user profile lookup (登录可读) --------------------------------------------
