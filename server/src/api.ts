@@ -964,10 +964,12 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     return json({ codes: results });
   }
 
-  // ---- server-level role appointment (m0-protocol §7.10, server_owner only) -------
+  // ---- server-level role appointment (m0-protocol §7.10) --------------------------
+  // Listing accounts is available to server_admin so they can assign existing
+  // server-level user groups. Changing server_role remains server_owner-only.
 
   if (method === "GET" && path === "/api/admin/users") {
-    const gate = await requireServerRole(request, env, "owner");
+    const gate = await requireServerRole(request, env, "admin");
     if (gate instanceof Response) return gate;
     const after = url.searchParams.get("after");
     const { results } = await env.DB.prepare(

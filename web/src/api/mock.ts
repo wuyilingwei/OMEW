@@ -1571,10 +1571,12 @@ export const mockApi = {
     return delay(result, 60)
   },
 
-  // ---- server-level role appointment (task 035/039, server_owner only) --------
+  // ---- server-level role appointment -------------------------------------------
+  // Server admins may list users to assign existing server groups; only the
+  // server owner may change a user's server_role.
 
   async getAdminUsers(token: string, after?: string): Promise<AdminUsersPage> {
-    requireOwner(token)
+    requireAdmin(token)
     const sorted = [...users].sort((a, b) => a.username.localeCompare(b.username))
     const startIndex = after ? sorted.findIndex((u) => u.username === after) + 1 : 0
     const page = sorted.slice(startIndex, startIndex + 50)
