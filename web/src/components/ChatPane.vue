@@ -5,12 +5,14 @@ import { useAuth } from '../composables/useAuth'
 import { useAuthModal } from '../composables/useAuthModal'
 import { useChannel } from '../composables/useChannel'
 import { useChatRoom } from '../composables/useChatRoom'
+import { useEmotes } from '../composables/useEmotes'
 import { useImageAttachments } from '../composables/useImageAttachments'
 import { useItemPermissions } from '../composables/useItemPermissions'
 import { useStickyScroll } from '../composables/useStickyScroll'
 import { useStronghold } from '../composables/useStronghold'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
 import { actorLocalpart } from '../utils/actor'
+import { buildEmoteLookup, standaloneEmoteToken } from '../utils/emote'
 import { filterImageFiles } from '../utils/imageProcessing'
 import { WinButton, WinInfoBar } from '../vendor/winui'
 import EmotePicker from './EmotePicker.vue'
@@ -21,6 +23,7 @@ import ImageEditor from './ImageEditor.vue'
 import MessageBubble, { type MessageVM } from './MessageBubble.vue'
 
 const auth = useAuth()
+const { packs } = useEmotes()
 const { openAuthModal } = useAuthModal()
 const { isReadOnly } = useStronghold()
 const { canEdit, canRetract } = useItemPermissions()
@@ -54,6 +57,7 @@ const canParticipate = computed(() => auth.isAuthenticated.value && !isReadOnly.
 // row) - activeMessage tracks which row's right-click/long-press opened it.
 const menuRef = ref<InstanceType<typeof ItemContextMenu> | null>(null)
 const activeMessage = ref<MessageVM | null>(null)
+const emoteLookup = computed(() => buildEmoteLookup(packs.value))
 
 function displayName(actor: string): string {
   return members.value.find((m) => m.actor === actor)?.display_name ?? actorLocalpart(actor)
@@ -61,6 +65,10 @@ function displayName(actor: string): string {
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+function canReactToMessage(text: string): boolean {
+  return canParticipate.value && standaloneEmoteToken(text, emoteLookup.value) === null
 }
 
 const messages = computed<MessageVM[]>(() => {
@@ -79,7 +87,7 @@ const messages = computed<MessageVM[]>(() => {
     pending: false,
     failed: false,
     reactions: item.reactions,
-    canReact: canParticipate.value,
+    canReact: canReactToMessage(item.body.text ?? ''),
   }))
   const optimistic: MessageVM[] = pending.value.map((p) => ({
     key: `p${p.clientId}`,
@@ -209,7 +217,7 @@ function onResend(message: MessageVM) {
 }
 
 function onToggleReaction(message: MessageVM, name: string) {
-  if (message.seq == null) return
+  if (message.seq == null || !message.canReact) return
   toggleReaction(message.seq, name)
 }
 

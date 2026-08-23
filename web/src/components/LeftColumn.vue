@@ -6,7 +6,7 @@ import { useAuthModal } from '../composables/useAuthModal'
 import { useSection } from '../composables/useSection'
 import { useSectionRoom } from '../composables/useSectionRoom'
 import { useStronghold } from '../composables/useStronghold'
-import { WinButton, WinDropDownButton } from '../vendor/winui'
+import { WinButton } from '../vendor/winui'
 import ComposePostModal from './ComposePostModal.vue'
 import EmptyState from './EmptyState.vue'
 import PostCard from './PostCard.vue'
@@ -20,13 +20,21 @@ const { sectionRooms, selectedSection, selectSection } = useSection()
 const showCompose = ref(false)
 const canParticipate = computed(() => auth.isAuthenticated.value && !isReadOnly.value)
 
-const sectionFlyout = computed(() => ({
-  Items: sectionRooms.value.map((room) => ({ Text: room.name, Value: room.id })),
-}))
+function onSectionKeydown(event: KeyboardEvent, index: number) {
+  if (!sectionRooms.value.length) return
 
-function onSelectSection(item: { Value: string }) {
-  const room = sectionRooms.value.find((candidate) => candidate.id === item.Value)
-  if (room) selectSection(room)
+  let nextIndex = index
+  if (event.key === 'ArrowRight' || event.key === 'ArrowDown') nextIndex = (index + 1) % sectionRooms.value.length
+  else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') nextIndex = (index - 1 + sectionRooms.value.length) % sectionRooms.value.length
+  else if (event.key === 'Home') nextIndex = 0
+  else if (event.key === 'End') nextIndex = sectionRooms.value.length - 1
+  else return
+
+  event.preventDefault()
+  const room = sectionRooms.value[nextIndex]
+  selectSection(room)
+  const target = event.currentTarget as HTMLElement
+  target.parentElement?.querySelectorAll<HTMLElement>('[role="tab"]')[nextIndex]?.focus()
 }
 
 function openCompose() {
@@ -41,15 +49,23 @@ function closeCompose() {
 <template>
   <aside class="left-column">
     <div class="left-column__header">
-      <WinDropDownButton
-        v-if="sectionRooms.length > 1"
-        class="left-column__section-switcher"
-        :Flyout="sectionFlyout"
-        @Select="onSelectSection"
-      >
-        <span class="left-column__section-label">{{ selectedSection?.name ?? '帖子' }}</span>
-      </WinDropDownButton>
-      <span v-else>{{ selectedSection?.name ?? '帖子' }}</span>
+      <div class="left-column__section-nav" role="tablist" aria-label="帖子话题组">
+        <WinButton
+          v-for="(room, index) in sectionRooms"
+          :key="room.id"
+          :Style="selectedSection?.id === room.id ? 'AccentButtonStyle' : 'DefaultButtonStyle'"
+          class="left-column__section-button"
+          role="tab"
+          :aria-selected="selectedSection?.id === room.id"
+          :tabindex="selectedSection?.id === room.id ? 0 : -1"
+          :aria-label="`切换到话题组 ${room.name}`"
+          @click="selectSection(room)"
+          @keydown="onSectionKeydown($event, index)"
+        >
+          <span class="left-column__section-label">{{ room.name }}</span>
+        </WinButton>
+        <span v-if="!sectionRooms.length" class="left-column__section-empty">帖子</span>
+      </div>
       <WinButton
         v-if="postRoom && canParticipate"
         Style="AccentButtonStyle"
@@ -117,14 +133,35 @@ function closeCompose() {
   color: var(--text-tertiary);
 }
 
-.left-column__section-switcher {
-  font-size: 0.85rem;
+.left-column__section-nav {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 0.35rem;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ctrl-border) transparent;
+  padding: 0.1rem 0 0.2rem;
+}
+
+.left-column__section-button {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 12rem;
+  font-size: 0.82rem;
+  border-radius: 999px;
 }
 
 .left-column__section-label {
-  max-width: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.left-column__section-empty {
+  align-self: center;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
   white-space: nowrap;
 }
 
