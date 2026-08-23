@@ -202,7 +202,8 @@ export interface PublicUser {
   home_domain?: string
 }
 
-// task 035, server_owner-only: GET /api/admin/users list entry.
+// GET /api/admin/users is available to server owners and admins; only PATCH
+// /api/admin/users/:localpart remains server-owner-only.
 export interface AdminUserEntry {
   localpart: string
   server_role: ServerRole

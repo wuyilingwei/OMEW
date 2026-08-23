@@ -964,10 +964,12 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     return json({ codes: results });
   }
 
-  // ---- server-level role appointment (m0-protocol §7.10, server_owner only) -------
+  // ---- server-level role appointment (m0-protocol §7.10) --------------------------
+  // Listing accounts is available to server_admin so they can assign existing
+  // server-level user groups. Changing server_role remains server_owner-only.
 
   if (method === "GET" && path === "/api/admin/users") {
-    const gate = await requireServerRole(request, env, "owner");
+    const gate = await requireServerRole(request, env, "admin");
     if (gate instanceof Response) return gate;
     const after = url.searchParams.get("after");
     const { results } = await env.DB.prepare(
@@ -1831,15 +1833,19 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const session = await requireSession(request, env);
     if (session instanceof Response) return apiError(401, "AUTH_REQUIRED");
     const actor = session.actor;
-    const { results } = await env.DB.prepare("SELECT stronghold_id FROM stronghold_member_index WHERE actor = ?")
-      .bind(actor)
-      .all<{ stronghold_id: string }>();
+    const isServerAdmin = session.server_role === "owner" || session.server_role === "admin";
+    const { results } = isServerAdmin
+      ? await env.DB.prepare("SELECT DISTINCT stronghold_id FROM stronghold_slug_index ORDER BY stronghold_id")
+        .all<{ stronghold_id: string }>()
+      : await env.DB.prepare("SELECT DISTINCT stronghold_id FROM stronghold_member_index WHERE actor = ? ORDER BY stronghold_id")
+        .bind(actor)
+        .all<{ stronghold_id: string }>();
     const nodes = await Promise.all(
-      results.map(async (row) => {
-        const stub = env.STRONGHOLD_DO.getByName(row.stronghold_id);
+      [...new Set(results.map((row) => row.stronghold_id))].map(async (strongholdId) => {
+        const stub = env.STRONGHOLD_DO.getByName(strongholdId);
         const [config, rooms] = await Promise.all([stub.getConfig(), stub.listRooms()]);
         if (!config) return null;
-        const eff = await effectiveRole(env, row.stronghold_id, session.server_role, actor);
+        const eff = await effectiveRole(env, strongholdId, session.server_role, actor);
         if (!eff) return null;
         const visibleRooms = rooms.filter((room) => canAccessRestrictedRoom(eff.role, room));
         return {
