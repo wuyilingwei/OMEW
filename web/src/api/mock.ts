@@ -50,14 +50,9 @@ import type {
   StrongholdConfigPatch,
   StrongholdMember,
   StrongholdSummary,
-  Topic,
-  TopicPayload,
   TotpLoginResult,
   TotpSetupResponse,
 } from './types'
-
-const TOPIC_LIMIT = 32
-const POST_TOPIC_LIMIT = 5
 
 interface MockUser extends AuthUser {
   password: string
@@ -291,7 +286,6 @@ interface MockStrongholdState {
   edit_window_secs: number
   owner_actor: string
   rooms: Map<string, MockRoomState>
-  topics: Topic[]
 }
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,31}$/
@@ -389,11 +383,11 @@ function appendItem(
 ): RoomItem {
   const seq = room.nextSeq++
   const rootSeq = parentSeq ?? seq
-  const topics = body.topics?.length ? [...new Set(body.topics)].slice(0, POST_TOPIC_LIMIT) : undefined
+  const { topics: _discardedTopics, ...bodyWithoutTopics } = body as ItemBody & { topics?: unknown }
   const finalBody: ItemBody =
     room.type === 'section' && parentSeq == null
-      ? { ...body, preview: (body.text ?? '').slice(0, PREVIEW_LEN), topics }
-      : { ...body, topics }
+      ? { ...bodyWithoutTopics, preview: (body.text ?? '').slice(0, PREVIEW_LEN) }
+      : bodyWithoutTopics
   const item: RoomItem = { seq, parent_seq: parentSeq, root_seq: rootSeq, actor, kind, ts, body: finalBody }
   room.items.push(item)
   if (room.type === 'section' && parentSeq == null) {
@@ -420,7 +414,7 @@ function seedDemoStronghold(): void {
     ['admin', '收到，我把文档链接放这里', 58],
     ['rin', '看到了，辛苦', 57],
     ['aki', '话题下拉切换起来顺手多了', 40],
-    ['admin', '对，之前那条横向标签栏确实别扭', 38],
+    ['admin', '之前那条横向筛选栏确实别扭', 38],
     ['rin', '进度已经同步到看板了', 20],
     ['admin', '看到了，稍后过一遍', 12],
   ]
@@ -453,10 +447,6 @@ function seedDemoStronghold(): void {
       [lobby.res_id, lobby],
       [posts.res_id, posts],
     ]),
-    topics: [
-      { id: 'topic-announce', name: '公告', color: '#4b9dd7', description: '重要通知与维护公告', position: 0, post_count: 0 },
-      { id: 'topic-chat', name: '闲聊', color: '#af5d3e', description: null, position: 1, post_count: 0 },
-    ],
   })
 
   // task 048: two demo server groups + one assignment, so the server admin
@@ -536,40 +526,11 @@ function toRoomSummary(r: MockRoomState): RoomSummary {
   return { id: r.res_id, name: r.name, type: r.type, description: r.description, ...(post_count !== undefined ? { post_count } : {}) }
 }
 
-function topicPostCount(state: MockStrongholdState, topicId: string): number {
-  let count = 0
-  for (const room of state.rooms.values()) {
-    if (room.type !== 'section') continue
-    for (const seq of room.postIndex.keys()) {
-      if (room.tombstoned.has(seq)) continue
-      const item = room.items.find((i) => i.seq === seq)
-      if (item?.body.topics?.includes(topicId)) count++
-    }
-  }
-  return count
-}
-
-function toTopicOut(state: MockStrongholdState, topic: Topic): Topic {
-  return { ...topic, post_count: topicPostCount(state, topic.id) }
-}
-
 function toStrongholdSummary(state: MockStrongholdState): StrongholdSummary {
   const rooms: RoomSummary[] = [...state.rooms.values()]
     .sort((a, b) => a.position - b.position)
     .map(toRoomSummary)
   return { id: state.id, name: state.name, avatar: state.avatar || null, cover: state.cover || null, slug: state.slug, rooms }
-}
-
-function requireTopic(state: MockStrongholdState, topicId: string): Topic {
-  const topic = state.topics.find((t) => t.id === topicId)
-  if (!topic) throw new ApiRequestError('NOT_FOUND', 404)
-  return topic
-}
-
-function validateTopicName(name: string): string {
-  const trimmed = name.trim()
-  if (trimmed.length < 1 || trimmed.length > 16) throw new ApiRequestError('MALFORMED', 400)
-  return trimmed
 }
 
 function requireRoom(nodeId: string, resId: string): MockRoomState {
@@ -600,7 +561,6 @@ function toPost(room: MockRoomState, item: RoomItem, actor: string | null) {
     cover: item.body.cover ?? null,
     preview: item.body.preview ?? '',
     media: item.body.media,
-    topics: item.body.topics,
     last_reply_seq: idx?.last_reply_seq ?? item.seq,
     reply_count: idx?.reply_count ?? 0,
     bumped_at: idx?.bumped_at ?? item.ts,
@@ -1034,7 +994,6 @@ export const mockApi = {
         [lobby.res_id, lobby],
         [posts.res_id, posts],
       ]),
-      topics: [],
     }
     strongholds.set(id, state)
     strongholdMembers.set(id, [
@@ -1142,72 +1101,6 @@ export const mockApi = {
     return delay(undefined)
   },
 
-  // ---- topics (据点共用标签池；UI 文案叫「标签」，线上格式仍是 topic) ------
-
-  async listTopics(token: string | null, nodeId: string): Promise<Topic[]> {
-    const state = strongholds.get(nodeId)
-    if (!state) throw new ApiRequestError('NOT_FOUND', 404)
-    requireUserOrGuest(token, nodeId)
-    return delay(
-      [...state.topics].sort((a, b) => a.position - b.position).map((t) => toTopicOut(state, t)),
-    )
-  },
-
-  async createTopic(token: string, nodeId: string, payload: TopicPayload): Promise<Topic> {
-    requireManager(token, nodeId)
-    const state = strongholds.get(nodeId)
-    if (!state) throw new ApiRequestError('NOT_FOUND', 404)
-    const name = validateTopicName(payload.name)
-    if (state.topics.some((t) => t.name === name)) throw new ApiRequestError('ALREADY_EXISTS', 409)
-    if (state.topics.length >= TOPIC_LIMIT) throw new ApiRequestError('TOPIC_LIMIT', 409)
-    const description = payload.description?.trim() ?? ''
-    if (description.length > 64) throw new ApiRequestError('MALFORMED', 400)
-    const topic: Topic = {
-      id: `topic-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
-      name,
-      color: payload.color ?? null,
-      description: description || null,
-      position: state.topics.length ? Math.max(...state.topics.map((t) => t.position)) + 1 : 0,
-      post_count: 0,
-    }
-    state.topics.push(topic)
-    return delay(topic, 120)
-  },
-
-  async patchTopic(
-    token: string,
-    nodeId: string,
-    topicId: string,
-    patch: Partial<TopicPayload> & { position?: number },
-  ): Promise<Topic> {
-    requireManager(token, nodeId)
-    const state = strongholds.get(nodeId)
-    if (!state) throw new ApiRequestError('NOT_FOUND', 404)
-    const topic = requireTopic(state, topicId)
-    if (patch.name !== undefined) {
-      const name = validateTopicName(patch.name)
-      if (state.topics.some((t) => t.id !== topicId && t.name === name)) throw new ApiRequestError('ALREADY_EXISTS', 409)
-      topic.name = name
-    }
-    if (patch.color !== undefined) topic.color = patch.color
-    if (patch.description !== undefined) {
-      const trimmed = patch.description?.trim() ?? ''
-      if (trimmed.length > 64) throw new ApiRequestError('MALFORMED', 400)
-      topic.description = trimmed || null
-    }
-    if (patch.position !== undefined) topic.position = patch.position
-    return delay(toTopicOut(state, topic), 120)
-  },
-
-  async deleteTopic(token: string, nodeId: string, topicId: string): Promise<void> {
-    requireManager(token, nodeId)
-    const state = strongholds.get(nodeId)
-    if (!state) throw new ApiRequestError('NOT_FOUND', 404)
-    requireTopic(state, topicId)
-    state.topics = state.topics.filter((t) => t.id !== topicId)
-    return delay(undefined, 120)
-  },
-
   async getStrongholdConfig(token: string | null, nodeId: string): Promise<StrongholdConfig> {
     const state = strongholds.get(nodeId)
     if (!state) throw new ApiRequestError('NOT_FOUND', 404)
@@ -1277,14 +1170,12 @@ export const mockApi = {
     resId: string,
     after?: string | null,
     limit = 20,
-    topic?: string | null,
   ): Promise<PostPage> {
     const requester = requireUserOrGuest(token, nodeId)
     const room = requireRoom(nodeId, resId)
     const posts = room.items
       .filter((i) => i.parent_seq == null && !room.tombstoned.has(i.seq))
       .map((i) => toPost(room, i, requester?.actor ?? null))
-      .filter((p) => !topic || p.topics?.includes(topic))
       .sort((a, b) => b.bumped_at - a.bumped_at || b.post_seq - a.post_seq)
     let startIndex = 0
     if (after) {
@@ -1558,7 +1449,6 @@ export const mockApi = {
           [lobby.res_id, lobby],
           [posts.res_id, posts],
         ]),
-        topics: [],
       })
       strongholdMembers.set(nodeId, [
         {

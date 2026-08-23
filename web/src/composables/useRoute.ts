@@ -13,7 +13,6 @@ export interface RouteState {
   room: string | null
   kind: 'c' | 's' | null
   postSeq: number | null
-  topic: string | null
 }
 
 const route = ref<RouteState | null>(null)
@@ -39,7 +38,6 @@ function buildAddress(state: RouteState): string {
     if (state.kind === 's' && state.postSeq != null) path += `/p/${state.postSeq}`
   }
   const params = new URLSearchParams()
-  if (state.kind === 's' && state.topic) params.set('topic', state.topic)
   const qs = params.toString()
   return qs ? `${path}?${qs}` : path
 }
@@ -56,7 +54,6 @@ function parseAddress(): RouteState | null {
     kind,
     room: kind ? room ?? null : null,
     postSeq: Number.isFinite(seqNum) ? seqNum : null,
-    topic: kind === 's' ? new URLSearchParams(location.search).get('topic') : null,
   }
 }
 
@@ -71,7 +68,7 @@ function writeAddress(state: RouteState, replace: boolean) {
 }
 
 function navigate(next: Partial<RouteState>, opts?: { replace?: boolean }) {
-  const base: RouteState = route.value ?? { server: '', slug: '', room: null, kind: null, postSeq: null, topic: null }
+  const base: RouteState = route.value ?? { server: '', slug: '', room: null, kind: null, postSeq: null }
   writeAddress({ ...base, ...next }, opts?.replace ?? false)
 }
 
@@ -107,7 +104,6 @@ function installWatchers() {
         kind: room ? kind : null,
         room: room ? room.id : null,
         postSeq: kind === 's' ? postModal.openPostSeq.value : null,
-        topic: kind === 's' ? section.topicFilter.value : null,
       },
       { replace },
     )
@@ -123,9 +119,7 @@ function installWatchers() {
     }
   }
 
-  // Selecting a stronghold/section kicks off watchers that clear the topic
-  // filter and reload the post list. Let them run to completion before the
-  // address's own filter and open-post are applied, or they wipe them again.
+  // Selecting a stronghold/section triggers an asynchronous post-list reload.
   async function waitForSelectionSettled(): Promise<void> {
     const { postsLoading } = useSectionRoom()
     await new Promise((resolve) => setTimeout(resolve, 0))
@@ -166,7 +160,6 @@ function installWatchers() {
         pane.value = 's'
         shellView.setView('posts')
         await waitForSelectionSettled()
-        section.setTopicFilter(parsed.topic ?? null)
         if (parsed.postSeq != null) {
           await waitForSelectionSettled()
           postModal.open(parsed.postSeq)
@@ -195,7 +188,7 @@ function installWatchers() {
       pane.value = 'c'
       reconcileFromLiveState(false)
     })
-    watch([section.selectedSection, section.topicFilter], () => {
+    watch(section.selectedSection, () => {
       if (!restored || applyingLocation) return
       pane.value = 's'
       reconcileFromLiveState(false)

@@ -5,7 +5,6 @@ import { useAuth } from '../composables/useAuth'
 import { useAuthModal } from '../composables/useAuthModal'
 import { useSection } from '../composables/useSection'
 import { useSectionRoom } from '../composables/useSectionRoom'
-import { useTopics } from '../composables/useTopics'
 import { WinButton, WinDropDownButton } from '../vendor/winui'
 import ComposePostModal from './ComposePostModal.vue'
 import EmptyState from './EmptyState.vue'
@@ -14,8 +13,7 @@ import PostCard from './PostCard.vue'
 const auth = useAuth()
 const { openAuthModal } = useAuthModal()
 const { posts, postsLoading, hasMorePosts, loadMorePosts, postRoom, toggleReaction } = useSectionRoom()
-const { sectionRooms, selectedSection, selectSection, topicFilter, setTopicFilter } = useSection()
-const { topics } = useTopics()
+const { sectionRooms, selectedSection, selectSection } = useSection()
 
 const showCompose = ref(false)
 
@@ -60,28 +58,6 @@ function closeCompose() {
       <WinButton v-else-if="postRoom" Style="DefaultButtonStyle" class="left-column__compose-btn" @click="openAuthModal">
         登录后发帖
       </WinButton>
-    </div>
-
-    <div v-if="topics.length" class="left-column__topic-filter">
-      <button
-        type="button"
-        class="topic-filter-chip"
-        :class="{ 'topic-filter-chip--active': topicFilter == null }"
-        @click="setTopicFilter(null)"
-      >
-        全部
-      </button>
-      <button
-        v-for="topic in topics"
-        :key="topic.id"
-        type="button"
-        class="topic-filter-chip"
-        :class="{ 'topic-filter-chip--active': topicFilter === topic.id }"
-        @click="setTopicFilter(topic.id)"
-      >
-        <span v-if="topic.color" class="topic-filter-chip__dot" :style="{ background: topic.color }" />
-        {{ topic.name }}
-      </button>
     </div>
 
     <ComposePostModal :open="showCompose" @close="closeCompose" />

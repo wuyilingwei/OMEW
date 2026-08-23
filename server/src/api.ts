@@ -15,7 +15,7 @@ import { getInstanceConfig } from "./config";
 import { handleInbox } from "./inbox";
 import type { EffectivePermissions } from "./permissions";
 import { canAccessRestrictedRoom, synthesizeEffectivePermissions } from "./permissions";
-import { deriveSlugBase, fetchServerGroupsForLocalpart, type ConfigRow, type MemberRow, type RoomRow, type TopicRow } from "./stronghold-do";
+import { deriveSlugBase, fetchServerGroupsForLocalpart, type ConfigRow, type MemberRow, type RoomRow } from "./stronghold-do";
 import { generateTotpSecret, totpOtpauthUrl, verifyTotpCode } from "./totp";
 import {
   HOME_DOMAIN,
@@ -1803,89 +1803,6 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     return new Response(null, { status: 204, headers: cors() });
   }
 
-  // ---- topics (stronghold-wide post-tag pool, shared across sections) ----
-
-  m = match("/api/stronghold/:id/topics", path);
-  if (m && method === "GET") {
-    const gate = await resolveGuestOrMember(request, env, m.id!);
-    if (gate instanceof Response) return gate;
-    const strongholdId = m.id!;
-    const stub = env.STRONGHOLD_DO.getByName(strongholdId);
-    const topics = await stub.listTopics();
-    const counts = await topicPostCounts(
-      env,
-      strongholdId,
-      stub,
-      topics.map((t) => t.id),
-      gate.kind === "member" && canAccessRestrictedRoom(gate.role, { restricted: 1 })
-    );
-    return json(topics.map((t) => toApiTopic(t, counts.get(t.id) ?? 0)));
-  }
-  if (m && method === "POST") {
-    const session = await requireSession(request, env);
-    if (session instanceof Response) return session;
-    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
-    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
-    const body = await readJsonBody(request);
-    if (!body) return apiError(413, "PAYLOAD_INVALID");
-    const name = typeof body.name === "string" ? body.name.trim() : "";
-    if (!name || name.length > 16) return apiError(400, "MALFORMED");
-    const color = parseOptionalColor(body.color);
-    if (color === INVALID_COLOR) return apiError(400, "MALFORMED");
-    const description = asOptionalDescription(body.description);
-    if (description === INVALID_DESCRIPTION) return apiError(400, "MALFORMED");
-    const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    const result = await stub.createTopic(generateResId(), name, color, description);
-    if (!result.ok) return apiError(409, result.code);
-    return json(toApiTopic(result.topic, 0), 201);
-  }
-
-  m = match("/api/stronghold/:id/topics/:topicId", path);
-  if (m && method === "PATCH") {
-    const session = await requireSession(request, env);
-    if (session instanceof Response) return session;
-    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
-    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
-    const body = await readJsonBody(request);
-    if (!body) return apiError(413, "PAYLOAD_INVALID");
-    const patch: { name?: string; color?: string | null; description?: string | null; position?: number } = {};
-    if ("name" in body) {
-      const name = typeof body.name === "string" ? body.name.trim() : "";
-      if (!name || name.length > 16) return apiError(400, "MALFORMED");
-      patch.name = name;
-    }
-    if ("color" in body) {
-      const color = parseOptionalColor(body.color);
-      if (color === INVALID_COLOR) return apiError(400, "MALFORMED");
-      patch.color = color;
-    }
-    if ("description" in body) {
-      const description = asOptionalDescription(body.description);
-      if (description === INVALID_DESCRIPTION) return apiError(400, "MALFORMED");
-      patch.description = description;
-    }
-    if ("position" in body) {
-      if (typeof body.position !== "number") return apiError(400, "MALFORMED");
-      patch.position = body.position;
-    }
-    const strongholdId = m.id!;
-    const stub = env.STRONGHOLD_DO.getByName(strongholdId);
-    const result = await stub.updateTopic(m.topicId!, patch);
-    if (!result.ok) return apiError(result.code === "NOT_FOUND" ? 404 : 409, result.code);
-    const counts = await topicPostCounts(env, strongholdId, stub, [result.topic.id]);
-    return json(toApiTopic(result.topic, counts.get(result.topic.id) ?? 0));
-  }
-  if (m && method === "DELETE") {
-    const session = await requireSession(request, env);
-    if (session instanceof Response) return session;
-    const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
-    if (!eff || (eff.role !== "owner" && eff.role !== "mod")) return apiError(403, "FORBIDDEN");
-    const stub = env.STRONGHOLD_DO.getByName(m.id!);
-    const deleted = await stub.deleteTopic(m.topicId!);
-    if (!deleted) return apiError(404, "NOT_FOUND");
-    return new Response(null, { status: 204, headers: cors() });
-  }
-
   m = match("/api/stronghold/:id/join", path);
   if (m && method === "POST") {
     const actor = await requireActor(request, env);
@@ -2364,9 +2281,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const roomStub = env.ROOM_DO.getByName(roomRef);
     const after = url.searchParams.get("after");
     const limit = url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined;
-    const topic = url.searchParams.get("topic");
     const requester = gate.kind === "member" ? gate.actor : null;
-    return json(await roomStub.listPosts(after, limit, topic, requester));
+    return json(await roomStub.listPosts(after, limit, requester));
   }
 
   m = match("/api/stronghold/:id/rooms/:resId/posts/:seq", path);
@@ -2952,10 +2868,6 @@ function toApiConfig(row: ConfigRow) {
   };
 }
 
-function toApiTopic(row: TopicRow, postCount: number) {
-  return { id: row.id, name: row.name, color: row.color, description: row.description, position: row.position, post_count: postCount };
-}
-
 function toApiRoom(row: RoomRow, postCount?: number) {
   // m0-protocol §3.2a/§13.3: reactions are served on every room regardless of
   // when it was created, so rooms whose stored capabilities predate the feature
@@ -3015,7 +2927,7 @@ function parseOptionalColor(v: unknown): string | null | typeof INVALID_COLOR {
   return v;
 }
 
-// topic/room description - trimmed, <=64 chars, absent/null/empty clears it.
+// Room description - trimmed, <=64 chars, absent/null/empty clears it.
 const INVALID_DESCRIPTION = Symbol("invalid_description");
 const DESCRIPTION_MAX = 64;
 
@@ -3025,32 +2937,6 @@ function asOptionalDescription(v: unknown): string | null | typeof INVALID_DESCR
   const trimmed = v.trim();
   if (trimmed.length > DESCRIPTION_MAX) return INVALID_DESCRIPTION;
   return trimmed || null;
-}
-
-// sums each section room's per-topic post_count (RoomDO.countPostsByTopic)
-// across the whole stronghold - topics are stronghold-wide, posts live per-room.
-async function topicPostCounts(
-  env: Env,
-  strongholdId: string,
-  stub: DurableObjectStub<import("./stronghold-do").StrongholdDO>,
-  topicIds: string[],
-  includeRestricted = true
-): Promise<Map<string, number>> {
-  const counts = new Map<string, number>(topicIds.map((id) => [id, 0]));
-  if (topicIds.length === 0) return counts;
-  const rooms = await stub.listRooms();
-  const sectionRooms = rooms.filter((r) => r.type === "section" && (includeRestricted || !r.restricted));
-  await Promise.all(
-    sectionRooms.map(async (room) => {
-      const roomRef = `${strongholdId}/${typeToKind(room.type)}/${room.res_id}`;
-      const roomStub = env.ROOM_DO.getByName(roomRef);
-      const roomCounts = await roomStub.countPostsByTopic(topicIds);
-      for (const [topicId, n] of Object.entries(roomCounts)) {
-        counts.set(topicId, (counts.get(topicId) ?? 0) + n);
-      }
-    })
-  );
-  return counts;
 }
 
 // perm_speak/perm_post/perm_reply: -1 deny / 0 inherit / 1 allow. Missing means

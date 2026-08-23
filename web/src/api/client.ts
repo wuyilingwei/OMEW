@@ -42,8 +42,6 @@ import type {
   StrongholdConfigPatch,
   StrongholdMember,
   StrongholdSummary,
-  Topic,
-  TopicPayload,
   TotpLoginResult,
   TotpSetupResponse,
 } from './types'
@@ -342,33 +340,6 @@ export const realApi = {
       headers: authHeaders(token),
     }),
 
-  // ---- topics (据点共用标签池) --------------------------------------------
-  // UI 文案叫「标签」；路径与字段名保持 topic —— 帖子 body.topics 是已持久化的
-  // 线上格式，改名会让存量帖子的标签失联。
-
-  listTopics: (token: string | null, nodeId: string) =>
-    request<Topic[]>(`/api/stronghold/${nodeId}/topics`, { headers: optionalAuthHeaders(token) }),
-
-  createTopic: (token: string, nodeId: string, payload: TopicPayload) =>
-    request<Topic>(`/api/stronghold/${nodeId}/topics`, {
-      method: 'POST',
-      headers: authHeaders(token),
-      body: JSON.stringify(payload),
-    }),
-
-  patchTopic: (token: string, nodeId: string, topicId: string, patch: Partial<TopicPayload> & { position?: number }) =>
-    request<Topic>(`/api/stronghold/${nodeId}/topics/${encodeURIComponent(topicId)}`, {
-      method: 'PATCH',
-      headers: authHeaders(token),
-      body: JSON.stringify(patch),
-    }),
-
-  deleteTopic: (token: string, nodeId: string, topicId: string) =>
-    request<void>(`/api/stronghold/${nodeId}/topics/${encodeURIComponent(topicId)}`, {
-      method: 'DELETE',
-      headers: authHeaders(token),
-    }),
-
   // ---- room WS token / history ------------------------------------------------
   // Note: these two live at /stronghold/* (not /api/*) - matches the server's
   // dev-convenience route family that also owns the WS upgrade itself.
@@ -414,12 +385,10 @@ export const realApi = {
     resId: string,
     after?: string | null,
     limit?: number,
-    topic?: string | null,
   ) => {
     const params = new URLSearchParams()
     if (after) params.set('after', after)
     if (limit != null) params.set('limit', String(limit))
-    if (topic) params.set('topic', topic)
     const qs = params.toString()
     return request<PostPage>(`/api/stronghold/${nodeId}/rooms/${resId}/posts${qs ? `?${qs}` : ''}`, {
       headers: optionalAuthHeaders(token),

@@ -8,11 +8,6 @@ import { domainOfActor, localpartOfActor } from "./users";
 // table + persisted tips aggregate, with a WS fan-out for tip.update pushes.
 
 const TIP_FLUSH_MS = 1_500; // m0-protocol S3.3: tip.update coalesced, not per-message.
-const TOPIC_LIMIT = 32; // per-stronghold topic pool cap.
-
-export type TopicMutationResult =
-  | { ok: true; topic: TopicRow }
-  | { ok: false; code: "ALREADY_EXISTS" | "TOPIC_LIMIT" | "NOT_FOUND" };
 
 // `type` (not `interface`) so these structurally satisfy the SqlStorageValue
 // index-signature constraint that sql.exec<T>() requires.
@@ -30,15 +25,6 @@ export type ConfigRow = {
   owner_actor: string;
   created_at: number;
   slug: string;
-};
-
-export type TopicRow = {
-  id: string;
-  name: string;
-  color: string | null;
-  description: string | null;
-  position: number;
-  created_at: number;
 };
 
 export type RoomRow = {
@@ -173,13 +159,10 @@ export class StrongholdDO extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS ban (
         actor TEXT PRIMARY KEY, operator TEXT NOT NULL, banned_at INTEGER NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS topic (
-        id TEXT PRIMARY KEY, name TEXT NOT NULL, color TEXT,
-        position INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL
-      );
     `);
     this.addColumnIfMissing("config", "slug", "TEXT");
-    this.addColumnIfMissing("topic", "description", "TEXT");
+    // 标签功能已移除；旧据点的本地持久化数据不再保留。
+    this.ctx.storage.sql.exec("DROP TABLE IF EXISTS topic;");
     this.addColumnIfMissing("room", "description", "TEXT");
     // task 048: stronghold-local groups (task 037) moved to server-level D1
     // tables (server_groups/user_server_groups, migration 0009) - drop the
@@ -450,63 +433,6 @@ export class StrongholdDO extends DurableObject<Env> {
   async deleteRoom(resId: string): Promise<void> {
     this.ctx.storage.sql.exec("UPDATE room SET archived = 1 WHERE res_id = ?", resId);
     this.ctx.storage.sql.exec("DELETE FROM tip WHERE room_ref LIKE ?", `%/${resId}`);
-  }
-
-  // ---- topics (stronghold-wide post-tag pool, shared across sections) ----
-
-  async listTopics(): Promise<TopicRow[]> {
-    return this.ctx.storage.sql.exec<TopicRow>("SELECT * FROM topic ORDER BY position, created_at").toArray();
-  }
-
-  async countTopics(): Promise<number> {
-    return this.ctx.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM topic").one().n;
-  }
-
-  async createTopic(id: string, name: string, color: string | null, description?: string | null): Promise<TopicMutationResult> {
-    const dup = this.ctx.storage.sql.exec<{ id: string }>("SELECT id FROM topic WHERE name = ?", name).toArray();
-    if (dup.length > 0) return { ok: false, code: "ALREADY_EXISTS" };
-    if ((await this.countTopics()) >= TOPIC_LIMIT) return { ok: false, code: "TOPIC_LIMIT" };
-    const createdAt = Date.now();
-    const posRow = this.ctx.storage.sql.exec<{ maxpos: number | null }>("SELECT MAX(position) AS maxpos FROM topic").one();
-    const position = (posRow.maxpos ?? -1) + 1;
-    const desc = description ?? null;
-    this.ctx.storage.sql.exec(
-      "INSERT INTO topic (id, name, color, description, position, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-      id, name, color, desc, position, createdAt
-    );
-    return { ok: true, topic: { id, name, color, description: desc, position, created_at: createdAt } };
-  }
-
-  async updateTopic(
-    id: string,
-    patch: { name?: string; color?: string | null; description?: string | null; position?: number }
-  ): Promise<TopicMutationResult> {
-    const rows = this.ctx.storage.sql.exec<TopicRow>("SELECT * FROM topic WHERE id = ?", id).toArray();
-    const current = rows[0];
-    if (!current) return { ok: false, code: "NOT_FOUND" };
-    if (patch.name != null && patch.name !== current.name) {
-      const dup = this.ctx.storage.sql
-        .exec<{ id: string }>("SELECT id FROM topic WHERE name = ? AND id != ?", patch.name, id)
-        .toArray();
-      if (dup.length > 0) return { ok: false, code: "ALREADY_EXISTS" };
-    }
-    const next = {
-      ...current,
-      ...patch,
-      description: "description" in patch ? (patch.description ?? null) : current.description,
-    };
-    this.ctx.storage.sql.exec(
-      "UPDATE topic SET name = ?, color = ?, description = ?, position = ? WHERE id = ?",
-      next.name, next.color, next.description, next.position, id
-    );
-    return { ok: true, topic: next };
-  }
-
-  async deleteTopic(id: string): Promise<boolean> {
-    const existing = this.ctx.storage.sql.exec<{ id: string }>("SELECT id FROM topic WHERE id = ?", id).toArray();
-    if (existing.length === 0) return false;
-    this.ctx.storage.sql.exec("DELETE FROM topic WHERE id = ?", id);
-    return true;
   }
 
   // ---- members --------------------------------------------------------------------

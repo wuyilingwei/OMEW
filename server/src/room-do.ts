@@ -54,6 +54,15 @@ type ItemRow = {
   body: string;
 };
 
+// Historical item bodies may contain the removed `topics` field. Keep old
+// messages readable while ensuring the retired product field never reaches a
+// client again.
+function withoutTopics(body: unknown): unknown {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return body;
+  const { topics: _discardedTopics, ...rest } = body as Record<string, unknown>;
+  return rest;
+}
+
 interface PendingEntry {
   // null = the write originated over HTTP (edit/retract endpoints),
   // there is no sender connection to exclude from the fan-out.
@@ -111,12 +120,6 @@ export class RoomDO extends DurableObject<Env> {
         bumped_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_post_index_bumped ON post_index(bumped_at DESC, post_seq DESC);
-      CREATE TABLE IF NOT EXISTS post_topic (
-        post_seq INTEGER NOT NULL,
-        topic_id TEXT NOT NULL,
-        PRIMARY KEY (post_seq, topic_id)
-      );
-      CREATE INDEX IF NOT EXISTS idx_post_topic_topic ON post_topic(topic_id, post_seq DESC);
       -- m0-protocol §3.2a: reaction is hot-layer engagement state only, MUST NOT
       -- enter archive shards; history beyond the hot layer is best-effort. resync
       -- replays carry each replayed item's current reaction snapshot inline - items
@@ -129,6 +132,8 @@ export class RoomDO extends DurableObject<Env> {
       -- that column is a redundant left-prefix - write cost with no read benefit.
       DROP INDEX IF EXISTS idx_reaction_target;
     `);
+    // 标签功能已移除；旧帖子标签索引不再保留。
+    sql.exec("DROP TABLE IF EXISTS post_topic;");
     sql.exec(`INSERT OR IGNORE INTO meta (key, value) VALUES ('next_seq', 1)`);
   }
 
@@ -374,18 +379,6 @@ export class RoomDO extends DurableObject<Env> {
     }
 
     const isSectionPost = roomKind === "sec" && isTopLevel;
-    let topics: string[] = [];
-    if (isSectionPost && b.topics !== undefined) {
-      if (!Array.isArray(b.topics) || !b.topics.every((t) => typeof t === "string")) {
-        this.sendError(ws, "OMEW_MALFORMED", "topics must be a string array");
-        return;
-      }
-      topics = Array.from(new Set(b.topics as string[]));
-      if (topics.length > 5) {
-        this.sendError(ws, "OMEW_MALFORMED", "at most 5 topics per post");
-        return;
-      }
-    }
 
     const requiredBit = parentSeq != null
       ? DENY_SECTION_REPLY
@@ -436,9 +429,10 @@ export class RoomDO extends DurableObject<Env> {
 
     // Section post: preview is derived server-side and folded into the stored
     // body (proposal S4.5) so list reads never need to recompute it.
+    const { topics: _discardedTopics, ...bodyWithoutTopics } = b;
     const finalBody: unknown = isSectionPost
-      ? { ...b, preview: (b.text as string).slice(0, PREVIEW_LEN), topics }
-      : body;
+      ? { ...bodyWithoutTopics, preview: (b.text as string).slice(0, PREVIEW_LEN) }
+      : bodyWithoutTopics;
     const bodyJson = JSON.stringify(finalBody);
     this.ctx.storage.sql.exec(
       "INSERT INTO item (seq, parent_seq, root_seq, actor, origin, client_id, kind, ts, body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -454,12 +448,6 @@ export class RoomDO extends DurableObject<Env> {
         "INSERT INTO post_index (post_seq, last_reply_seq, reply_count, bumped_at) VALUES (?, ?, 0, ?)",
         seq, seq, ts
       );
-      for (const topicId of topics) {
-        this.ctx.storage.sql.exec(
-          "INSERT INTO post_topic (post_seq, topic_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
-          seq, topicId
-        );
-      }
     } else if (roomKind === "sec" && !isTopLevel) {
       // Sort/bump index updates synchronously and always (absolute, idempotent);
       // only the broadcast of that state is throttled, in scheduleBump below.
@@ -632,9 +620,10 @@ export class RoomDO extends DurableObject<Env> {
     const roomKind = roomRef.split("/")[1];
     const isSectionPost = roomKind === "sec" && target[0]!.parent_seq == null;
     const b = body as Record<string, unknown>;
+    const { topics: _discardedTopics, ...bodyWithoutTopics } = b;
     const finalBody: unknown = isSectionPost && typeof b.text === "string"
-      ? { ...b, preview: b.text.slice(0, PREVIEW_LEN) }
-      : body;
+      ? { ...bodyWithoutTopics, preview: b.text.slice(0, PREVIEW_LEN) }
+      : bodyWithoutTopics;
 
     const editedAt = Date.now();
     const seq = this.allocateSeq();
@@ -762,7 +751,7 @@ export class RoomDO extends DurableObject<Env> {
         actor: r.actor,
         kind: r.kind,
         ts: r.ts,
-        body: JSON.parse(r.edit_body ?? r.body),
+        body: withoutTopics(JSON.parse(r.edit_body ?? r.body)),
       }));
     const requester = (ws.deserializeAttachment() as Attachment | null)?.actor ?? null;
     try {
@@ -989,7 +978,7 @@ export class RoomDO extends DurableObject<Env> {
         actor: r.actor,
         kind: r.kind,
         ts: r.ts,
-        body: JSON.parse(r.edit_body ?? r.body),
+        body: withoutTopics(JSON.parse(r.edit_body ?? r.body)),
         edited_at: r.edited_at ?? undefined,
       }));
     return this.attachReactions(items, (i) => i.seq, actor);
@@ -1000,7 +989,7 @@ export class RoomDO extends DurableObject<Env> {
   // Sorted by bumped_at desc (most recently active thread first), composite
   // (bumped_at, post_seq) cursor so a tie at the same millisecond still paginates
   // deterministically.
-  async listPosts(after: string | null, limit?: number, topicId?: string | null, actor: string | null = null): Promise<{ posts: unknown[]; next_cursor: string | null }> {
+  async listPosts(after: string | null, limit?: number, actor: string | null = null): Promise<{ posts: unknown[]; next_cursor: string | null }> {
     const cappedLimit = Math.max(1, Math.min(limit || POSTS_DEFAULT_LIMIT, POSTS_MAX_LIMIT));
     let cursorBumpedAt = Number.MAX_SAFE_INTEGER;
     let cursorSeq = Number.MAX_SAFE_INTEGER;
@@ -1014,20 +1003,15 @@ export class RoomDO extends DurableObject<Env> {
       }
     }
 
-    const params: unknown[] = [];
     let query = `SELECT p.post_seq, p.last_reply_seq, p.reply_count, p.bumped_at, i.actor, i.ts, i.body,
                         e.body AS edit_body, e.edited_at
                  FROM post_index p
                  JOIN item i ON i.seq = p.post_seq
                  LEFT JOIN edit e ON e.target_seq = p.post_seq`;
-    if (topicId) {
-      query += ` JOIN post_topic pt ON pt.post_seq = p.post_seq AND pt.topic_id = ?`;
-      params.push(topicId);
-    }
     query += ` LEFT JOIN tombstone t ON t.seq = p.post_seq
                WHERE t.seq IS NULL AND (p.bumped_at < ? OR (p.bumped_at = ? AND p.post_seq < ?))
                ORDER BY p.bumped_at DESC, p.post_seq DESC LIMIT ?`;
-    params.push(cursorBumpedAt, cursorBumpedAt, cursorSeq, cappedLimit + 1);
+    const params: unknown[] = [cursorBumpedAt, cursorBumpedAt, cursorSeq, cappedLimit + 1];
 
     const rows = this.ctx.storage.sql
       .exec<{
@@ -1042,7 +1026,7 @@ export class RoomDO extends DurableObject<Env> {
     const hasMore = rows.length > cappedLimit;
     const page = rows.slice(0, cappedLimit);
     const posts = page.map((r) => {
-      const body = JSON.parse(r.edit_body ?? r.body) as { title?: string; cover?: string; preview?: string; media?: unknown; topics?: string[] };
+      const body = JSON.parse(r.edit_body ?? r.body) as { title?: string; cover?: string; preview?: string; media?: unknown };
       return {
         post_seq: r.post_seq,
         actor: r.actor,
@@ -1051,7 +1035,6 @@ export class RoomDO extends DurableObject<Env> {
         cover: body.cover ?? null,
         preview: body.preview ?? "",
         media: body.media ?? [],
-        topics: body.topics ?? [],
         last_reply_seq: r.last_reply_seq,
         reply_count: r.reply_count,
         bumped_at: r.bumped_at,
@@ -1071,27 +1054,6 @@ export class RoomDO extends DurableObject<Env> {
         "SELECT COUNT(*) AS n FROM post_index p LEFT JOIN tombstone t ON t.seq = p.post_seq WHERE t.seq IS NULL"
       )
       .one().n;
-  }
-
-  // per-topic post_count for the topics list - api.ts calls this once
-  // per section room in the stronghold and sums the per-topic counts itself.
-  async countPostsByTopic(topicIds: string[]): Promise<Record<string, number>> {
-    if (topicIds.length === 0) return {};
-    const placeholders = topicIds.map(() => "?").join(",");
-    const rows = this.ctx.storage.sql
-      .exec<{ topic_id: string; n: number }>(
-        `SELECT pt.topic_id AS topic_id, COUNT(*) AS n
-         FROM post_topic pt
-         JOIN post_index p ON p.post_seq = pt.post_seq
-         LEFT JOIN tombstone t ON t.seq = p.post_seq
-         WHERE t.seq IS NULL AND pt.topic_id IN (${placeholders})
-         GROUP BY pt.topic_id`,
-        ...topicIds
-      )
-      .toArray();
-    const out: Record<string, number> = {};
-    for (const row of rows) out[row.topic_id] = row.n;
-    return out;
   }
 
   // Post detail + seq-anchored reply page (same before/limit idiom as getHistory).
@@ -1115,7 +1077,7 @@ export class RoomDO extends DurableObject<Env> {
         "SELECT last_reply_seq, reply_count, bumped_at FROM post_index WHERE post_seq = ?", postSeq
       )
       .toArray()[0];
-    const body = JSON.parse(postRow.edit_body ?? postRow.body) as { title?: string; text?: string; cover?: string; preview?: string; media?: unknown; topics?: string[] };
+    const body = JSON.parse(postRow.edit_body ?? postRow.body) as { title?: string; text?: string; cover?: string; preview?: string; media?: unknown };
     const post = {
       post_seq: postSeq,
       actor: postRow.actor,
@@ -1125,7 +1087,6 @@ export class RoomDO extends DurableObject<Env> {
       cover: body.cover ?? null,
       preview: body.preview ?? "",
       media: body.media ?? [],
-      topics: body.topics ?? [],
       last_reply_seq: idx?.last_reply_seq ?? postSeq,
       reply_count: idx?.reply_count ?? 0,
       bumped_at: idx?.bumped_at ?? postRow.ts,
@@ -1157,7 +1118,7 @@ export class RoomDO extends DurableObject<Env> {
 
     const replies = replyRows
       .filter((r) => r.tomb_seq == null)
-      .map((r) => ({ seq: r.seq, actor: r.actor, ts: r.ts, body: JSON.parse(r.edit_body ?? r.body), edited_at: r.edited_at ?? undefined }));
+      .map((r) => ({ seq: r.seq, actor: r.actor, ts: r.ts, body: withoutTopics(JSON.parse(r.edit_body ?? r.body)), edited_at: r.edited_at ?? undefined }));
     const lastRow = replyRows[replyRows.length - 1];
     const next_before = replyRows.length === cappedLimit && lastRow ? lastRow.seq : null;
     return {

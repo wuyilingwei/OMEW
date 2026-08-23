@@ -233,21 +233,6 @@ export interface RoomPatch {
   restricted?: boolean
 }
 
-export interface Topic {
-  id: string
-  name: string
-  color: string | null
-  description: string | null
-  position: number
-  post_count: number
-}
-
-export interface TopicPayload {
-  name: string
-  color?: string | null
-  description?: string | null
-}
-
 export interface StrongholdSummary {
   id: string
   name: string
@@ -298,7 +283,6 @@ export interface ItemBody {
   preview?: string
   media?: MediaAttachment[]
   quote?: unknown
-  topics?: string[]
 }
 
 // m0-protocol §3.2a: absolute per-name count for one item, plus the
@@ -347,7 +331,6 @@ export interface PostSummary {
   cover: string | null
   preview: string
   media?: MediaAttachment[]
-  topics?: string[]
   last_reply_seq: number
   reply_count: number
   bumped_at: number
@@ -361,7 +344,6 @@ export interface PostPage {
 
 export interface PostDetail extends PostSummary {
   text: string
-  topics?: string[]
 }
 
 export interface PostReply {

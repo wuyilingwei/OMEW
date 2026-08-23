@@ -8,14 +8,12 @@ import { useItemPermissions } from '../composables/useItemPermissions'
 import { usePostModal } from '../composables/usePostModal'
 import { useSectionRoom } from '../composables/useSectionRoom'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
-import { useTopics } from '../composables/useTopics'
 import { actorLocalpart } from '../utils/actor'
 import { WinButton } from '../vendor/winui'
 import AvatarBadge from './AvatarBadge.vue'
 import ItemContextMenu from './ItemContextMenu.vue'
 import MediaGrid from './MediaGrid.vue'
 import ReactionChips from './ReactionChips.vue'
-import TopicChips from './TopicChips.vue'
 
 const auth = useAuth()
 const { openAuthModal } = useAuthModal()
@@ -34,7 +32,6 @@ const {
   retractItem,
 } = useSectionRoom()
 const { members } = useStrongholdMembers()
-const { topics } = useTopics()
 const { canEdit, canRetract } = useItemPermissions()
 
 const replyDraft = ref('')
@@ -257,7 +254,6 @@ const replyCanRetract = computed(() => (activeReply.value ? canRetract(activeRep
                   </p>
                   <MediaGrid v-if="thread.post.media?.length" :media="thread.post.media" />
                 </template>
-                <TopicChips v-if="thread.post.topics?.length" :topics="topics" :ids="thread.post.topics" />
                 <ReactionChips
                   :reactions="thread.post.reactions"
                   :can-toggle="auth.isAuthenticated.value"
