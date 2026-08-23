@@ -124,24 +124,24 @@ describe("member.revoke propagation (m0-protocol §7.3)", () => {
     const { ws: victimWs } = await connectRoom(roomRef, victim, "member");
 
     victimWs.send(itemCreateFrame("m1", "first"));
-    const ack1 = await nextMessage(victimWs);
+    const ack1 = await nextMessageOfType(victimWs, "ack");
     const seq1 = ack1.seq as number;
 
     modWs.send(itemDeleteFrame(seq1));
-    const deleteAck = await nextMessage(modWs);
+    const deleteAck = await nextMessageOfType(modWs, "ack");
     expect(deleteAck).toMatchObject({ type: "ack", status: "ok", target_seq: seq1 });
 
     await env.DB.prepare("DELETE FROM user_server_groups WHERE localpart = ? AND group_id = ?").bind(localpart, groupId).run();
     await stub.revokeActor(target);
 
     victimWs.send(itemCreateFrame("m2", "second"));
-    const ack2 = await nextMessage(victimWs);
+    const ack2 = await nextMessageOfType(victimWs, "ack");
     const seq2 = ack2.seq as number;
 
     // Same socket, still open (this was update_deny, not close) - but the
     // privilege is gone now that the moderator group no longer applies.
     modWs.send(itemDeleteFrame(seq2));
-    const forbidden = await nextMessage(modWs);
+    const forbidden = await nextMessageOfType(modWs, "error");
     expect(forbidden).toMatchObject({ type: "error", code: "OMEW_FORBIDDEN" });
   });
 

@@ -20,7 +20,7 @@ beforeAll(async () => {
 });
 
 describe("DELETE /api/stronghold/:id", () => {
-  it("lets only the recorded stronghold owner delete and rejects the server-owner overlay", async () => {
+  it("lets only the recorded stronghold owner delete and rejects server-role overlays", async () => {
     const owner = "@deleteowner:local";
     const { id } = await createStronghold(owner);
     const member = "@deletemember:local";
@@ -37,6 +37,12 @@ describe("DELETE /api/stronghold/:id", () => {
       headers: { Authorization: `Bearer ${await sessionToken("@instanceowner:local", "owner")}` },
     });
     expect(serverOwnerResponse.status).toBe(403);
+
+    const serverAdminResponse = await apiRequest(`/api/stronghold/${id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${await sessionToken("@instanceadmin:local", "admin")}` },
+    });
+    expect(serverAdminResponse.status).toBe(403);
 
     const ownerResponse = await apiRequest(`/api/stronghold/${id}`, {
       method: "DELETE",
@@ -57,6 +63,7 @@ describe("DELETE /api/stronghold/:id", () => {
     ).bind(member, "remote.example", Date.now(), Date.now()).run();
     await env.MEDIA.put("archive/keep-index-test", new Uint8Array([1]));
     await env.MEDIA.put("archive/foreign-index-test", new Uint8Array([2]));
+    await env.MEDIA.put("archive/shared-index-test", new Uint8Array([3]));
     await env.DB.batch([
       env.DB.prepare("INSERT INTO stronghold_slug_index (slug, stronghold_id) VALUES (?, ?)").bind(`cleanup-${sequence}`, id),
       env.DB.prepare("INSERT INTO guest_member_state (actor, stronghold_id) VALUES (?, ?)").bind(member, id),
@@ -64,6 +71,10 @@ describe("DELETE /api/stronghold/:id", () => {
         .bind(roomRef, 1, 3, "archive/keep-index-test", Date.now()),
       env.DB.prepare("INSERT INTO archive_index (do_key, seq_start, seq_end, r2_key, created_at) VALUES (?, ?, ?, ?, ?)")
         .bind(foreignArchiveRef, 1, 3, "archive/foreign-index-test", Date.now()),
+      env.DB.prepare("INSERT INTO archive_index (do_key, seq_start, seq_end, r2_key, created_at) VALUES (?, ?, ?, ?, ?)")
+        .bind(roomRef, 4, 6, "archive/shared-index-test", Date.now()),
+      env.DB.prepare("INSERT INTO archive_index (do_key, seq_start, seq_end, r2_key, created_at) VALUES (?, ?, ?, ?, ?)")
+        .bind(foreignArchiveRef, 4, 6, "archive/shared-index-test", Date.now()),
       env.DB.prepare("INSERT INTO media (id, hash, owner_actor, size, mime, r2_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .bind(`media-${sequence}`, "hash", owner, 10, "image/webp", "media/keep-test", Date.now()),
     ]);
@@ -90,6 +101,7 @@ describe("DELETE /api/stronghold/:id", () => {
     expect(await env.DB.prepare("SELECT do_key FROM archive_index WHERE do_key = ?").bind(foreignArchiveRef).first()).toEqual({ do_key: foreignArchiveRef });
     expect(await env.MEDIA.get("archive/keep-index-test")).toBeNull();
     expect(await env.MEDIA.get("archive/foreign-index-test")).not.toBeNull();
+    expect(await env.MEDIA.get("archive/shared-index-test")).not.toBeNull();
     expect(await env.DB.prepare("SELECT id FROM media WHERE id = ?").bind(`media-${sequence}`).first()).toEqual({ id: `media-${sequence}` });
   });
 

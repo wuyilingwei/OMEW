@@ -1944,9 +1944,13 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     // StrongholdDO intact, so a retry is safe and cannot strand inaccessible
     // room state behind an already-deleted config.
     const rooms = await stub.listRoomsForDeletion();
+    const archivePrefix = `${strongholdId}/`;
     const { results: archiveRows } = await env.DB.prepare(
-      "SELECT r2_key FROM archive_index WHERE do_key = ? OR instr(do_key, ?) = 1"
-    ).bind(strongholdId, `${strongholdId}/`).all<{ r2_key: string }>();
+      "SELECT DISTINCT scoped.r2_key FROM archive_index scoped " +
+        "WHERE (scoped.do_key = ? OR instr(scoped.do_key, ?) = 1) " +
+        "AND NOT EXISTS (SELECT 1 FROM archive_index other WHERE other.r2_key = scoped.r2_key " +
+        "AND NOT (other.do_key = ? OR instr(other.do_key, ?) = 1))"
+    ).bind(strongholdId, archivePrefix, strongholdId, archivePrefix).all<{ r2_key: string }>();
     await Promise.all(
       rooms.map((room) => env.ROOM_DO.getByName(`${strongholdId}/${typeToKind(room.type)}/${room.res_id}`).purgeForStrongholdDeletion())
     );

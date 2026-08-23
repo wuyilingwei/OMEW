@@ -646,7 +646,6 @@ export class StrongholdDO extends DurableObject<Env> {
   // ---- tips WS ------------------------------------------------------------------
 
   async fetch(request: Request): Promise<Response> {
-    if (!await this.getConfig()) return new Response("stronghold not found", { status: 404 });
     if (request.headers.get("Upgrade") !== "websocket") {
       return new Response("expected websocket", { status: 426 });
     }
@@ -659,6 +658,7 @@ export class StrongholdDO extends DurableObject<Env> {
     if (!claims || claims.typ !== "stronghold" || claims.stronghold !== this.selfId) {
       return new Response("invalid token", { status: 401 });
     }
+    if (!await this.getConfig()) return new Response("stronghold not found", { status: 404 });
 
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
