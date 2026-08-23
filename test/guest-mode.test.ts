@@ -62,6 +62,50 @@ describe("guest read access matrix", () => {
     expect(historyRes.status).toBe(200);
   });
 
+  it("public stronghold + policy on: an authenticated non-member gets the same read-only guest access", async () => {
+    await setGuestBrowsing(true);
+    const owner = "@guestowner-auth-preview:local";
+    const previewer = "@guestpreviewer-auth-preview:local";
+    const { id, sectionResId, channelResId } = await freshStronghold(owner, "public");
+    const previewToken = await sessionToken(previewer);
+
+    const { ws } = await connectRoom(`${id}/sec/${sectionResId}`, owner, "owner");
+    ws.send(postCreateFrame("auth-preview", "A post visible to an authenticated previewer", "body text"));
+    const ack = (await nextMessage(ws)) as { seq: number };
+    ws.close();
+    const headers = { Authorization: `Bearer ${previewToken}` };
+
+    const configRes = await apiRequest(`/api/stronghold/${id}/config`, { headers });
+    expect(configRes.status).toBe(200);
+    expect((await configRes.json()) as Record<string, unknown>).toMatchObject({ id, visibility: "public" });
+
+    const roomsRes = await apiRequest(`/api/stronghold/${id}/rooms`, { headers });
+    expect(roomsRes.status).toBe(200);
+    expect((await roomsRes.json()) as Array<{ id: string }>).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: sectionResId }), expect.objectContaining({ id: channelResId })])
+    );
+
+    const postsRes = await apiRequest(`/api/stronghold/${id}/rooms/${sectionResId}/posts`, { headers });
+    expect(postsRes.status).toBe(200);
+    const postDetailRes = await apiRequest(`/api/stronghold/${id}/rooms/${sectionResId}/posts/${ack.seq}`, { headers });
+    expect(postDetailRes.status).toBe(200);
+    const historyRes = await apiRequest(`/stronghold/${id}/rooms/${channelResId}/history`, { headers });
+    expect(historyRes.status).toBe(200);
+  });
+
+  it("an authenticated non-member cannot preview a private stronghold", async () => {
+    await setGuestBrowsing(true);
+    const owner = "@guestowner-auth-private:local";
+    const previewer = "@guestpreviewer-auth-private:local";
+    const { id, sectionResId, channelResId } = await freshStronghold(owner, "private");
+    const headers = { Authorization: `Bearer ${await sessionToken(previewer)}` };
+
+    expect((await apiRequest(`/api/stronghold/${id}/config`, { headers })).status).toBe(403);
+    expect((await apiRequest(`/api/stronghold/${id}/rooms`, { headers })).status).toBe(403);
+    expect((await apiRequest(`/api/stronghold/${id}/rooms/${sectionResId}/posts`, { headers })).status).toBe(403);
+    expect((await apiRequest(`/stronghold/${id}/rooms/${channelResId}/history`, { headers })).status).toBe(403);
+  });
+
   it("private stronghold: unauthenticated reads are 401 regardless of the guest policy", async () => {
     await setGuestBrowsing(true);
     const owner = "@guestowner2:local";

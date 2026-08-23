@@ -2279,9 +2279,18 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     let role: Role | null = null;
     if (!(session instanceof Response)) {
       const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
-      if (!eff) return errorResponse(403, "OMEW_BANNED", "not a member or banned");
-      requester = session.actor;
-      role = eff.role;
+      if (eff) {
+        requester = session.actor;
+        role = eff.role;
+      } else {
+        // Authenticated accounts without a membership get the same public
+        // read-only preview as an unauthenticated guest. Keep requester null
+        // so private/member-only content cannot be selected by RoomDO.
+        const policy = await getInstanceConfig(env);
+        if (!(policy.allow_guest_browsing && config.visibility === "public")) {
+          return errorResponse(403, "OMEW_BANNED", "not a member or banned");
+        }
+      }
     } else {
       const policy = await getInstanceConfig(env);
       if (!(policy.allow_guest_browsing && config.visibility === "public")) {
@@ -3132,8 +3141,16 @@ async function resolveGuestOrMember(
   if (!(session instanceof Response)) {
     const member = await stub.getMember(session.actor);
     const eff = await effectiveRole(env, strongholdId, session.server_role, session.actor);
-    if (!eff) return apiError(403, "FORBIDDEN");
-    return { kind: "member", actor: session.actor, member, role: eff.role, config };
+    if (eff) return { kind: "member", actor: session.actor, member, role: eff.role, config };
+
+    // A registered account may browse public strongholds before joining one.
+    // Treat it exactly like a guest for read routes, while all write and WS
+    // token routes continue to use effectiveRole and still reject it.
+    const policy = await getInstanceConfig(env);
+    if (policy.allow_guest_browsing && config.visibility === "public") {
+      return { kind: "guest", config };
+    }
+    return apiError(403, "FORBIDDEN");
   }
 
   const policy = await getInstanceConfig(env);
