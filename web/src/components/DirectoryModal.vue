@@ -85,8 +85,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
             <ul v-else class="directory-modal__list">
               <li v-for="entry in entries" :key="entry.id" class="directory-entry">
-                <img v-if="entry.avatar" class="directory-entry__cover" :src="entry.avatar" :alt="entry.name" />
-                <div v-else class="directory-entry__cover directory-entry__cover--placeholder">{{ entry.name.slice(0, 1) }}</div>
+                <div class="directory-entry__avatar">
+                  <img v-if="entry.avatar" :src="entry.avatar" :alt="entry.name" />
+                  <span v-else class="directory-entry__avatar-placeholder" aria-hidden="true">{{ entry.name.slice(0, 1) }}</span>
+                </div>
                 <div class="directory-entry__body">
                   <span class="directory-entry__name">{{ entry.name }}</span>
                   <p v-if="entry.description" class="directory-entry__desc">{{ entry.description }}</p>
@@ -220,22 +222,32 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   background: var(--ctrl-fill-secondary);
 }
 
-.directory-entry__cover {
-  flex: 0 0 auto;
+.directory-entry__avatar {
+  flex: 0 0 44px;
+  flex-shrink: 0;
   width: 44px;
-  height: 44px;
+  aspect-ratio: 1;
+  overflow: hidden;
   border-radius: var(--radius-sm);
+  background: rgb(var(--colors-primary));
+  color: var(--on-accent);
+}
+
+.directory-entry__avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
   object-fit: cover;
 }
 
-.directory-entry__cover--placeholder {
+.directory-entry__avatar-placeholder {
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 0.9rem;
   font-weight: 700;
-  background: rgb(var(--colors-primary));
-  color: var(--on-accent);
 }
 
 .directory-entry__body {

@@ -21,8 +21,14 @@ describe('据点导轨公开大厅入口', () => {
   })
 
   it('公开据点大厅左侧优先展示据点 logo，缺失时才显示首字占位', () => {
-    expect(directoryModal).toContain('<img v-if="entry.avatar" class="directory-entry__cover" :src="entry.avatar" :alt="entry.name" />')
-    expect(directoryModal).toContain('v-else class="directory-entry__cover directory-entry__cover--placeholder"')
+    expect(directoryModal).toContain('<div class="directory-entry__avatar">')
+    expect(directoryModal).toContain('<img v-if="entry.avatar" :src="entry.avatar" :alt="entry.name" />')
+    expect(directoryModal).toContain('v-else class="directory-entry__avatar-placeholder"')
     expect(directoryModal).not.toContain('entry.cover')
+  })
+
+  it('将公开目录据点头像裁为不会被 flex 布局拉伸的方形', () => {
+    expect(directoryModal).toMatch(/\.directory-entry__avatar\s*\{(?=[\s\S]*?flex-shrink:\s*0)(?=[\s\S]*?aspect-ratio:\s*1)/)
+    expect(directoryModal).toMatch(/\.directory-entry__avatar img\s*\{[\s\S]*object-fit:\s*cover/)
   })
 })
