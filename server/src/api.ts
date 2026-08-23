@@ -1938,7 +1938,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     return json(toApiConfig(updated));
   }
 
-  // A stronghold is a graph of one StrongholdDO, one RoomDO per active room,
+  // A stronghold is a graph of one StrongholdDO, one RoomDO per room,
   // and several D1 discovery/federation indexes.  Only its *actual* owner may
   // erase that graph: the server-role overlay intentionally does not apply.
   // In particular, an instance admin/owner cannot delete another owner's
@@ -1969,7 +1969,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
       env.DB.prepare("DELETE FROM stronghold_member_index WHERE stronghold_id = ?").bind(strongholdId),
       env.DB.prepare("DELETE FROM stronghold_slug_index WHERE stronghold_id = ?").bind(strongholdId),
       env.DB.prepare("DELETE FROM guest_member_state WHERE stronghold_id = ?").bind(strongholdId),
-      env.DB.prepare("DELETE FROM archive_index WHERE do_key = ? OR do_key LIKE ?").bind(strongholdId, `${strongholdId}/%`),
+      env.DB.prepare("DELETE FROM archive_index WHERE do_key = ? OR instr(do_key, ?) = 1").bind(strongholdId, `${strongholdId}/`),
     ]);
     await stub.purgeForStrongholdDeletion();
     return new Response(null, { status: 204, headers: cors() });

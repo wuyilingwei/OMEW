@@ -696,15 +696,15 @@ watch(
 .stronghold-danger {
   margin-top: 1.5rem;
   padding: 1rem;
-  border: 1px solid rgb(var(--colors-error, 196 43 28) / 0.48);
+  border: 1px solid color-mix(in srgb, var(--SystemFillColorCriticalBrush) 48%, transparent);
   border-radius: var(--radius-sm);
-  background: rgb(var(--colors-error, 196 43 28) / 0.08);
+  background: color-mix(in srgb, var(--SystemFillColorCriticalBrush) 8%, transparent);
 }
 
 .stronghold-danger h2 {
   margin: 0;
   font-size: 0.95rem;
-  color: var(--SystemFillColorCriticalBrush, #c42b1c);
+  color: var(--SystemFillColorCriticalBrush);
 }
 
 .stronghold-danger p {
