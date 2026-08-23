@@ -19,6 +19,13 @@ describe('message bubble layout contract', () => {
     expect(messageBubbleSource).toContain('min-width: 0')
   })
 
+  it('marks an edited message with one accessible E beside its timestamp', () => {
+    expect(messageBubbleSource).toContain('class="message-row__edited"')
+    expect(messageBubbleSource).toContain('aria-label="已编辑"')
+    expect(messageBubbleSource).toContain('>E</span>')
+    expect(messageBubbleSource).not.toContain('（已编辑）')
+  })
+
   it('sizes standalone reaction emotes to a complete single-line bubble while preserving standard emotes', () => {
     expect(messageBubbleSource).toContain("'message-bubble__big-emote--compact': compactPureEmote")
     expect(messageBubbleSource).toContain('height: calc(1.26rem + 1rem + 2px)')

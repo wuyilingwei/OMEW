@@ -146,7 +146,7 @@ function onTouchStart(event: TouchEvent) {
     </div>
     <div v-if="!message.pending && !message.failed" class="message-row__timestamp">
       <span>{{ message.timestamp }}</span>
-      <span v-if="message.editedAt">（已编辑）</span>
+      <span v-if="message.editedAt" class="message-row__edited" aria-label="已编辑" title="已编辑">E</span>
     </div>
   </div>
 </template>
@@ -177,6 +177,9 @@ function onTouchStart(event: TouchEvent) {
 }
 
 .message-row__timestamp {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.2rem;
   flex: 0 0 auto;
   align-self: flex-end;
   padding-bottom: 0.05rem;
@@ -185,6 +188,10 @@ function onTouchStart(event: TouchEvent) {
   line-height: 1;
   white-space: nowrap;
   opacity: 0.72;
+}
+
+.message-row__edited {
+  font-weight: 600;
 }
 
 .message-row__avatar {
