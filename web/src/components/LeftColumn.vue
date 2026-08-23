@@ -64,7 +64,18 @@ function closeCompose() {
         >
           <span class="left-column__section-label">{{ room.name }}</span>
         </WinButton>
-        <span v-if="!sectionRooms.length" class="left-column__section-empty">帖子</span>
+        <WinButton
+          v-if="!sectionRooms.length"
+          Style="DefaultButtonStyle"
+          class="left-column__section-button left-column__section-placeholder"
+          role="tab"
+          :aria-selected="false"
+          :tabindex="-1"
+          :IsEnabled="false"
+          aria-label="暂无可用话题组"
+        >
+          <span class="left-column__section-label">帖子</span>
+        </WinButton>
       </div>
       <WinButton
         v-if="postRoom && canParticipate"
@@ -114,6 +125,9 @@ function closeCompose() {
 }
 
 .left-column__header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
@@ -121,6 +135,10 @@ function closeCompose() {
   padding: 1rem 1rem 0.75rem;
   font-weight: 600;
   color: var(--text-primary);
+  background: var(--app-bg);
+  border-bottom: 1px solid var(--stroke-divider);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
 }
 
 .left-column__compose-btn {
@@ -158,11 +176,8 @@ function closeCompose() {
   white-space: nowrap;
 }
 
-.left-column__section-empty {
-  align-self: center;
-  color: var(--text-secondary);
-  font-size: 0.85rem;
-  white-space: nowrap;
+.left-column__section-placeholder {
+  cursor: default;
 }
 
 .left-column__feed {

@@ -21,8 +21,19 @@ describe('topic group button layout contract', () => {
     expect(leftColumnSource).toContain('帖子话题组')
   })
 
-  it('keeps the single-group and empty-group states visible', () => {
+  it('keeps the same button UI visible for the empty-group state', () => {
     expect(leftColumnSource).toContain('v-if="!sectionRooms.length"')
-    expect(leftColumnSource).toContain('class="left-column__section-empty"')
+    expect(leftColumnSource).toContain('left-column__section-placeholder')
+    expect(leftColumnSource).toContain(':IsEnabled="false"')
+    expect(leftColumnSource).toContain('aria-label="暂无可用话题组"')
+    expect(leftColumnSource).not.toContain('left-column__section-empty')
+  })
+
+  it('pins the topic group controls while the post column scrolls', () => {
+    expect(leftColumnSource).toMatch(/\.left-column__header\s*\{[\s\S]*?position: sticky;/)
+    expect(leftColumnSource).toMatch(/\.left-column__header\s*\{[\s\S]*?top: 0;/)
+    expect(leftColumnSource).toMatch(/\.left-column__header\s*\{[\s\S]*?z-index: 2;/)
+    expect(leftColumnSource).toMatch(/\.left-column__header\s*\{[\s\S]*?background: var\(--app-bg\);/)
+    expect(leftColumnSource).toMatch(/\.left-column__header\s*\{[\s\S]*?border-bottom: 1px solid var\(--stroke-divider\);/)
   })
 })
