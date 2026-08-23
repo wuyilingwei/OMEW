@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useAuth } from '../composables/useAuth'
+import { navigateHome } from '../composables/useRoute'
 import { useStronghold } from '../composables/useStronghold'
 import CreateStrongholdCard from './CreateStrongholdCard.vue'
 import DirectoryModal from './DirectoryModal.vue'
@@ -18,15 +19,15 @@ function onCreated() {
 
 <template>
   <nav class="node-rail">
-    <button
+    <a
       class="node-rail__logo"
-      type="button"
-      title="打开公开据点大厅"
-      aria-label="OMEW，打开公开据点大厅"
-      @click="showDirectory = true"
+      href="/"
+      title="返回 OMEW 首页"
+      aria-label="返回 OMEW 首页"
+      @click.prevent="navigateHome"
     >
       <img src="/favicon.svg" alt="" aria-hidden="true" />
-    </button>
+    </a>
     <ul class="node-rail__list">
       <li v-for="node in nodes" :key="node.id">
         <button
@@ -99,6 +100,7 @@ function onCreated() {
   margin-bottom: 0.5rem;
   cursor: pointer;
   overflow: hidden;
+  text-decoration: none;
 }
 
 .node-rail__logo img {

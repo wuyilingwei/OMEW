@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { navigateHome } from '../composables/useRoute'
 import { useShellView } from '../composables/useShellView'
 import type { ShellView } from '../composables/useShellView'
 import AppIcon from './icons/AppIcon.vue'
@@ -15,6 +16,10 @@ const tabs: { view: ShellView; label: string; icon: IconName }[] = [
 
 <template>
   <nav class="mobile-nav">
+    <a class="mobile-nav__item mobile-nav__item--home" href="/" aria-label="返回 OMEW 首页" @click.prevent="navigateHome">
+      <img src="/favicon.svg" alt="" aria-hidden="true" />
+      <span class="mobile-nav__label">首页</span>
+    </a>
     <button
       v-for="tab in tabs"
       :key="tab.view"
@@ -63,7 +68,15 @@ const tabs: { view: ShellView; label: string; icon: IconName }[] = [
   border: none;
   background: transparent;
   color: var(--text-secondary);
+  font: inherit;
+  text-decoration: none;
   transition: background var(--fast-duration) var(--fast-out-slow-in), color var(--fast-duration);
+}
+
+.mobile-nav__item--home img {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
 }
 
 .mobile-nav__item:active {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AuthGate from './components/AuthGate.vue'
 import AuthModal from './components/AuthModal.vue'
 import ColumnResizer from './components/ColumnResizer.vue'
@@ -24,8 +24,9 @@ import { useStronghold } from './composables/useStronghold'
 
 const auth = useAuth()
 const { openAuthModal } = useAuthModal()
-const routeInstalled = ref(auth.isAuthenticated.value || location.pathname !== '/')
-if (routeInstalled.value) useRoute()
+const isHome = ref(location.pathname === '/')
+const routeInstalled = ref(!isHome.value)
+let routeController: ReturnType<typeof useRoute> | null = routeInstalled.value ? useRoute() : null
 // ServerAdminModal and StrongholdAdminModal are two independent
 // PostModal-style floating overlays with separate entry points (task 039
 // split, task 048 modal-ized) - the shell underneath keeps rendering while
@@ -37,20 +38,33 @@ const { activeView } = useShellView()
 const { config: instanceConfig } = useInstanceConfig()
 const { nodes, loading: strongholdsLoading, selectNode } = useStronghold()
 const hasStrongholds = computed(() => nodes.value.length > 0)
-useDocumentTitle()
+useDocumentTitle(isHome)
 
 // an unauthenticated visitor only hits the full-screen gate when the
 // instance doesn't allow guest browsing (or its config hasn't loaded
 // yet, same fallback as before) - otherwise the four-column shell renders
 // directly in its read-only guest state (useStronghold's isGuestMode).
 const showAuthGate = computed(() => !auth.isAuthenticated.value && !instanceConfig.value?.allow_guest_browsing)
-const showLanding = computed(() => !auth.isAuthenticated.value && !routeInstalled.value)
+const showLanding = computed(() => isHome.value)
 
-function installRoute(strongholdId?: string) {
+function installRoute(strongholdId?: string, strongholdSlug?: string) {
+  if (strongholdSlug && location.pathname === '/') {
+    history.pushState(null, '', `/a/${encodeURIComponent(strongholdSlug)}`)
+  }
+  isHome.value = false
   if (strongholdId) selectNode(strongholdId)
-  if (routeInstalled.value) return
-  routeInstalled.value = true
-  useRoute()
+  if (!routeInstalled.value) {
+    routeInstalled.value = true
+    routeController = useRoute()
+    return
+  }
+  if (strongholdSlug) {
+    routeController?.navigate({ server: 'a', slug: strongholdSlug, kind: null, room: null, postSeq: null })
+  }
+}
+
+function syncHomeFromAddress() {
+  isHome.value = location.pathname === '/'
 }
 
 function openStrongholdAdmin(tab: 'members' | 'settings') {
@@ -59,18 +73,22 @@ function openStrongholdAdmin(tab: 'members' | 'settings') {
 }
 
 watch(auth.isAuthenticated, (authenticated) => {
-  if (authenticated) installRoute()
+  if (authenticated && !isHome.value) installRoute()
   if (!authenticated) {
     serverAdminOpen.value = false
     strongholdAdminOpen.value = false
   }
 })
+
+onMounted(() => window.addEventListener('popstate', syncHomeFromAddress))
+onBeforeUnmount(() => window.removeEventListener('popstate', syncHomeFromAddress))
 </script>
 
 <template>
   <div class="shell">
     <LandingPage
       v-if="showLanding"
+      :authenticated="auth.isAuthenticated.value"
       :guest-browsing-allowed="instanceConfig?.allow_guest_browsing ?? false"
       @authenticate="openAuthModal"
       @browse="installRoute"

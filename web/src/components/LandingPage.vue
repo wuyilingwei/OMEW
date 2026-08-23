@@ -1,21 +1,44 @@
 <script setup lang="ts">
-import { watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useStronghold } from '../composables/useStronghold'
 import { WinButton } from '../vendor/winui'
 import AppIcon from './icons/AppIcon.vue'
 import LandingWorld from './LandingWorld.vue'
 
-const props = defineProps<{ guestBrowsingAllowed: boolean }>()
+const props = defineProps<{ authenticated: boolean; guestBrowsingAllowed: boolean }>()
 
 const emit = defineEmits<{
   authenticate: []
-  browse: [strongholdId?: string]
+  browse: [strongholdId?: string, strongholdSlug?: string]
 }>()
 
-const { publicDirectory: entries, loading: directoryLoading, loadError: directoryError, loadPublicDirectory } = useStronghold()
+const {
+  currentNode,
+  nodes,
+  publicDirectory: entries,
+  loading: directoryLoading,
+  loadError: directoryError,
+  loadPublicDirectory,
+} = useStronghold()
+const canBrowse = computed(() => props.authenticated || props.guestBrowsingAllowed)
+const primaryStronghold = computed(() => currentNode.value ?? nodes.value[0] ?? null)
+
+function handlePrimaryAction() {
+  if (!props.authenticated) {
+    emit('authenticate')
+    return
+  }
+  const target = primaryStronghold.value
+  emit('browse', target?.id, target?.slug)
+}
+
+function scrollToDirectory() {
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  document.getElementById('landing-directory')?.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'start' })
+}
 
 watch(
-  () => props.guestBrowsingAllowed,
+  canBrowse,
   (allowed) => {
     if (allowed) void loadPublicDirectory()
   },
@@ -43,14 +66,14 @@ watch(
           OMEW（Open Member of Excellent World）是 MEW 官方停止运营后完全重写的继承者，以高性能轻架构延续「人与人的连接」，支持去中心化部署与多服务商互联。
         </p>
         <div class="landing-page__actions">
-          <WinButton Style="AccentButtonStyle" class="landing-page__primary" @Click="emit('authenticate')">
-            登录或注册
+          <WinButton Style="AccentButtonStyle" class="landing-page__primary" @Click="handlePrimaryAction">
+            {{ authenticated ? (primaryStronghold ? '进入我的据点' : '创建第一个据点') : '登录或注册' }}
           </WinButton>
           <WinButton
-            v-if="guestBrowsingAllowed"
+            v-if="canBrowse"
             Style="DefaultButtonStyle"
             class="landing-page__secondary"
-            @Click="emit('browse')"
+            @Click="scrollToDirectory"
           >
             浏览公开据点
           </WinButton>
@@ -86,7 +109,6 @@ watch(
           <h2 id="directory-title">正在发生的据点</h2>
           <p>向下看看每个正在生长的小世界。</p>
         </div>
-        <WinButton v-if="guestBrowsingAllowed" Style="DefaultButtonStyle" @Click="emit('browse')">进入公开据点大厅</WinButton>
       </div>
 
       <div v-if="directoryLoading" class="landing-page__directory-status" role="status" aria-live="polite">
@@ -100,7 +122,7 @@ watch(
       <p v-else-if="!entries.length" class="landing-page__directory-status">还没有公开据点，稍后再来看看。</p>
       <ul v-else class="landing-page__directory-list">
         <li v-for="entry in entries" :key="entry.id">
-          <button class="landing-directory-card" type="button" :aria-label="`进入 ${entry.name}`" @click="emit('browse', entry.id)">
+          <button class="landing-directory-card" type="button" :aria-label="`进入 ${entry.name}`" @click="emit('browse', entry.id, entry.slug)">
             <img v-if="entry.cover" class="landing-directory-card__cover" :src="entry.cover" alt="" />
             <div class="landing-directory-card__body">
               <div class="landing-directory-card__identity">

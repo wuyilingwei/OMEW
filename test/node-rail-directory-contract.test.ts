@@ -4,8 +4,10 @@ import nodeRail from '../web/src/components/NodeRail.vue?raw'
 import directoryModal from '../web/src/components/DirectoryModal.vue?raw'
 
 describe('据点导轨公开大厅入口', () => {
-  it('将左侧 OMEW logo 暴露为可访问的公开据点大厅按钮', () => {
-    expect(nodeRail).toMatch(/<button[\s\S]*class="node-rail__logo"[\s\S]*aria-label="[^\"]*公开据点大厅[^\"]*"[\s\S]*@click="showDirectory = true"/)
+  it('将左侧 OMEW logo 暴露为返回首页的链接', () => {
+    expect(nodeRail).toMatch(/<a[\s\S]*class="node-rail__logo"[\s\S]*href="\/"[\s\S]*aria-label="返回 OMEW 首页"/)
+    expect(nodeRail).toContain('@click.prevent="navigateHome"')
+    expect(nodeRail).not.toMatch(/node-rail__logo[\s\S]{0,180}@click="showDirectory = true"/)
     expect(nodeRail).toContain('<DirectoryModal :open="showDirectory" @close="showDirectory = false" />')
   })
 

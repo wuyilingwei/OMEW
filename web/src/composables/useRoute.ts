@@ -72,6 +72,12 @@ function navigate(next: Partial<RouteState>, opts?: { replace?: boolean }) {
   writeAddress({ ...base, ...next }, opts?.replace ?? false)
 }
 
+export function navigateHome() {
+  if (location.pathname === '/') return
+  history.pushState(null, '', '/')
+  window.dispatchEvent(new PopStateEvent('popstate'))
+}
+
 let watchersInstalled = false
 function installWatchers() {
   if (watchersInstalled) return
@@ -94,6 +100,7 @@ function installWatchers() {
   }
 
   function reconcileFromLiveState(replace: boolean) {
+    if (location.pathname === '/') return
     const node = stronghold.currentNode.value
     const kind = currentKind()
     const room = kind === 'c' ? channel.selectedChannel.value : kind === 's' ? section.selectedSection.value : null
@@ -134,6 +141,11 @@ function installWatchers() {
     // one we pushed - assume not, so a later close rewrites instead of leaving.
     postEntryPushed = false
     try {
+      if (location.pathname === '/') {
+        route.value = null
+        postModal.close()
+        return
+      }
       const parsed = parseAddress()
       let nodeId = ''
       if (parsed) {

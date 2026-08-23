@@ -88,7 +88,12 @@ function loadPublicDirectory(force = false): Promise<void> {
   loadError.value = ''
   inflight = (async () => {
     try {
-      await replaceWithPublicDirectory()
+      if (authState.isAuthenticated.value) {
+        publicDirectory.value = await api.getDirectory()
+        loadedPublic = true
+      } else {
+        await replaceWithPublicDirectory()
+      }
     } catch {
       loadError.value = '无法加载据点目录'
     } finally {

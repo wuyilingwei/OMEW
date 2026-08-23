@@ -18,7 +18,7 @@ const world = ref<HTMLElement | null>(null)
 const layers: WorldLayer[] = [
   { key: 'sky', src: HOME_WORLD, depthX: 2, depthY: 1.5, scale: 1.04, idleFromX: '-1px', idleFromY: '0px', idleToX: '1px', idleToY: '-1px' },
   { key: 'glow-far', src: HOME_WORLD_LAYERS.glowFar, depthX: 5, depthY: 3, scale: 1, idleFromX: '-3px', idleFromY: '2px', idleToX: '3px', idleToY: '-2px' },
-  { key: 'glow-near', src: HOME_WORLD_LAYERS.glowNear, depthX: 16, depthY: 10, scale: 1, idleFromX: '7px', idleFromY: '-5px', idleToX: '-7px', idleToY: '5px' },
+  { key: 'glow-near', src: HOME_WORLD_LAYERS.glowNear, depthX: 5, depthY: 3, scale: 1, idleFromX: '-3px', idleFromY: '2px', idleToX: '3px', idleToY: '-2px' },
   { key: 'city', src: HOME_WORLD_LAYERS.city, depthX: 13, depthY: 8, scale: 1.07, idleFromX: '-5px', idleFromY: '3px', idleToX: '5px', idleToY: '-3px' },
   { key: 'clouds', src: HOME_WORLD_LAYERS.clouds, depthX: 18, depthY: 12, scale: 1.09, idleFromX: '7px', idleFromY: '-4px', idleToX: '-7px', idleToY: '4px' },
   { key: 'foreground', src: HOME_WORLD_LAYERS.foreground, depthX: 26, depthY: 18, scale: 1.12, idleFromX: '-9px', idleFromY: '6px', idleToX: '9px', idleToY: '-6px' },
@@ -35,10 +35,11 @@ let currentX = 0
 let currentY = 0
 
 function layerStyle(layer: WorldLayer, index: number) {
+  const idleDelay = layer.key === 'glow-far' || layer.key === 'glow-near' ? -0.9 : index * -0.9
   return {
     '--layer-scale': String(layer.scale),
     '--layer-delay': `${index * 70}ms`,
-    '--idle-delay': `${index * -0.9}s`,
+    '--idle-delay': `${idleDelay}s`,
     '--idle-from-x': layer.idleFromX,
     '--idle-from-y': layer.idleFromY,
     '--idle-to-x': layer.idleToX,
@@ -185,8 +186,12 @@ onBeforeUnmount(() => {
 
 .landing-world__layer--glow-far .landing-world__art,
 .landing-world__layer--glow-near .landing-world__art {
+  position: absolute;
+  top: 50%;
+  left: 50%;
   width: min(136vmin, 100vw);
   height: min(136vmin, 100vw);
+  translate: -50% -50%;
   object-fit: contain;
   opacity: 0.68;
 }
