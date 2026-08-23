@@ -10,6 +10,7 @@ import { envelopeToCiphertextField, parseOwnershipEnvelope, resealOwnershipKey, 
 import { passwordError, requiredError, requiredMaxLengthError } from '../utils/validate'
 import { WinButton, WinInfoBar, WinSelectorBar } from '../vendor/winui'
 import AppIcon from './icons/AppIcon.vue'
+import PersonalAvatarUploader from './PersonalAvatarUploader.vue'
 
 // account-scoped settings: 安全(改密含 §7.9a 所有权托管密文解封-重封、TOTP、passkey)与
 // 外观(主题三态)归入同一悬浮窗。chrome 沿用 ServerAdminModal/StrongholdAdminModal 的
@@ -54,6 +55,7 @@ function onPanelTabSelect(item: { value: PanelTab }) {
 // only changes how the account is shown in member lists and message bylines.
 
 const displayName = ref('')
+const avatar = ref<string | null>(null)
 const displayNameError = ref('')
 const displayNameSaving = ref(false)
 const displayNameSaved = ref(false)
@@ -63,8 +65,14 @@ function resetDisplayNameForm() {
   // a session stored before display_name existed carries only the username,
   // which is also what the server seeds the display name with
   displayName.value = auth.user.value?.display_name || auth.user.value?.username || ''
+  avatar.value = auth.user.value?.avatar ?? null
   displayNameError.value = ''
   displayNameSaved.value = false
+}
+
+function onAvatarChange(nextAvatar: string | null) {
+  avatar.value = nextAvatar
+  auth.updateUser({ avatar: nextAvatar })
 }
 
 async function submitDisplayName() {
@@ -370,6 +378,16 @@ watch(
           <div class="personal-modal__scroll">
             <div v-if="panelTab === 'profile'" class="personal-modal__body">
               <section class="settings-section">
+                <div class="profile-avatar-field">
+                  <span class="field__label">头像</span>
+                  <PersonalAvatarUploader
+                    v-if="auth.token.value"
+                    :model-value="avatar"
+                    :token="auth.token.value"
+                    :seed="auth.user.value?.username ?? ''"
+                    @update:model-value="onAvatarChange"
+                  />
+                </div>
                 <form class="profile-form" @submit.prevent="submitDisplayName">
                   <div class="field">
                     <label class="field__label" for="profile-display-name">显示名称</label>
@@ -718,6 +736,12 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
+}
+
+.profile-avatar-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
 }
 
 .profile-form :deep(.win-button) {

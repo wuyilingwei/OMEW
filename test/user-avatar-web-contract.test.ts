@@ -5,6 +5,8 @@ import mockSource from "../web/src/api/mock.ts?raw";
 import avatarBadgeSource from "../web/src/components/AvatarBadge.vue?raw";
 import chatSource from "../web/src/components/ChatPane.vue?raw";
 import messageSource from "../web/src/components/MessageBubble.vue?raw";
+import personalSettingsSource from "../web/src/components/PersonalSettingsModal.vue?raw";
+import personalUploaderSource from "../web/src/components/PersonalAvatarUploader.vue?raw";
 
 describe("personal avatar web contract", () => {
   it("exposes upload and clear operations in both real and mock clients", () => {
@@ -19,5 +21,14 @@ describe("personal avatar web contract", () => {
     expect(avatarBadgeSource).toContain("props.avatarUrl || defaultAvatarUrl(props.seed)");
     expect(chatSource).toContain("avatarUrl: avatarUrl(item.actor)");
     expect(messageSource).toContain(":avatar-url=\"message.avatarUrl ?? undefined\"");
+  });
+
+  it("uploads a cropped avatar from personal settings and updates the active session", () => {
+    expect(personalSettingsSource).toContain("<PersonalAvatarUploader");
+    expect(personalSettingsSource).toContain("auth.updateUser({ avatar: nextAvatar })");
+    expect(personalUploaderSource).toContain("api.uploadAvatar(props.token, blob)");
+    expect(personalUploaderSource).toContain("api.clearAvatar(props.token)");
+    expect(personalUploaderSource).toContain(':crop-ratio="1"');
+    expect(personalUploaderSource).toContain('accept="image/png,image/jpeg,image/webp,image/gif"');
   });
 });
