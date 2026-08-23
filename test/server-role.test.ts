@@ -4,7 +4,7 @@ import { apiRequest, connectRoom, ensureMigrated, itemCreateFrame, loginAs, next
 
 // m0-protocol §7.10: server-level role tier. Registration bootstrap (first user
 // -> owner) is covered in user-system.test.ts; this file covers the owner-only
-// appointment endpoints (GET/PATCH /api/admin/users) and the
+// appointment/listing endpoints (PATCH/GET /api/admin/users) and the
 // server_owner/server_admin permission-gate overlay onto stronghold roles -
 // owner-equivalent everywhere except ownership transfer.
 
@@ -38,7 +38,7 @@ beforeAll(async () => {
   await ensureMigrated();
 });
 
-describe("GET /api/admin/users (server_owner only)", () => {
+describe("GET /api/admin/users (server_owner/server_admin)", () => {
   it("lists localpart/server_role/created_at", async () => {
     const owner = await makeOwner();
     const listed = await freshUser("listuser");
@@ -54,17 +54,68 @@ describe("GET /api/admin/users (server_owner only)", () => {
     expect(typeof entry?.created_at).toBe("number");
   });
 
-  it("rejects a server_admin caller - this listing is owner-only, not admin", async () => {
+  it("lets a server_admin list users so existing server groups can be assigned", async () => {
     const admin = await makeAdmin();
+    const target = await freshUser("groupmember");
     const res = await apiRequest("/api/admin/users", { headers: { Authorization: `Bearer ${admin.token}` } });
-    expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: "ADMIN_REQUIRED" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { users: Array<{ localpart: string }> };
+    expect(body.users.map((user) => user.localpart)).toContain(target.username);
+
+    const groupRes = await apiRequest("/api/admin/server-groups", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${admin.token}` },
+      body: JSON.stringify({ name: "Listed users" }),
+    });
+    expect(groupRes.status).toBe(201);
+    const group = (await groupRes.json()) as { id: string };
+    const assign = await apiRequest(`/api/admin/server-groups/${group.id}/members/${target.username}`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${admin.token}` },
+    });
+    expect(assign.status).toBe(204);
+
+    const members = await apiRequest(`/api/admin/server-groups/${group.id}/members`, {
+      headers: { Authorization: `Bearer ${admin.token}` },
+    });
+    expect(await members.json()).toEqual({ localparts: [target.username] });
   });
 
   it("rejects a plain user", async () => {
     const user = await freshUser();
     const res = await apiRequest("/api/admin/users", { headers: { Authorization: `Bearer ${user.token}` } });
     expect(res.status).toBe(403);
+  });
+});
+
+describe("GET /api/me/strongholds server-admin discovery", () => {
+  it("shows an unjoined server admin every indexed stronghold and its rooms, but not an unjoined user", async () => {
+    const owner = await freshUser("discoveryowner");
+    const admin = await makeAdmin();
+    const ordinary = await freshUser("discoveryuser");
+    const created = await apiRequest("/api/strongholds", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${owner.token}` },
+      body: JSON.stringify({ name: "Admin Discovery" }),
+    });
+    expect(created.status).toBe(201);
+    const stronghold = (await created.json()) as { id: string };
+    await env.DB.prepare("INSERT INTO stronghold_slug_index (slug, stronghold_id) VALUES (?, ?)")
+      .bind(`stale-discovery-${Date.now()}`, `deleted-discovery-${Date.now()}`)
+      .run();
+
+    const adminList = await apiRequest("/api/me/strongholds", { headers: { Authorization: `Bearer ${admin.token}` } });
+    expect(adminList.status).toBe(200);
+    const adminNodes = (await adminList.json()) as Array<{ id: string; rooms: Array<{ id: string }> }>;
+    expect(adminNodes.find((node) => node.id === stronghold.id)?.rooms.map((room) => room.id)).toEqual(
+      expect.arrayContaining(["lobby", "posts"]),
+    );
+    expect(adminNodes.some((node) => node.id.startsWith("deleted-discovery-"))).toBe(false);
+
+    const ordinaryList = await apiRequest("/api/me/strongholds", { headers: { Authorization: `Bearer ${ordinary.token}` } });
+    expect(ordinaryList.status).toBe(200);
+    const ordinaryNodes = (await ordinaryList.json()) as Array<{ id: string }>;
+    expect(ordinaryNodes.some((node) => node.id === stronghold.id)).toBe(false);
   });
 });
 
@@ -181,7 +232,7 @@ describe("server_owner/server_admin permission-gate overlay in a stronghold they
     return id;
   }
 
-  it("server_admin passes the owner gate for config writes and for moderating someone else's message, but transfer stays 403", async () => {
+  it("server_admin manages members, rooms, and every base setting through the owner overlay, but transfer/delete stay 403", async () => {
     const realOwner = "@ovlowner1:local";
     const member = "@ovlmember1:local";
     const admin = "@ovladmin1:local"; // never joins this stronghold
@@ -190,16 +241,92 @@ describe("server_owner/server_admin permission-gate overlay in a stronghold they
     await stub.addMember(member, "member");
     const adminToken = await sessionToken(admin, "admin");
 
-    // owner-only field (visibility) succeeds despite no membership row at all.
+    // Every base-setting field, including owner-only visibility, succeeds despite
+    // no membership row at all.
     const patchRes = await apiRequest(`/api/stronghold/${id}/config`, {
       method: "PATCH",
       headers: { Authorization: `Bearer ${adminToken}` },
-      body: JSON.stringify({ visibility: "private", description: "moderated by server admin" }),
+      body: JSON.stringify({
+        name: "Admin configured",
+        description: "moderated by server admin",
+        visibility: "private",
+        avatar: "/media/admin-avatar",
+        cover: "/media/admin-cover",
+        allow_message_edit: false,
+        allow_message_retract: false,
+        edit_window_secs: 60,
+      }),
     });
     expect(patchRes.status).toBe(200);
     const patched = (await patchRes.json()) as Record<string, unknown>;
+    expect(patched.name).toBe("Admin configured");
     expect(patched.visibility).toBe("private");
     expect(patched.description).toBe("moderated by server admin");
+    expect(patched.avatar).toBe("/media/admin-avatar");
+    expect(patched.cover).toBe("/media/admin-cover");
+    expect(patched.allow_message_edit).toBe(false);
+    expect(patched.allow_message_retract).toBe(false);
+    expect(patched.edit_window_secs).toBe(60);
+
+    // Owner-equivalent management includes member deny and topic/topic-group
+    // (channel/section) CRUD.
+    const denyRes = await apiRequest(`/api/stronghold/${id}/members/${encodeURIComponent(member)}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ deny: 1 }),
+    });
+    expect(denyRes.status).toBe(200);
+    expect((await denyRes.json()) as Record<string, unknown>).toMatchObject({ actor: member, deny: 1 });
+
+    const topic = await apiRequest(`/api/stronghold/${id}/rooms`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ name: "Admin topic", type: "channel" }),
+    });
+    expect(topic.status).toBe(201);
+    const topicRoom = (await topic.json()) as { id: string; type: string };
+    expect(topicRoom.type).toBe("channel");
+
+    const topicGroup = await apiRequest(`/api/stronghold/${id}/rooms`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ name: "Admin topic group", type: "section" }),
+    });
+    expect(topicGroup.status).toBe(201);
+    const topicGroupRoom = (await topicGroup.json()) as { id: string; type: string };
+    expect(topicGroupRoom.type).toBe("section");
+    const spareTopicGroup = await apiRequest(`/api/stronghold/${id}/rooms`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ name: "Spare topic group", type: "section" }),
+    });
+    expect(spareTopicGroup.status).toBe(201);
+    const rooms = await apiRequest(`/api/stronghold/${id}/rooms`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    expect(rooms.status).toBe(200);
+    expect(((await rooms.json()) as Array<{ id: string }>).map((room) => room.id)).toEqual(expect.arrayContaining([topicRoom.id, topicGroupRoom.id]));
+
+    const renameTopic = await apiRequest(`/api/stronghold/${id}/rooms/${topicRoom.id}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ name: "Renamed topic", description: "managed by admin" }),
+    });
+    expect(renameTopic.status).toBe(200);
+    expect((await renameTopic.json()) as Record<string, unknown>).toMatchObject({ name: "Renamed topic", description: "managed by admin" });
+    const renameTopicGroup = await apiRequest(`/api/stronghold/${id}/rooms/${topicGroupRoom.id}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ name: "Renamed topic group", description: "managed group" }),
+    });
+    expect(renameTopicGroup.status).toBe(200);
+    expect((await renameTopicGroup.json()) as Record<string, unknown>).toMatchObject({ name: "Renamed topic group", description: "managed group" });
+    expect((await apiRequest(`/api/stronghold/${id}/rooms/${topicRoom.id}`, {
+      method: "DELETE", headers: { Authorization: `Bearer ${adminToken}` },
+    })).status).toBe(204);
+    expect((await apiRequest(`/api/stronghold/${id}/rooms/${topicGroupRoom.id}`, {
+      method: "DELETE", headers: { Authorization: `Bearer ${adminToken}` },
+    })).status).toBe(204);
 
     // moderate (retract) another member's message.
     const { ws } = await connectRoom(`${id}/ch/lobby`, member, "member");
@@ -221,6 +348,13 @@ describe("server_owner/server_admin permission-gate overlay in a stronghold they
     });
     expect(transferRes.status).toBe(403);
     expect(await transferRes.json()).toEqual({ error: "FORBIDDEN" });
+
+    const deleteRes = await apiRequest(`/api/stronghold/${id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    expect(deleteRes.status).toBe(403);
+    expect(await deleteRes.json()).toEqual({ error: "FORBIDDEN" });
   });
 
   it("server_owner (also never a member) can transfer ownership away from the real owner", async () => {
