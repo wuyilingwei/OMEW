@@ -1,30 +1,26 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { api } from '../api'
-import { DEFAULT_NODE_PAGE_BG } from '../assets/mew'
 import { useAuth } from '../composables/useAuth'
 import { useAuthModal } from '../composables/useAuthModal'
 import { useStronghold } from '../composables/useStronghold'
-import { useStrongholdConfig } from '../composables/useStrongholdConfig'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
 import { useTheme } from '../composables/useTheme'
 import { WinButton, WinDropDownButton } from '../vendor/winui'
 import AvatarBadge from './AvatarBadge.vue'
 import PersonalSettingsModal from './PersonalSettingsModal.vue'
+import StrongholdMemberRoster from './StrongholdMemberRoster.vue'
 
 const emit = defineEmits<{ 'open-server-admin': []; 'open-panel': ['members' | 'settings'] }>()
 
 const { mode, cycleTheme } = useTheme()
 const auth = useAuth()
-const { currentNode, selectedNodeId, isPublicPreview, isReadOnly, loadStrongholds } = useStronghold()
-const { config } = useStrongholdConfig()
+const { selectedNodeId, isPublicPreview, isReadOnly, loadStrongholds } = useStronghold()
 const { myRole } = useStrongholdMembers()
 const { openAuthModal } = useAuthModal()
 
-const strongholdName = computed(() => config.value?.name ?? currentNode.value?.name ?? '')
-const strongholdDescription = computed(() => config.value?.description ?? '')
-const strongholdAvatar = computed(() => config.value?.avatar ?? currentNode.value?.avatar ?? null)
-const strongholdCover = computed(() => config.value?.cover || currentNode.value?.cover || DEFAULT_NODE_PAGE_BG)
+const personalName = computed(() => auth.user.value?.display_name || auth.user.value?.username || '')
+const personalCover = computed(() => auth.user.value?.cover ?? null)
 
 const modeLabel: Record<string, string> = {
   system: '跟随系统',
@@ -91,16 +87,23 @@ async function joinCurrentStronghold() {
       </template>
     </div>
 
-    <div class="right-column__stronghold">
-      <img v-if="strongholdCover" class="right-column__cover" :src="strongholdCover" :alt="strongholdName" />
-      <div class="right-column__stronghold-body">
-        <div class="right-column__stronghold-heading">
-          <img v-if="strongholdAvatar" class="right-column__avatar" :src="strongholdAvatar" alt="" />
-          <h2 class="right-column__stronghold-name">{{ strongholdName }}</h2>
-        </div>
-        <p class="right-column__stronghold-description">{{ strongholdDescription }}</p>
+    <section v-if="auth.isAuthenticated.value" class="right-column__personal-card" aria-label="个人资料封面">
+      <div class="right-column__personal-cover">
+        <img v-if="personalCover" :src="personalCover" :alt="`${personalName} 的个人封面`" />
+        <div v-else class="right-column__personal-cover-placeholder" aria-hidden="true" />
       </div>
-    </div>
+      <div class="right-column__personal-identity">
+        <AvatarBadge
+          :seed="auth.user.value?.username ?? ''"
+          :size="40"
+          :avatar-url="auth.user.value?.avatar ?? undefined"
+        />
+        <span class="right-column__personal-copy">
+          <strong>{{ personalName }}</strong>
+          <span>@{{ auth.user.value?.username }}</span>
+        </span>
+      </div>
+    </section>
 
     <div class="right-column__actions">
       <template v-if="!isReadOnly">
@@ -132,6 +135,7 @@ async function joinCurrentStronghold() {
       </WinButton>
     </div>
 
+    <StrongholdMemberRoster />
     <PersonalSettingsModal :open="showPersonalSettings" @close="showPersonalSettings = false" />
   </aside>
 </template>
@@ -147,7 +151,7 @@ async function joinCurrentStronghold() {
   padding: 1rem;
   background: var(--app-bg);
   border-left: 1px solid var(--stroke-divider);
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .right-column__topbar {
@@ -180,57 +184,68 @@ async function joinCurrentStronghold() {
   white-space: nowrap;
 }
 
-.right-column__stronghold {
-  display: flex;
-  flex-direction: column;
+.right-column__personal-card {
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid var(--card-stroke);
   border-radius: var(--radius-sm);
   background: var(--card-bg);
-  border: 1px solid var(--card-stroke);
-  backdrop-filter: blur(20px) saturate(160%);
-  -webkit-backdrop-filter: blur(20px) saturate(160%);
-  overflow: hidden;
 }
 
-.right-column__cover {
+.right-column__personal-cover {
   width: 100%;
-  height: 96px;
+  aspect-ratio: 3 / 1;
+  overflow: hidden;
+  background: var(--ctrl-fill-secondary);
+}
+
+.right-column__personal-cover img,
+.right-column__personal-cover-placeholder {
+  width: 100%;
+  height: 100%;
+}
+
+.right-column__personal-cover img {
+  display: block;
   object-fit: cover;
 }
 
-.right-column__stronghold-body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  padding: 0.75rem 0.85rem;
+.right-column__personal-cover-placeholder {
+  background:
+    radial-gradient(circle at 78% 28%, color-mix(in srgb, var(--accent) 30%, transparent), transparent 42%),
+    linear-gradient(135deg, var(--ctrl-fill-secondary), var(--layer-default));
 }
 
-.right-column__stronghold-name {
-  margin: 0;
-  font-size: 0.98rem;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.right-column__stronghold-heading {
+.right-column__personal-identity {
   display: flex;
   align-items: center;
-  gap: 0.55rem;
+  gap: 0.65rem;
+  padding: 0.7rem 0.8rem;
 }
 
-.right-column__avatar {
-  width: 32px;
-  height: 32px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  object-fit: cover;
-  border: 1px solid var(--card-stroke);
+.right-column__personal-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
 }
 
-.right-column__stronghold-description {
-  margin: 0;
-  font-size: 0.78rem;
-  line-height: 1.5;
+.right-column__personal-copy strong,
+.right-column__personal-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.right-column__personal-copy strong {
+  color: var(--text-primary);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.right-column__personal-copy span {
   color: var(--text-secondary);
+  font-size: 0.72rem;
 }
 
 .right-column__actions {

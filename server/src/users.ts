@@ -55,6 +55,7 @@ export function toPublicUser(
     localpart: string;
     display_name?: string | null;
     avatar?: string | null;
+    cover?: string | null;
     server_role: ServerRole;
     email: string | null;
     email_verified: number;
@@ -68,6 +69,7 @@ export function toPublicUser(
     // writes the localpart as the initial display name), both fall back to it.
     display_name: row.display_name || row.localpart,
     avatar: row.avatar ?? null,
+    cover: row.cover ?? null,
     actor,
     server_role: row.server_role,
     is_admin: row.server_role === "owner" || row.server_role === "admin",

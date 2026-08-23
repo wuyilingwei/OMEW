@@ -7,6 +7,7 @@ import type {
   AuthResponse,
   BanEntry,
   ChangePasswordPayload,
+  CoverUploadResult,
   CreateRoomPayload,
   CreateStrongholdPayload,
   DirectoryEntry,
@@ -94,6 +95,7 @@ interface WireMemberEntry {
   role: StrongholdMember['role']
   deny: number
   joined_at: number
+  last_active_at: number | null
   is_guest: boolean
   home_domain?: string
 }
@@ -145,6 +147,7 @@ function toStrongholdMember(entry: WireMemberEntry): StrongholdMember {
     role: entry.role,
     ...denyToBooleans(entry.deny),
     joined_at: new Date(entry.joined_at).toISOString(),
+    last_active_at: entry.last_active_at == null ? null : new Date(entry.last_active_at).toISOString(),
     is_guest: entry.is_guest,
     home_domain: entry.home_domain,
     groups: [],
@@ -676,8 +679,14 @@ export const realApi = {
   uploadAvatar: (token: string, file: File | Blob, onProgress?: (percent: number) => void) =>
     uploadBlob<AvatarUploadResult>('/api/me/avatar', token, file, onProgress),
 
+  uploadCover: (token: string, file: File | Blob, onProgress?: (percent: number) => void) =>
+    uploadBlob<CoverUploadResult>('/api/me/cover', token, file, onProgress),
+
   clearAvatar: (token: string) =>
     request<{ avatar: null }>('/api/me/avatar', { method: 'DELETE', headers: authHeaders(token) }),
+
+  clearCover: (token: string) =>
+    request<{ cover: null }>('/api/me/cover', { method: 'DELETE', headers: authHeaders(token) }),
 
   getStorageUsage: (token: string) => request<StorageUsage>('/api/me/storage', { headers: authHeaders(token) }),
 

@@ -9,6 +9,7 @@ import type {
   AdminInstanceConfig,
   AdminUsersPage,
   AvatarUploadResult,
+  CoverUploadResult,
   AuthResponse,
   AuthUser,
   BanEntry,
@@ -124,6 +125,7 @@ const users: MockUser[] = [
     username: 'admin',
     display_name: 'admin',
     avatar: null,
+    cover: null,
     password: 'admin123',
     is_admin: true,
     server_role: 'owner',
@@ -140,6 +142,7 @@ const users: MockUser[] = [
     username: 'mod2',
     display_name: 'mod2',
     avatar: null,
+    cover: null,
     password: 'mod2pass1',
     is_admin: true,
     server_role: 'admin',
@@ -245,6 +248,7 @@ function requireUser(token: string): MockUser {
   const actor = sessions.get(token)
   const user = users.find((candidate) => candidate.actor === actor)
   if (!user || isGloballyBanned(user.actor)) throw new ApiRequestError('AUTH_FAILED', 401)
+  touchMockActivity(user.actor)
   return user
 }
 
@@ -323,6 +327,15 @@ const strongholds = new Map<string, MockStrongholdState>()
 const strongholdMembers = new Map<string, StrongholdMember[]>()
 const strongholdBans = new Map<string, BanEntry[]>()
 const globalBans: BanEntry[] = []
+
+function touchMockActivity(actor: string): void {
+  const now = new Date().toISOString()
+  for (const members of strongholdMembers.values()) {
+    const member = members.find((candidate) => candidate.actor === actor)
+    if (member) member.last_active_at = now
+  }
+}
+
 type MockFeatureRestriction = { paused: boolean; expires_at: number | null; mode: FeatureRestrictionMode }
 const featureRestrictions = new Map<string, Record<'chat' | 'posts', { owner: MockFeatureRestriction; server: MockFeatureRestriction }>>()
 
@@ -526,6 +539,7 @@ function seedDemoStronghold(): void {
       deny_idea: false,
       deny_comment: false,
       joined_at: daysAgo(30),
+      last_active_at: daysAgo(2),
       is_guest: false,
       groups: [],
     },
@@ -539,6 +553,7 @@ function seedDemoStronghold(): void {
       deny_idea: false,
       deny_comment: false,
       joined_at: daysAgo(20),
+      last_active_at: daysAgo(1),
       is_guest: false,
       groups: [],
     },
@@ -552,6 +567,7 @@ function seedDemoStronghold(): void {
       deny_idea: false,
       deny_comment: false,
       joined_at: daysAgo(10),
+      last_active_at: null,
       is_guest: false,
       groups: memberGroupsFor('Aki'),
     },
@@ -621,6 +637,7 @@ function requireManager(token: string, nodeId: string): { user: MockUser; member
         deny_idea: false,
         deny_comment: false,
         joined_at: '',
+        last_active_at: null,
         is_guest: false,
         groups: [],
       },
@@ -840,6 +857,7 @@ export const mockApi = {
       username: payload.username,
       display_name: payload.username,
       avatar: null,
+      cover: null,
       password: payload.password,
       is_admin: false,
       server_role: 'user',
@@ -1101,6 +1119,7 @@ export const mockApi = {
         deny_idea: false,
         deny_comment: false,
         joined_at: new Date().toISOString(),
+        last_active_at: new Date().toISOString(),
         is_guest: false,
         groups: [],
       },
@@ -1160,6 +1179,7 @@ export const mockApi = {
       deny_idea: false,
       deny_comment: false,
       joined_at: new Date().toISOString(),
+      last_active_at: new Date().toISOString(),
       is_guest: false,
       groups: [],
     }
@@ -1372,6 +1392,7 @@ export const mockApi = {
           deny_idea: true,
           deny_comment: true,
           joined_at: ban.banned_at,
+          last_active_at: null,
           is_guest: false,
           groups: memberGroupsFor(localpartOf(ban.actor)),
         })),
@@ -1596,6 +1617,13 @@ export const mockApi = {
     return { ...result, avatar: result.url }
   },
 
+  async uploadCover(token: string, file: File | Blob, onProgress?: (percent: number) => void): Promise<CoverUploadResult> {
+    const user = requireUser(token)
+    const result = await mockApi.uploadMedia(token, file, onProgress)
+    user.cover = result.url
+    return { ...result, cover: result.url }
+  },
+
   async clearAvatar(token: string): Promise<{ avatar: null }> {
     const user = requireUser(token)
     user.avatar = null
@@ -1604,6 +1632,12 @@ export const mockApi = {
       if (member) member.avatar = null
     }
     return delay({ avatar: null }, 120)
+  },
+
+  async clearCover(token: string): Promise<{ cover: null }> {
+    const user = requireUser(token)
+    user.cover = null
+    return delay({ cover: null }, 120)
   },
 
   async getStorageUsage(token: string): Promise<StorageUsage> {
@@ -1667,6 +1701,7 @@ export const mockApi = {
           deny_idea: false,
           deny_comment: false,
           joined_at: new Date().toISOString(),
+          last_active_at: new Date().toISOString(),
           is_guest: false,
           groups: [],
         },

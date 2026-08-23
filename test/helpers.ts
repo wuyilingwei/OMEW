@@ -20,6 +20,8 @@ import migration0014 from "../server/migrations/0014_user_avatar.sql?raw";
 import migration0015 from "../server/migrations/0015_timed_bans.sql?raw";
 import migration0016 from "../server/migrations/0016_stronghold_feature_overrides.sql?raw";
 import migration0017 from "../server/migrations/0017_stronghold_directory_index.sql?raw";
+import migration0018 from "../server/migrations/0018_user_cover.sql?raw";
+import migration0019 from "../server/migrations/0019_user_last_active.sql?raw";
 
 // Must match vitest.config.ts's miniflare.bindings.DEV_TOKEN_SECRET.
 export const TEST_SECRET = "test-secret-do-not-use-in-prod";
@@ -44,14 +46,19 @@ export async function ensureMigrated(): Promise<void> {
   const directoryProjection = await env.DB.prepare(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'stronghold_directory_index'"
   ).first();
-  if (marker && directoryProjection) return;
+  const userColumns = marker ? await env.DB.prepare("PRAGMA table_info(users)").all<{ name: string }>() : null;
+  const hasCover = userColumns?.results.some((column) => column.name === "cover") ?? false;
+  const hasLastActive = userColumns?.results.some((column) => column.name === "last_active_at") ?? false;
+  if (marker && directoryProjection && hasCover && hasLastActive) return;
   if (marker) {
-    for (const statement of splitStatements(migration0017)) {
-      await env.DB.prepare(statement).run();
+    if (!directoryProjection) {
+      for (const statement of splitStatements(migration0017)) await env.DB.prepare(statement).run();
     }
+    if (!hasCover) for (const statement of splitStatements(migration0018)) await env.DB.prepare(statement).run();
+    if (!hasLastActive) for (const statement of splitStatements(migration0019)) await env.DB.prepare(statement).run();
     return;
   }
-  for (const sql of [migration0001, migration0002, migration0003, migration0004, migration0005, migration0006, migration0007, migration0008, migration0009, migration0010, migration0011, migration0012, migration0013, migration0014, migration0015, migration0016, migration0017]) {
+  for (const sql of [migration0001, migration0002, migration0003, migration0004, migration0005, migration0006, migration0007, migration0008, migration0009, migration0010, migration0011, migration0012, migration0013, migration0014, migration0015, migration0016, migration0017, migration0018, migration0019]) {
     for (const statement of splitStatements(sql)) {
       await env.DB.prepare(statement).run();
     }
@@ -107,6 +114,19 @@ export function avatarUploadRequest(opts: {
     }),
     env
   );
+}
+
+export function coverUploadRequest(opts: {
+  token?: string;
+  contentType: string;
+  body: Uint8Array;
+}): Promise<Response> {
+  const headers: Record<string, string> = {
+    "Content-Type": opts.contentType,
+    "Content-Length": String(opts.body.byteLength),
+  };
+  if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
+  return worker.fetch(new Request("http://local/api/me/cover", { method: "POST", headers, body: opts.body }), env);
 }
 
 export async function registerUser(

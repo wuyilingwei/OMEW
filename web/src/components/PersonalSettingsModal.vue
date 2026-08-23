@@ -11,6 +11,7 @@ import { passwordError, requiredError, requiredMaxLengthError } from '../utils/v
 import { WinButton, WinInfoBar, WinSelectorBar } from '../vendor/winui'
 import AppIcon from './icons/AppIcon.vue'
 import PersonalAvatarUploader from './PersonalAvatarUploader.vue'
+import PersonalCoverUploader from './PersonalCoverUploader.vue'
 
 // account-scoped settings: 安全(改密含 §7.9a 所有权托管密文解封-重封、TOTP、passkey)与
 // 外观(主题三态)归入同一悬浮窗。chrome 沿用 ServerAdminModal/StrongholdAdminModal 的
@@ -56,6 +57,7 @@ function onPanelTabSelect(item: { value: PanelTab }) {
 
 const displayName = ref('')
 const avatar = ref<string | null>(null)
+const cover = ref<string | null>(null)
 const displayNameError = ref('')
 const displayNameSaving = ref(false)
 const displayNameSaved = ref(false)
@@ -66,6 +68,7 @@ function resetDisplayNameForm() {
   // which is also what the server seeds the display name with
   displayName.value = auth.user.value?.display_name || auth.user.value?.username || ''
   avatar.value = auth.user.value?.avatar ?? null
+  cover.value = auth.user.value?.cover ?? null
   displayNameError.value = ''
   displayNameSaved.value = false
 }
@@ -73,6 +76,10 @@ function resetDisplayNameForm() {
 function onAvatarChange(nextAvatar: string | null) {
   avatar.value = nextAvatar
   auth.updateUser({ avatar: nextAvatar })
+}
+function onCoverChange(nextCover: string | null) {
+  cover.value = nextCover
+  auth.updateUser({ cover: nextCover })
 }
 
 async function submitDisplayName() {
@@ -387,6 +394,10 @@ watch(
                     :seed="auth.user.value?.username ?? ''"
                     @update:model-value="onAvatarChange"
                   />
+                </div>
+                <div class="profile-cover-field">
+                  <span class="field__label">个人封面</span>
+                  <PersonalCoverUploader v-if="auth.token.value" :model-value="cover" :token="auth.token.value" @update:model-value="onCoverChange" />
                 </div>
                 <form class="profile-form" @submit.prevent="submitDisplayName">
                   <div class="field">
@@ -739,6 +750,12 @@ watch(
 }
 
 .profile-avatar-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.profile-cover-field {
   display: flex;
   flex-direction: column;
   gap: 0.45rem;

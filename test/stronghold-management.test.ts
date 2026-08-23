@@ -418,6 +418,7 @@ describe("GET /api/users/:actor", () => {
       actor: `@profileuser1:${HOME_DOMAIN}`,
       display_name: "Profile User",
       avatar: null,
+      cover: null,
       created_at: now,
       is_guest: false,
     });
