@@ -9,6 +9,20 @@ const { isReadOnly } = useStronghold()
 
 const roleLabels = { owner: '据点所有者', mod: '管理员', member: '成员' } as const
 const visibleMembers = computed(() => members.value)
+
+function activityLabel(lastActiveAt: string | null): string {
+  if (!lastActiveAt) return '暂无活动记录'
+  const age = Date.now() - Date.parse(lastActiveAt)
+  if (age < 24 * 60 * 60 * 1000) return '最近活跃'
+  if (age < 7 * 24 * 60 * 60 * 1000) return '活跃'
+  return '暂不活跃'
+}
+
+function activityClass(lastActiveAt: string | null): string {
+  if (!lastActiveAt) return 'member-roster__status-dot--unknown'
+  const age = Date.now() - Date.parse(lastActiveAt)
+  return age < 7 * 24 * 60 * 60 * 1000 ? 'member-roster__status-dot--active' : 'member-roster__status-dot--idle'
+}
 </script>
 
 <template>
@@ -17,7 +31,7 @@ const visibleMembers = computed(() => members.value)
       <h2 id="member-roster-title">据点成员</h2>
       <span class="member-roster__count">{{ visibleMembers.length }}</span>
     </div>
-    <p class="member-roster__presence-note">在线状态未提供</p>
+    <p class="member-roster__presence-note">基于最近活动记录，不代表实时在线</p>
     <p v-if="loading" class="member-roster__empty">正在加载成员…</p>
     <p v-else-if="loadError" class="member-roster__empty member-roster__empty--error">{{ loadError }}</p>
     <p v-else-if="visibleMembers.length === 0" class="member-roster__empty">暂无成员</p>
@@ -28,9 +42,9 @@ const visibleMembers = computed(() => members.value)
           <strong class="member-roster__name">{{ member.display_name }}</strong>
           <span class="member-roster__username">@{{ member.username }}</span>
         </span>
-        <span class="member-roster__status" :title="`在线状态未提供；${roleLabels[member.role]}`">
-          <span class="member-roster__status-dot" aria-hidden="true" />
-          <span>{{ roleLabels[member.role] }}</span>
+        <span class="member-roster__status" :title="`${activityLabel(member.last_active_at)}；${roleLabels[member.role]}`">
+          <span class="member-roster__status-dot" :class="activityClass(member.last_active_at)" aria-hidden="true" />
+          <span>{{ activityLabel(member.last_active_at) }}</span>
         </span>
       </li>
     </ul>
@@ -52,4 +66,7 @@ const visibleMembers = computed(() => members.value)
 .member-roster__username { color: var(--text-secondary); font-size: .68rem; }
 .member-roster__status { display: inline-flex; align-items: center; gap: .25rem; max-width: 5.5rem; color: var(--text-secondary); font-size: .63rem; text-align: right; }
 .member-roster__status-dot { width: .42rem; height: .42rem; flex: 0 0 auto; border: 1px solid var(--text-secondary); border-radius: 50%; opacity: .7; }
+.member-roster__status-dot--active { border-color: var(--success-text, #3ca370); background: var(--success-text, #3ca370); }
+.member-roster__status-dot--idle { border-color: var(--warning-text, #bd8b32); background: var(--warning-text, #bd8b32); }
+.member-roster__status-dot--unknown { border-color: var(--text-secondary); }
 </style>

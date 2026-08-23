@@ -95,6 +95,7 @@ interface WireMemberEntry {
   role: StrongholdMember['role']
   deny: number
   joined_at: number
+  last_active_at: number | null
   is_guest: boolean
   home_domain?: string
 }
@@ -146,6 +147,7 @@ function toStrongholdMember(entry: WireMemberEntry): StrongholdMember {
     role: entry.role,
     ...denyToBooleans(entry.deny),
     joined_at: new Date(entry.joined_at).toISOString(),
+    last_active_at: entry.last_active_at == null ? null : new Date(entry.last_active_at).toISOString(),
     is_guest: entry.is_guest,
     home_domain: entry.home_domain,
     groups: [],

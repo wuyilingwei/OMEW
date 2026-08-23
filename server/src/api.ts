@@ -47,6 +47,7 @@ export { RoomDO } from "./room-do";
 export { StrongholdDO } from "./stronghold-do";
 
 const SESSION_TOKEN_TTL_S = 24 * 60 * 60; // m0-protocol S7.2: session token lifetime MUST <= 24h.
+const LAST_ACTIVE_TOUCH_INTERVAL_MS = 5 * 60 * 1000;
 const ROOM_TOKEN_TTL_S = 300; // m0-protocol S7.3: room/stronghold WS token exp MUST <= 300s.
 const MAX_BODY_BYTES = 64 * 1024;
 const USERS_PAGE_SIZE = 50;
@@ -220,11 +221,19 @@ async function requireSession(request: Request, env: Env): Promise<SessionTokenC
   }
   const localpart = localpartOfActor(claims.actor);
   await clearExpiredGlobalBan(env, localpart);
-  const current = await env.DB.prepare("SELECT server_role, status FROM users WHERE localpart = ?")
+  const current = await env.DB.prepare("SELECT server_role, status, last_active_at FROM users WHERE localpart = ?")
     .bind(localpart)
-    .first<{ server_role: ServerRole; status: string }>();
+    .first<{ server_role: ServerRole; status: string; last_active_at: number | null }>();
   if (!current || current.status !== "active") return apiError(401, "AUTH_REQUIRED");
+  await touchLastActive(env, localpart, current.last_active_at);
   return { ...claims, server_role: current.server_role };
+}
+
+async function touchLastActive(env: Env, localpart: string, previous: number | null = null, now = Date.now()): Promise<void> {
+  if (previous !== null && now - previous < LAST_ACTIVE_TOUCH_INTERVAL_MS) return;
+  await env.DB.prepare(
+    "UPDATE users SET last_active_at = ? WHERE localpart = ? AND (last_active_at IS NULL OR last_active_at < ?)"
+  ).bind(now, localpart, now - LAST_ACTIVE_TOUCH_INTERVAL_MS).run();
 }
 
 // Thin actor-only wrapper over requireSession for the many routes that don't
@@ -550,6 +559,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     }
 
     const token = await issueSessionToken(actor, user.server_role, env);
+    await touchLastActive(env, username);
     return json({ token, user: toPublicUser(user, actor) });
   }
 
@@ -605,6 +615,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
     await recordTotpSuccess(env, localpart);
     const token = await issueSessionToken(claims.actor, user.server_role, env);
+    await touchLastActive(env, localpart);
     return json({ token, user: toPublicUser(user, claims.actor) });
   }
 
@@ -1050,6 +1061,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
     const actor = `@${row.localpart}:${instanceDomain(env)}`;
     const token = await issueSessionToken(actor, row.server_role, env);
+    await touchLastActive(env, row.localpart);
     return json({ token, user: toPublicUser(row, actor) });
   }
 
@@ -3297,6 +3309,7 @@ function roomErrorStatus(code: string): number {
 interface ActorProfile {
   display_name: string;
   avatar: string | null;
+  last_active_at: number | null;
   is_guest: boolean;
   home_domain?: string;
 }
@@ -3315,15 +3328,15 @@ async function actorProfiles(env: Env, actors: string[]): Promise<Map<string, Ac
     const localparts = localActors.map(localpartOfActor);
     const placeholders = localparts.map(() => "?").join(",");
     const { results } = await env.DB.prepare(
-      `SELECT localpart, display_name, avatar FROM users WHERE localpart IN (${placeholders})`
+      `SELECT localpart, display_name, avatar, last_active_at FROM users WHERE localpart IN (${placeholders})`
     )
       .bind(...localparts)
-      .all<{ localpart: string; display_name: string; avatar: string | null }>();
+    .all<{ localpart: string; display_name: string; avatar: string | null; last_active_at: number | null }>();
     const byLocalpart = new Map(results.map((r) => [r.localpart, r]));
     for (const actor of localActors) {
       const localpart = localpartOfActor(actor);
       const row = byLocalpart.get(localpart);
-      result.set(actor, { display_name: row?.display_name ?? localpart, avatar: row?.avatar ?? null, is_guest: false });
+      result.set(actor, { display_name: row?.display_name ?? localpart, avatar: row?.avatar ?? null, last_active_at: row?.last_active_at ?? null, is_guest: false });
     }
   }
 
@@ -3337,7 +3350,7 @@ async function actorProfiles(env: Env, actors: string[]): Promise<Map<string, Ac
     const byActor = new Map(results.map((r) => [r.actor, r]));
     for (const actor of guestActors) {
       const row = byActor.get(actor);
-      result.set(actor, { display_name: row?.display_name ?? actor, avatar: row?.avatar ?? null, is_guest: true, home_domain: row?.registered_origin });
+      result.set(actor, { display_name: row?.display_name ?? actor, avatar: row?.avatar ?? null, last_active_at: null, is_guest: true, home_domain: row?.registered_origin });
     }
   }
 
@@ -3352,6 +3365,7 @@ function toMemberEntry(member: MemberRow, profile: ActorProfile | undefined) {
     actor: member.actor,
     display_name: profile?.display_name ?? member.actor,
     avatar: profile?.avatar ?? null,
+    last_active_at: profile?.last_active_at ?? null,
     role: member.role,
     deny: member.deny,
     joined_at: member.joined_at,

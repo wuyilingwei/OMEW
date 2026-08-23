@@ -163,6 +163,8 @@ export interface StrongholdMember {
   deny_idea: boolean
   deny_comment: boolean
   joined_at: string
+  /** Last authenticated activity observed locally; null is not online/offline. */
+  last_active_at: string | null
   is_guest: boolean
   home_domain?: string
   groups: MemberGroupRef[]
