@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { api } from '../api'
-import type { MemberPatch, MemberTab, StrongholdConfigPatch, StrongholdMember } from '../api/types'
+import type { BanEntry, FeatureRestrictions, MemberPatch, MemberTab, RestrictedFeature, StrongholdConfigPatch, StrongholdMember } from '../api/types'
 import { EMPTY_STATE } from '../assets/mew'
 import { useAuth } from '../composables/useAuth'
 import { useStorageUsage } from '../composables/useStorageUsage'
@@ -52,6 +52,8 @@ const isOwner = computed(() => myRole.value === 'owner')
 // stronghold management. Actual ownership stays separate for deletion.
 const hasOwnerOverlay = computed(() => isOwner.value || auth.isAdmin.value)
 const canTransferOwnership = computed(() => isOwner.value || auth.isServerOwner.value)
+const canDeleteStronghold = computed(() => isOwner.value || auth.isServerOwner.value)
+const isForceDissolve = computed(() => auth.isServerOwner.value && !isOwner.value)
 
 const panelTabOptions = computed(() => {
   const opts: { Text: string; value: PanelTab }[] = [{ Text: '成员', value: 'members' }]
@@ -87,14 +89,34 @@ const membersLoading = ref(false)
 const membersError = ref('')
 const actionError = ref('')
 const infoCardMember = ref<StrongholdMember | null>(null)
+const bansByActor = ref<Record<string, BanEntry>>({})
+const strongholdBanExpiresAt = ref('')
+
+function formatExpiry(expiresAt: string | null) {
+  return expiresAt ? `自动解封：${new Date(expiresAt).toLocaleString()}` : '永久封禁'
+}
+
+function selectedStrongholdExpiry(): number | null | undefined {
+  if (!strongholdBanExpiresAt.value) return null
+  const expiresAt = new Date(strongholdBanExpiresAt.value).getTime()
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    actionError.value = '自动解封时间必须晚于当前时间'
+    return undefined
+  }
+  return expiresAt
+}
 
 async function loadMembers() {
   if (!auth.token.value || !props.open) return
   membersLoading.value = true
   membersError.value = ''
   try {
-    const page = await api.getStrongholdMembers(auth.token.value, selectedNodeId.value, memberTab.value)
+    const [page, bans] = await Promise.all([
+      api.getStrongholdMembers(auth.token.value, selectedNodeId.value, memberTab.value),
+      memberTab.value === 'banned' ? api.listBans(auth.token.value, selectedNodeId.value) : Promise.resolve([]),
+    ])
     members.value = page.members
+    bansByActor.value = Object.fromEntries(bans.map((ban) => [ban.actor, ban]))
   } catch {
     membersError.value = '加载成员列表失败'
   } finally {
@@ -142,8 +164,11 @@ function kick(member: StrongholdMember) {
 }
 
 function ban(member: StrongholdMember) {
-  if (!confirm(`拉黑「${member.display_name}」？此操作不可撤销——对方将无法再次加入本据点，除非管理员从黑名单手动解除。`)) return
-  runAction((token) => api.banMember(token, selectedNodeId.value, member.actor))
+  const expiresAt = selectedStrongholdExpiry()
+  if (expiresAt === undefined) return
+  const duration = expiresAt == null ? '永久' : `至 ${new Date(expiresAt).toLocaleString()}`
+  if (!confirm(`确定据点级封禁「${member.display_name}」吗？对方将无法加入本据点；${duration}。`)) return
+  runAction((token) => api.banMember(token, selectedNodeId.value, member.actor, expiresAt))
 }
 
 function unban(member: StrongholdMember) {
@@ -162,6 +187,14 @@ const settingsSaving = ref(false)
 const settingsSaveOk = ref(false)
 const strongholdDeleting = ref(false)
 const strongholdDeleteError = ref('')
+const restrictions = ref<FeatureRestrictions | null>(null)
+const restrictionsError = ref('')
+const restrictionsSaving = ref<RestrictedFeature | null>(null)
+const FEATURE_LABEL: Record<RestrictedFeature, string> = { chat: '聊天', posts: '发帖' }
+const ownerRestrictionDraft = reactive<Record<RestrictedFeature, { paused: boolean; expiresAt: string }>>({
+  chat: { paused: false, expiresAt: '' },
+  posts: { paused: false, expiresAt: '' },
+})
 const form = reactive({
   name: '',
   description: '',
@@ -177,8 +210,12 @@ async function loadSettings() {
   if (!auth.token.value || !props.open) return
   settingsLoading.value = true
   settingsError.value = ''
+  restrictionsError.value = ''
   try {
-    const config = await api.getStrongholdConfig(auth.token.value, selectedNodeId.value)
+    const [config, nextRestrictions] = await Promise.all([
+      api.getStrongholdConfig(auth.token.value, selectedNodeId.value),
+      api.getFeatureRestrictions(auth.token.value, selectedNodeId.value),
+    ])
     form.name = config.name
     form.description = config.description
     form.avatar = config.avatar ?? ''
@@ -187,10 +224,53 @@ async function loadSettings() {
     form.allow_message_edit = config.allow_message_edit
     form.allow_message_retract = config.allow_message_retract
     form.edit_window_secs = config.edit_window_secs
+    restrictions.value = nextRestrictions
+    for (const feature of ['chat', 'posts'] as const) {
+      ownerRestrictionDraft[feature].paused = nextRestrictions[feature].owner.paused
+      ownerRestrictionDraft[feature].expiresAt = toDateTimeLocal(nextRestrictions[feature].owner.expires_at)
+    }
   } catch {
     settingsError.value = '无法加载据点设置'
   } finally {
     settingsLoading.value = false
+  }
+}
+
+function toDateTimeLocal(value: string | null) {
+  if (!value) return ''
+  const date = new Date(value)
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
+}
+
+function restrictionSummary(feature: RestrictedFeature) {
+  const restriction = restrictions.value?.[feature]
+  if (!restriction) return '状态加载中'
+  if (!restriction.effective.paused) return '当前可用'
+  const scope = restriction.effective.source === 'server' ? '服务器覆盖' : '据点领主'
+  const ends = restriction.effective.expires_at ? `，自动恢复：${new Date(restriction.effective.expires_at).toLocaleString()}` : '，未设置自动恢复'
+  return `当前已暂停（${scope}${ends}）`
+}
+
+async function saveOwnerFeatureRestriction(feature: RestrictedFeature) {
+  if (!auth.token.value || !isOwner.value || restrictionsSaving.value) return
+  const draft = ownerRestrictionDraft[feature]
+  let expiresAt: number | null = null
+  if (draft.paused && draft.expiresAt) {
+    expiresAt = new Date(draft.expiresAt).getTime()
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+      restrictionsError.value = '自动恢复时间必须晚于当前时间'
+      return
+    }
+  }
+  restrictionsSaving.value = feature
+  restrictionsError.value = ''
+  try {
+    await api.patchOwnerFeatureRestriction(auth.token.value, selectedNodeId.value, feature, draft.paused, expiresAt)
+    restrictions.value = await api.getFeatureRestrictions(auth.token.value, selectedNodeId.value)
+  } catch {
+    restrictionsError.value = '保存功能暂停设置失败，请稍后重试'
+  } finally {
+    restrictionsSaving.value = null
   }
 }
 
@@ -231,10 +311,11 @@ async function saveSettings() {
 }
 
 async function deleteStronghold() {
-  if (!auth.token.value || !currentNode.value || !isOwner.value || strongholdDeleting.value) return
+  if (!auth.token.value || !currentNode.value || !canDeleteStronghold.value || strongholdDeleting.value) return
   const name = currentNode.value.name
-  if (!confirm(`确定删除据点「${name}」吗？所有话题、话题组、消息和成员关系将永久移除。`)) return
-  if (!confirm(`这是最终确认：删除「${name}」后无法恢复。`)) return
+  const action = isForceDissolve.value ? '强制解散' : '删除'
+  if (!confirm(`确定${action}据点「${name}」吗？所有话题、话题组、消息和成员关系将永久移除。`)) return
+  if (!confirm(`这是最终确认：${action}「${name}」后无法恢复。`)) return
 
   strongholdDeleting.value = true
   strongholdDeleteError.value = ''
@@ -301,6 +382,11 @@ watch(
               />
 
               <p v-if="actionError" class="field__error">{{ actionError }}</p>
+              <div v-if="panelTab === 'members' && canManage" class="field">
+                <label class="field__label" for="stronghold-ban-expires-at">据点封禁自动解封时间（可选）</label>
+                <input id="stronghold-ban-expires-at" v-model="strongholdBanExpiresAt" type="datetime-local" />
+                <p class="field__hint">留空为永久封禁；该设置只影响本据点。</p>
+              </div>
               <div v-if="membersLoading" class="admin-modal__loading">加载中…</div>
               <WinInfoBar v-else-if="membersError" :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Error">
                 {{ membersError }}
@@ -323,6 +409,9 @@ watch(
                     </span>
                   </button>
                   <span class="member-row__role" :class="`member-row__role--${member.role}`">{{ ROLE_LABEL[member.role] }}</span>
+                  <span v-if="panelTab === 'banned' && bansByActor[member.actor]" class="field__hint">
+                    {{ formatExpiry(bansByActor[member.actor].expires_at) }}
+                  </span>
 
                   <template v-if="panelTab !== 'banned'">
                     <div class="member-row__deny">
@@ -358,7 +447,7 @@ watch(
                       </WinButton>
                       <template v-if="hasOwnerOverlay || member.role !== 'mod'">
                         <WinButton Style="SubtleButtonStyle" @click="kick(member)">踢出</WinButton>
-                        <WinButton Style="AccentButtonStyle" class="win-btn--danger" @click="ban(member)">拉黑</WinButton>
+                        <WinButton Style="AccentButtonStyle" class="win-btn--danger" @click="ban(member)">据点封禁</WinButton>
                       </template>
                       <WinButton v-if="canTransferOwnership" Style="AccentButtonStyle" class="win-btn--danger" @click="transfer(member)">
                         转让领主
@@ -367,7 +456,7 @@ watch(
                   </template>
 
                   <div v-else class="member-row__actions">
-                    <WinButton v-if="canManage" Style="SubtleButtonStyle" @click="unban(member)">解除拉黑</WinButton>
+                    <WinButton v-if="canManage" Style="SubtleButtonStyle" @click="unban(member)">解除据点封禁</WinButton>
                   </div>
                 </li>
               </ul>
@@ -421,6 +510,28 @@ watch(
                   <input id="sh-window" v-model.number="form.edit_window_secs" type="number" min="0" step="1" />
                 </div>
 
+                <section class="stronghold-feature-restrictions" aria-label="聊天与发帖暂停">
+                  <h2>聊天与发帖暂停</h2>
+                  <p v-if="restrictionsError" class="field__error">{{ restrictionsError }}</p>
+                  <div v-for="feature in (['chat', 'posts'] as RestrictedFeature[])" :key="feature" class="stronghold-feature-restrictions__row">
+                    <div>
+                      <strong>{{ FEATURE_LABEL[feature] }}</strong>
+                      <p class="field__hint">{{ restrictionSummary(feature) }}</p>
+                    </div>
+                    <template v-if="isOwner">
+                      <WinToggleSwitch v-model="ownerRestrictionDraft[feature].paused">暂停{{ FEATURE_LABEL[feature] }}</WinToggleSwitch>
+                      <div v-if="ownerRestrictionDraft[feature].paused" class="field">
+                        <label class="field__label" :for="`owner-${feature}-resume-at`">自动恢复时间（可选）</label>
+                        <input :id="`owner-${feature}-resume-at`" v-model="ownerRestrictionDraft[feature].expiresAt" type="datetime-local" />
+                      </div>
+                      <WinButton Style="AccentButtonStyle" :IsEnabled="restrictionsSaving !== feature" @click="saveOwnerFeatureRestriction(feature)">
+                        {{ restrictionsSaving === feature ? '保存中…' : `保存${FEATURE_LABEL[feature]}设置` }}
+                      </WinButton>
+                    </template>
+                  </div>
+                  <p v-if="!isOwner" class="field__hint">仅据点实际领主可设置据点级暂停；服务器覆盖请在服务器管理中操作。</p>
+                </section>
+
                 <div class="admin-modal__save">
                   <p v-if="settingsSaveOk" class="admin-modal__save-ok">已保存</p>
                   <WinButton Style="AccentButtonStyle" :IsEnabled="!settingsSaving" @click="saveSettings">
@@ -428,12 +539,13 @@ watch(
                   </WinButton>
                 </div>
 
-                <section v-if="isOwner" class="stronghold-danger" aria-label="危险操作">
+                <section v-if="canDeleteStronghold" class="stronghold-danger" aria-label="危险操作">
                   <h2>危险操作</h2>
-                  <p>删除据点会永久清除成员、话题、话题组和全部消息，且不可恢复。</p>
+                  <p v-if="isForceDissolve">服务器所有者可强制解散此据点；全部成员、话题、话题组和消息将永久清除，且不可恢复。</p>
+                  <p v-else>删除据点会永久清除成员、话题、话题组和全部消息，且不可恢复。</p>
                   <p v-if="strongholdDeleteError" class="field__error">{{ strongholdDeleteError }}</p>
                   <WinButton Style="AccentButtonStyle" class="win-btn--danger" :IsEnabled="!strongholdDeleting" @click="deleteStronghold">
-                    {{ strongholdDeleting ? '删除中…' : '删除据点' }}
+                    {{ strongholdDeleting ? '处理中…' : isForceDissolve ? '强制解散据点' : '删除据点' }}
                   </WinButton>
                 </section>
 

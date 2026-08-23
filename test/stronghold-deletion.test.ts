@@ -20,7 +20,7 @@ beforeAll(async () => {
 });
 
 describe("DELETE /api/stronghold/:id", () => {
-  it("lets only the recorded stronghold owner delete and rejects server-role overlays", async () => {
+  it("lets the recorded stronghold owner delete and rejects members and server admins", async () => {
     const owner = "@deleteowner:local";
     const { id } = await createStronghold(owner);
     const member = "@deletemember:local";
@@ -31,12 +31,6 @@ describe("DELETE /api/stronghold/:id", () => {
       headers: { Authorization: `Bearer ${await sessionToken(member)}` },
     });
     expect(memberResponse.status).toBe(403);
-
-    const serverOwnerResponse = await apiRequest(`/api/stronghold/${id}`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${await sessionToken("@instanceowner:local", "owner")}` },
-    });
-    expect(serverOwnerResponse.status).toBe(403);
 
     const serverAdminResponse = await apiRequest(`/api/stronghold/${id}`, {
       method: "DELETE",
@@ -49,6 +43,17 @@ describe("DELETE /api/stronghold/:id", () => {
       headers: { Authorization: `Bearer ${await sessionToken(owner)}` },
     });
     expect(ownerResponse.status).toBe(204);
+  });
+
+  it("lets the server owner forcibly dissolve another owner's stronghold without membership", async () => {
+    const { id } = await createStronghold("@forceowner:local");
+    const response = await apiRequest(`/api/stronghold/${id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${await sessionToken("@instanceowner:local", "owner")}` },
+    });
+
+    expect(response.status).toBe(204);
+    expect(await env.STRONGHOLD_DO.getByName(id).getConfig()).toBeNull();
   });
 
   it("purges active and archived room DOs plus stronghold indexes, while leaving user media untouched", async () => {

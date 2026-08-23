@@ -15,7 +15,7 @@ import { getInstanceConfig } from "./config";
 import { handleInbox } from "./inbox";
 import type { EffectivePermissions } from "./permissions";
 import { canAccessRestrictedRoom, synthesizeEffectivePermissions } from "./permissions";
-import { deriveSlugBase, fetchServerGroupsForLocalpart, type ConfigRow, type MemberRow, type RoomRow } from "./stronghold-do";
+import { deriveSlugBase, featurePaused, fetchServerGroupsForLocalpart, type ConfigRow, type FeatureRestrictionSnapshot, type MemberRow, type RestrictedFeature, type RoomRow, type ServerFeatureOverride } from "./stronghold-do";
 import { generateTotpSecret, totpOtpauthUrl, verifyTotpCode } from "./totp";
 import {
   HOME_DOMAIN,
@@ -120,7 +120,7 @@ const RES_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 function cors(): HeadersInit {
   return {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
   };
 }
@@ -157,6 +157,56 @@ async function readJsonBody(request: Request): Promise<Record<string, unknown> |
   }
 }
 
+function readBanExpiry(body: Record<string, unknown>): number | null | "invalid" {
+  if (!("expires_at" in body) || body.expires_at === null) return null;
+  return typeof body.expires_at === "number" && Number.isSafeInteger(body.expires_at) && body.expires_at > Date.now()
+    ? body.expires_at
+    : "invalid";
+}
+
+function readRestrictionExpiry(body: Record<string, unknown>): number | null | "invalid" {
+  if (!("expires_at" in body) || body.expires_at === null) return null;
+  return typeof body.expires_at === "number" && Number.isSafeInteger(body.expires_at) && body.expires_at > Date.now()
+    ? body.expires_at
+    : "invalid";
+}
+
+function readRestrictedFeature(value: unknown): RestrictedFeature | null {
+  return value === "chat" || value === "posts" ? value : null;
+}
+
+function featureRestrictionsResponse(snapshot: FeatureRestrictionSnapshot) {
+  const now = Date.now();
+  const entry = (feature: RestrictedFeature) => {
+    const rule = snapshot[feature];
+    const serverActive = rule.server_override !== "inherit" && (rule.server_expires_at === null || rule.server_expires_at > now);
+    const ownerActive = rule.owner_paused && (rule.owner_expires_at === null || rule.owner_expires_at > now);
+    const source = serverActive ? "server" : ownerActive ? "owner" : "none";
+    return {
+      owner: { paused: rule.owner_paused, expires_at: rule.owner_expires_at },
+      server: { mode: rule.server_override, expires_at: rule.server_expires_at },
+      effective: {
+        paused: featurePaused(rule, now),
+        source,
+        expires_at: serverActive ? rule.server_expires_at : ownerActive ? rule.owner_expires_at : null,
+      },
+    };
+  };
+  return { chat: entry("chat"), posts: entry("posts") };
+}
+
+// Timed bans are restored at the authorization boundary instead of depending on
+// an alarm to run at an exact instant. This makes expiry reliable after Worker
+// restarts and keeps every login/session path consistent.
+async function clearExpiredGlobalBan(env: Env, localpart: string): Promise<void> {
+  await env.DB.prepare(
+    "UPDATE users SET status = 'active', banned_at = NULL, banned_by = NULL, banned_until = NULL " +
+      "WHERE localpart = ? AND status = 'banned' AND banned_until IS NOT NULL AND banned_until <= ?"
+  )
+    .bind(localpart, Date.now())
+    .run();
+}
+
 // Full session claims. Local server roles are mutable authorization state, so
 // they are re-resolved from D1 instead of trusting the token's issuance-time
 // snapshot. Remote actors can never receive a local server-role overlay.
@@ -169,6 +219,7 @@ async function requireSession(request: Request, env: Env): Promise<SessionTokenC
     return { ...claims, server_role: "user" };
   }
   const localpart = localpartOfActor(claims.actor);
+  await clearExpiredGlobalBan(env, localpart);
   const current = await env.DB.prepare("SELECT server_role, status FROM users WHERE localpart = ?")
     .bind(localpart)
     .first<{ server_role: ServerRole; status: string }>();
@@ -457,6 +508,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (!body) return apiError(413, "PAYLOAD_INVALID");
     const username = normalizeUsername(String(body.username ?? ""));
     const password = String(body.password ?? "");
+    await clearExpiredGlobalBan(env, username);
 
     const user = await env.DB.prepare(
       "SELECT localpart, display_name, avatar, pw_hash, pw_salt, status, server_role, email, email_verified, totp_enabled FROM users WHERE localpart = ?"
@@ -512,6 +564,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
     const localpart = localpartOfActor(claims.actor);
     if (await totpRateLimited(env, localpart)) return apiError(429, "TOTP_RATE_LIMITED");
+    await clearExpiredGlobalBan(env, localpart);
 
     const user = await env.DB.prepare(
       "SELECT localpart, display_name, avatar, status, server_role, email, email_verified, totp_secret, totp_enabled FROM users WHERE localpart = ?"
@@ -919,7 +972,13 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
         email_verified: number;
         totp_enabled: number;
       }>();
-    if (!row || row.status !== "active") return apiError(401, "AUTH_FAILED");
+    if (!row) return apiError(401, "AUTH_FAILED");
+    await clearExpiredGlobalBan(env, row.localpart);
+    if (row.status === "banned") {
+      const current = await env.DB.prepare("SELECT status FROM users WHERE localpart = ?").bind(row.localpart).first<{ status: string }>();
+      if (current?.status === "active") row.status = "active";
+    }
+    if (row.status !== "active") return apiError(401, "AUTH_FAILED");
 
     let verification: Awaited<ReturnType<typeof verifyAuthenticationResponse>>;
     try {
@@ -1018,6 +1077,57 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const hasMore = results.length > USERS_PAGE_SIZE;
     const page = hasMore ? results.slice(0, USERS_PAGE_SIZE) : results;
     return json({ users: page, next_cursor: hasMore ? page[page.length - 1]!.localpart : null });
+  }
+
+  if (method === "GET" && path === "/api/admin/bans") {
+    const gate = await requireServerRole(request, env, "admin");
+    if (gate instanceof Response) return gate;
+    await env.DB.prepare(
+      "UPDATE users SET status = 'active', banned_at = NULL, banned_by = NULL, banned_until = NULL " +
+        "WHERE status = 'banned' AND banned_until IS NOT NULL AND banned_until <= ?"
+    ).bind(Date.now()).run();
+    const { results } = await env.DB.prepare(
+      "SELECT localpart, banned_by, banned_at, banned_until FROM users WHERE status = 'banned' ORDER BY banned_at DESC"
+    ).all<{ localpart: string; banned_by: string; banned_at: number; banned_until: number | null }>();
+    return json({ entries: results.map((entry) => ({ actor: `@${entry.localpart}:${instanceDomain(env)}`, operator: entry.banned_by, banned_at: entry.banned_at, expires_at: entry.banned_until })) });
+  }
+
+  const globalBanMatch = match("/api/admin/bans/:actor", path);
+  if (globalBanMatch && (method === "PUT" || method === "DELETE")) {
+    const gate = await requireServerRole(request, env, "admin");
+    if (gate instanceof Response) return gate;
+    const targetActor = globalBanMatch.actor!;
+    if (domainOfActor(targetActor) !== instanceDomain(env) || !localpartOfActor(targetActor)) return apiError(404, "NOT_FOUND");
+    const localpart = localpartOfActor(targetActor);
+    const target = await env.DB.prepare("SELECT server_role FROM users WHERE localpart = ?")
+      .bind(localpart)
+      .first<{ server_role: ServerRole }>();
+    if (!target) return apiError(404, "NOT_FOUND");
+    // The instance owner cannot be locked out. Server admins may moderate only
+    // ordinary accounts; the owner retains authority over admin accounts.
+    if (target.server_role === "owner" || (gate.serverRole === "admin" && target.server_role !== "user")) return apiError(403, "FORBIDDEN");
+
+    if (method === "DELETE") {
+      await env.DB.prepare(
+        "UPDATE users SET status = 'active', banned_at = NULL, banned_by = NULL, banned_until = NULL WHERE localpart = ? AND status = 'banned'"
+      ).bind(localpart).run();
+      return new Response(null, { status: 204, headers: cors() });
+    }
+
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    const expiresAt = readBanExpiry(body);
+    if (expiresAt === "invalid") return apiError(400, "EXPIRY_INVALID");
+    const bannedAt = Date.now();
+    await env.DB.prepare(
+      "UPDATE users SET status = 'banned', banned_at = ?, banned_by = ?, banned_until = ? WHERE localpart = ?"
+    ).bind(bannedAt, gate.actor, expiresAt, localpart).run();
+    // Server admins may be connected through the server-role overlay without a
+    // membership-index row, so enumerate the global stronghold slug index.
+    const { results } = await env.DB.prepare("SELECT DISTINCT stronghold_id FROM stronghold_slug_index")
+      .all<{ stronghold_id: string }>();
+    await Promise.all(results.map((row) => env.STRONGHOLD_DO.getByName(row.stronghold_id).revokeServerRole(targetActor).catch(() => {})));
+    return json({ actor: targetActor, operator: gate.actor, banned_at: bannedAt, expires_at: expiresAt });
   }
 
   const userRoleMatch = match("/api/admin/users/:localpart", path);
@@ -1910,6 +2020,77 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   // al. above - distinct from the /stronghold/* dev-convenience routes above it, which
   // are untouched and keep serving stronghold/room creation, WS tokens and upgrades.
 
+  m = match("/api/stronghold/:id/feature-restrictions", path);
+  if (m && method === "GET") {
+    const gate = await resolveGuestOrMember(request, env, m.id!);
+    if (gate instanceof Response) return gate;
+    const snapshot = await env.STRONGHOLD_DO.getByName(m.id!).getFeatureRestrictions();
+    if (!snapshot) return apiError(404, "NOT_FOUND");
+    return json(featureRestrictionsResponse(snapshot));
+  }
+  m = match("/api/stronghold/:id/feature-restrictions/owner", path);
+  if (m && method === "PATCH") {
+    const session = await requireSession(request, env);
+    if (session instanceof Response) return session;
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    const [config, member] = await Promise.all([stub.getConfig(), stub.getMember(session.actor)]);
+    // This is deliberately an actual-owner gate, not effectiveRole: neither a
+    // moderator nor the server-role overlay may change the owner's policy.
+    if (!config || config.owner_actor !== session.actor || member?.role !== "owner" || member.banned_at) return apiError(403, "FORBIDDEN");
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    const feature = readRestrictedFeature(body.feature);
+    if (!feature || typeof body.paused !== "boolean") return apiError(400, "CONFIG_INVALID");
+    const expiresAt = readRestrictionExpiry(body);
+    if (expiresAt === "invalid") return apiError(400, "EXPIRY_INVALID");
+    let snapshot: FeatureRestrictionSnapshot | null;
+    try {
+      snapshot = await stub.updateOwnerFeatureRestriction(feature, body.paused, expiresAt);
+    } catch {
+      return apiError(503, "FEATURE_RESTRICTION_SYNC_FAILED");
+    }
+    if (!snapshot) return apiError(404, "NOT_FOUND");
+    return json(featureRestrictionsResponse(snapshot));
+  }
+
+  m = match("/api/stronghold/:id/feature-restrictions/server", path);
+  if (m && method === "PATCH") {
+    const gate = await requireServerRole(request, env, "admin");
+    if (gate instanceof Response) return gate;
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    const feature = readRestrictedFeature(body.feature);
+    const override = body.mode as ServerFeatureOverride;
+    if (!feature || (override !== "inherit" && override !== "force_allow" && override !== "force_pause")) return apiError(400, "CONFIG_INVALID");
+    const expiresAt = readRestrictionExpiry(body);
+    if (expiresAt === "invalid") return apiError(400, "EXPIRY_INVALID");
+    const stub = env.STRONGHOLD_DO.getByName(m.id!);
+    if (!(await stub.getConfig())) return apiError(404, "NOT_FOUND");
+    const persistedExpiry = override === "inherit" ? null : expiresAt;
+    const previous = await env.DB.prepare(
+      "SELECT mode, expires_at, updated_by, updated_at FROM stronghold_feature_overrides WHERE stronghold_id = ? AND feature = ?"
+    ).bind(m.id!, feature).first<{ mode: ServerFeatureOverride; expires_at: number | null; updated_by: string; updated_at: number }>();
+    await env.DB.prepare(
+      "INSERT INTO stronghold_feature_overrides (stronghold_id, feature, mode, expires_at, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?) " +
+        "ON CONFLICT(stronghold_id, feature) DO UPDATE SET mode = excluded.mode, expires_at = excluded.expires_at, updated_by = excluded.updated_by, updated_at = excluded.updated_at"
+    ).bind(m.id!, feature, override, persistedExpiry, gate.actor, Date.now()).run();
+    let snapshot: FeatureRestrictionSnapshot | null;
+    try {
+      snapshot = await stub.refreshFeatureRestrictions();
+    } catch {
+      if (previous) {
+        await env.DB.prepare(
+          "UPDATE stronghold_feature_overrides SET mode = ?, expires_at = ?, updated_by = ?, updated_at = ? WHERE stronghold_id = ? AND feature = ?"
+        ).bind(previous.mode, previous.expires_at, previous.updated_by, previous.updated_at, m.id!, feature).run();
+      } else {
+        await env.DB.prepare("DELETE FROM stronghold_feature_overrides WHERE stronghold_id = ? AND feature = ?").bind(m.id!, feature).run();
+      }
+      return apiError(503, "FEATURE_RESTRICTION_SYNC_FAILED");
+    }
+    if (!snapshot) return apiError(404, "NOT_FOUND");
+    return json(featureRestrictionsResponse(snapshot));
+  }
+
   m = match("/api/stronghold/:id/config", path);
   if (m && method === "GET") {
     const gate = await resolveGuestOrMember(request, env, m.id!);
@@ -1972,10 +2153,9 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   }
 
   // A stronghold is a graph of one StrongholdDO, one RoomDO per room,
-  // and several D1 discovery/federation indexes.  Only its *actual* owner may
-  // erase that graph: the server-role overlay intentionally does not apply.
-  // In particular, an instance admin/owner cannot delete another owner's
-  // stronghold merely by virtue of their server role.
+  // and several D1 discovery/federation indexes. Its actual owner may erase
+  // that graph, and the server owner has an explicit instance-governance
+  // override. A server admin does not inherit this irreversible operation.
   m = match("/api/stronghold/:id", path);
   if (m && method === "DELETE") {
     const session = await requireSession(request, env);
@@ -1985,7 +2165,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const [config, requester] = await Promise.all([stub.getConfig(), stub.getMember(session.actor)]);
     if (!config) return apiError(404, "NOT_FOUND");
     const isActualOwner = config.owner_actor === session.actor && requester?.role === "owner" && !requester.banned_at;
-    if (!isActualOwner) return apiError(403, "FORBIDDEN");
+    if (!isActualOwner && session.server_role !== "owner") return apiError(403, "FORBIDDEN");
 
     // Purge children first.  A failed child purge leaves the authoritative
     // StrongholdDO intact, so a retry is safe and cannot strand inaccessible
@@ -2124,9 +2304,13 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (target.role === "owner") return apiError(403, "FORBIDDEN");
     if (target.role === "mod" && eff.role !== "owner") return apiError(403, "FORBIDDEN");
 
-    const banned = await stub.banMember(m.actor!, session.actor);
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    const expiresAt = readBanExpiry(body);
+    if (expiresAt === "invalid") return apiError(400, "EXPIRY_INVALID");
+    const banned = await stub.banMember(m.actor!, session.actor, expiresAt);
     if (!banned) return apiError(404, "NOT_FOUND");
-    return json({ actor: banned.actor, operator: session.actor, banned_at: banned.banned_at });
+    return json({ actor: banned.actor, operator: session.actor, banned_at: banned.banned_at, expires_at: banned.expires_at });
   }
   if (m && method === "DELETE") {
     const session = await requireSession(request, env);

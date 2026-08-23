@@ -4,9 +4,12 @@ import { api, ApiRequestError } from '../api'
 import type {
   AdminInstanceConfig,
   AdminUserEntry,
+  BanEntry,
   DirectoryEntry,
   Emote,
   EmotePack,
+  FeatureRestrictionMode,
+  FeatureRestrictions,
   InviteCode,
   MemberGroupRef,
   RootRequirement,
@@ -18,7 +21,7 @@ import type {
 import { useAuth } from '../composables/useAuth'
 import { useStorageUsage } from '../composables/useStorageUsage'
 import { fileUploadError } from '../utils/validate'
-import { WinButton, WinInfoBar, WinSelectorBar } from '../vendor/winui'
+import { WinButton, WinComboBox, WinInfoBar, WinSelectorBar } from '../vendor/winui'
 import GroupEditorModal from './GroupEditorModal.vue'
 import ImageEditor from './ImageEditor.vue'
 
@@ -36,14 +39,15 @@ const auth = useAuth()
 const ROOT_REQUIREMENT_LABEL: Record<RootRequirement, string> = { email: '邮箱', phone: '手机号', code: '邀请码' }
 const CREATION_POLICY_LABEL: Record<StrongholdCreationPolicy, string> = { open: '开放', restricted: '限制', application: '申请制' }
 
-const TAB_OPTIONS: { Text: string; value: 'overview' | 'members' | 'groups' }[] = [
+const TAB_OPTIONS: { Text: string; value: 'overview' | 'members' | 'bans' | 'groups' }[] = [
   { Text: '概览', value: 'overview' },
   { Text: '服务器成员', value: 'members' },
+  { Text: '全局黑名单', value: 'bans' },
   { Text: '用户组', value: 'groups' },
 ]
-const tab = ref<'overview' | 'members' | 'groups'>('overview')
+const tab = ref<'overview' | 'members' | 'bans' | 'groups'>('overview')
 const tabSelected = computed(() => TAB_OPTIONS.find((o) => o.value === tab.value))
-function onTabSelect(item: { value: 'overview' | 'members' | 'groups' }) {
+function onTabSelect(item: { value: 'overview' | 'members' | 'bans' | 'groups' }) {
   tab.value = item.value
 }
 
@@ -78,6 +82,83 @@ const roleChangingLocalpart = ref('')
 const userGroups = ref<Record<string, MemberGroupRef[]>>({})
 const openGroupPickerFor = ref('')
 const groupTogglePending = ref('')
+const globalBans = ref<BanEntry[]>([])
+const globalBansError = ref('')
+const globalBanBusyActor = ref('')
+const globalBanExpiresAt = ref('')
+
+function formatExpiry(expiresAt: string | null) {
+  return expiresAt ? `自动解封：${new Date(expiresAt).toLocaleString()}` : '永久封禁'
+}
+
+function selectedGlobalExpiry(): number | null | undefined {
+  if (!globalBanExpiresAt.value) return null
+  const expiresAt = new Date(globalBanExpiresAt.value).getTime()
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    globalBansError.value = '自动解封时间必须晚于当前时间'
+    return undefined
+  }
+  return expiresAt
+}
+
+function canGloballyBan(user: AdminUserEntry) {
+  return user.server_role !== 'owner' && (auth.isServerOwner.value || user.server_role === 'user')
+}
+
+function canGloballyUnban(ban: BanEntry) {
+  if (auth.isServerOwner.value) return true
+  const localpart = ban.actor.replace(/^@/, '').split(':')[0]
+  return users.value.find((user) => user.localpart === localpart)?.server_role === 'user'
+}
+
+function actorForLocalpart(localpart: string) {
+  const actor = auth.user.value?.actor
+  const domain = actor?.slice(actor.indexOf(':') + 1)
+  return domain ? `@${localpart}:${domain}` : null
+}
+
+async function loadGlobalBans() {
+  if (!auth.token.value || !auth.isAdmin.value) return
+  globalBansError.value = ''
+  try {
+    globalBans.value = await api.listGlobalBans(auth.token.value)
+  } catch {
+    globalBansError.value = '加载全局黑名单失败'
+  }
+}
+
+async function banGlobally(user: AdminUserEntry) {
+  const actor = actorForLocalpart(user.localpart)
+  if (!auth.token.value || !actor || !canGloballyBan(user) || globalBanBusyActor.value) return
+  const expiresAt = selectedGlobalExpiry()
+  if (expiresAt === undefined) return
+  const duration = expiresAt == null ? '永久' : `至 ${new Date(expiresAt).toLocaleString()}`
+  if (!confirm(`确定全局封禁「${user.localpart}」吗？该账号将无法访问本服务器；${duration}。`)) return
+  globalBanBusyActor.value = user.localpart
+  globalBansError.value = ''
+  try {
+    await api.banAccountGlobally(auth.token.value, actor, expiresAt)
+    await loadGlobalBans()
+  } catch {
+    globalBansError.value = '全局封禁失败，请稍后重试'
+  } finally {
+    globalBanBusyActor.value = ''
+  }
+}
+
+async function unbanGlobally(ban: BanEntry) {
+  if (!auth.token.value || !canGloballyUnban(ban) || globalBanBusyActor.value) return
+  globalBanBusyActor.value = ban.actor
+  globalBansError.value = ''
+  try {
+    await api.unbanAccountGlobally(auth.token.value, ban.actor)
+    await loadGlobalBans()
+  } catch {
+    globalBansError.value = '解除全局封禁失败，请稍后重试'
+  } finally {
+    globalBanBusyActor.value = ''
+  }
+}
 
 async function loadUsers(reset = true) {
   if (!auth.token.value || !auth.isAdmin.value) return
@@ -399,11 +480,91 @@ const editingSlugId = ref('')
 const editingSlugValue = ref('')
 const slugError = ref('')
 const slugBusy = ref(false)
+const serverRestrictions = ref<Record<string, FeatureRestrictions>>({})
+const serverRestrictionDrafts = reactive<Record<string, { mode: FeatureRestrictionMode; expiresAt: string }>>({})
+const serverRestrictionsError = ref('')
+const serverRestrictionBusy = ref('')
+const FEATURE_LABEL = { chat: '聊天', posts: '发帖' } as const
+const SERVER_RESTRICTION_OPTIONS = [
+  { Text: '继承据点领主设置', Value: 'inherit' },
+  { Text: '服务器强制允许', Value: 'force_allow' },
+  { Text: '服务器强制暂停', Value: 'force_pause' },
+]
+
+function restrictionDraftKey(nodeId: string, feature: 'chat' | 'posts') {
+  return `${nodeId}:${feature}`
+}
+
+function toDateTimeLocal(value: string | null) {
+  if (!value) return ''
+  const date = new Date(value)
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
+}
+
+function getServerRestrictionDraft(nodeId: string, feature: 'chat' | 'posts') {
+  return serverRestrictionDrafts[restrictionDraftKey(nodeId, feature)] ?? { mode: 'inherit' as const, expiresAt: '' }
+}
+
+function setServerRestrictionMode(nodeId: string, feature: 'chat' | 'posts', mode: FeatureRestrictionMode) {
+  const key = restrictionDraftKey(nodeId, feature)
+  const current = getServerRestrictionDraft(nodeId, feature)
+  serverRestrictionDrafts[key] = { ...current, mode, expiresAt: mode === 'inherit' ? '' : current.expiresAt }
+}
+
+function setServerRestrictionExpiry(nodeId: string, feature: 'chat' | 'posts', event: Event) {
+  const key = restrictionDraftKey(nodeId, feature)
+  const current = getServerRestrictionDraft(nodeId, feature)
+  serverRestrictionDrafts[key] = { ...current, expiresAt: (event.target as HTMLInputElement).value }
+}
+
+function effectiveRestrictionSummary(nodeId: string, feature: 'chat' | 'posts') {
+  const effective = serverRestrictions.value[nodeId]?.[feature].effective
+  if (!effective) return '状态加载中'
+  if (!effective.paused) return '当前可用'
+  const source = effective.source === 'server' ? '服务器覆盖' : '据点领主'
+  return effective.expires_at ? `当前已暂停（${source}，自动恢复：${new Date(effective.expires_at).toLocaleString()}）` : `当前已暂停（${source}，未设置自动恢复）`
+}
+
+async function loadServerRestrictions(nodeId: string) {
+  if (!auth.token.value || !auth.isAdmin.value) return
+  const restrictions = await api.getFeatureRestrictions(auth.token.value, nodeId)
+  serverRestrictions.value = { ...serverRestrictions.value, [nodeId]: restrictions }
+  for (const feature of ['chat', 'posts'] as const) {
+    serverRestrictionDrafts[restrictionDraftKey(nodeId, feature)] = {
+      mode: restrictions[feature].server.mode,
+      expiresAt: toDateTimeLocal(restrictions[feature].server.expires_at),
+    }
+  }
+}
+
+async function saveServerRestriction(nodeId: string, feature: 'chat' | 'posts') {
+  if (!auth.token.value || !auth.isAdmin.value || serverRestrictionBusy.value) return
+  const draft = getServerRestrictionDraft(nodeId, feature)
+  let expiresAt: number | null = null
+  if (draft.mode !== 'inherit' && draft.expiresAt) {
+    expiresAt = new Date(draft.expiresAt).getTime()
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+      serverRestrictionsError.value = '自动恢复时间必须晚于当前时间'
+      return
+    }
+  }
+  serverRestrictionBusy.value = restrictionDraftKey(nodeId, feature)
+  serverRestrictionsError.value = ''
+  try {
+    await api.patchServerFeatureRestriction(auth.token.value, nodeId, feature, draft.mode, expiresAt)
+    await loadServerRestrictions(nodeId)
+  } catch {
+    serverRestrictionsError.value = '保存服务器覆盖失败，请稍后重试'
+  } finally {
+    serverRestrictionBusy.value = ''
+  }
+}
 
 async function loadStrongholdsList() {
   strongholdsError.value = ''
   try {
     strongholds.value = await api.getDirectory()
+    if (auth.isAdmin.value) await Promise.all(strongholds.value.map((stronghold) => loadServerRestrictions(stronghold.id)))
   } catch {
     strongholdsError.value = '无法加载据点列表'
   }
@@ -464,7 +625,10 @@ watch(
     loadInviteCodes()
     loadPacks()
     loadStrongholdsList()
-    if (auth.isAdmin.value) void loadUsers()
+    if (auth.isAdmin.value) {
+      void loadUsers()
+      void loadGlobalBans()
+    }
   },
   { immediate: true },
 )
@@ -563,6 +727,34 @@ watch(
                 </ul>
               </section>
 
+              <section v-if="auth.isAdmin.value" class="admin-card">
+                <h2 class="admin-card__title">据点聊天与发帖覆盖</h2>
+                <WinInfoBar :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Informational">
+                  服务器覆盖优先于据点领主设置。聊天与发帖可分别设置；选择继承会立刻恢复领主设置的优先级。
+                </WinInfoBar>
+                <p v-if="serverRestrictionsError" class="field__error">{{ serverRestrictionsError }}</p>
+                <div v-for="s in strongholds" :key="`restrictions-${s.id}`" class="admin-feature-restriction">
+                  <h3>{{ s.name }}</h3>
+                  <div v-for="feature in (['chat', 'posts'] as const)" :key="feature" class="admin-feature-restriction__row">
+                    <strong>{{ FEATURE_LABEL[feature] }}</strong>
+                    <span class="field__hint">{{ effectiveRestrictionSummary(s.id, feature) }}</span>
+                    <WinComboBox
+                      :ItemsSource="SERVER_RESTRICTION_OPTIONS"
+                      SelectedValuePath="Value"
+                      :SelectedValue="getServerRestrictionDraft(s.id, feature).mode"
+                      @update:SelectedValue="setServerRestrictionMode(s.id, feature, $event as FeatureRestrictionMode)"
+                    />
+                    <div v-if="getServerRestrictionDraft(s.id, feature).mode !== 'inherit'" class="field">
+                      <label class="field__label" :for="`server-${s.id}-${feature}-resume-at`">自动恢复时间（可选）</label>
+                      <input :id="`server-${s.id}-${feature}-resume-at`" :value="getServerRestrictionDraft(s.id, feature).expiresAt" type="datetime-local" @input="setServerRestrictionExpiry(s.id, feature, $event)" />
+                    </div>
+                    <WinButton Style="AccentButtonStyle" :IsEnabled="!serverRestrictionBusy" @click="saveServerRestriction(s.id, feature)">
+                      {{ serverRestrictionBusy === restrictionDraftKey(s.id, feature) ? '保存中…' : '保存服务器覆盖' }}
+                    </WinButton>
+                  </div>
+                </div>
+              </section>
+
               <section v-if="config?.stronghold_creation_policy === 'application'" class="admin-card">
                 <h2 class="admin-card__title">建点申请审批</h2>
                 <p v-if="approvedNotice" class="admin-modal__save-ok">{{ approvedNotice }}</p>
@@ -631,9 +823,14 @@ watch(
             <div v-else-if="tab === 'members'" class="admin-modal__body">
               <template v-if="auth.isAdmin.value">
                 <p class="field__hint">
-                  管理每个用户的服务器级用户组。仅服务器领主可任免服务器管理员；领主身份唯一且不可通过此处转移。
+                  管理每个用户的服务器级用户组与全局封禁。仅服务器领主可任免服务器管理员；领主身份唯一且不可通过此处转移。
                 </p>
                 <p v-if="usersError" class="field__error">{{ usersError }}</p>
+                <div class="field">
+                  <label class="field__label" for="global-ban-expires-at">全局封禁自动解封时间（可选）</label>
+                  <input id="global-ban-expires-at" v-model="globalBanExpiresAt" type="datetime-local" />
+                  <p class="field__hint">留空为永久封禁；服务器管理员只能全局封禁普通账号。</p>
+                </div>
                 <ul v-if="users.length" class="user-list">
                   <li v-for="user in users" :key="user.localpart" class="user-row">
                     <div class="user-row__main">
@@ -658,6 +855,15 @@ watch(
                           撤销管理员
                         </WinButton>
                         <span v-else-if="user.server_role === 'owner'" class="field__hint">领主</span>
+                        <WinButton
+                          v-if="canGloballyBan(user)"
+                          Style="AccentButtonStyle"
+                          class="win-btn--danger"
+                          :IsEnabled="!globalBanBusyActor"
+                          @click="banGlobally(user)"
+                        >
+                          全局封禁
+                        </WinButton>
                         <WinButton
                           Style="SubtleButtonStyle"
                           @click="openGroupPickerFor = openGroupPickerFor === user.localpart ? '' : user.localpart"
@@ -696,7 +902,34 @@ watch(
               <p v-else class="field__hint">仅服务器管理员可查看与管理服务器成员</p>
             </div>
 
-            <div v-else class="admin-modal__body">
+            <div v-else-if="tab === 'bans'" class="admin-modal__body">
+              <template v-if="auth.isAdmin.value">
+                <p class="field__hint">全局封禁会阻止账号访问整个服务器，不影响其他服务器；到期后自动解除。</p>
+                <p v-if="globalBansError" class="field__error">{{ globalBansError }}</p>
+                <p v-if="!globalBans.length && !globalBansError" class="field__hint">全局黑名单为空</p>
+                <ul v-else class="user-list">
+                  <li v-for="ban in globalBans" :key="ban.actor" class="user-row">
+                    <div class="user-row__main">
+                      <span class="user-row__name">{{ ban.actor }}</span>
+                      <span class="field__hint">{{ formatExpiry(ban.expires_at) }}</span>
+                      <div class="user-row__actions">
+                        <WinButton
+                          v-if="canGloballyUnban(ban)"
+                          Style="SubtleButtonStyle"
+                          :IsEnabled="!globalBanBusyActor"
+                          @click="unbanGlobally(ban)"
+                        >
+                          解除全局封禁
+                        </WinButton>
+                      </div>
+                    </div>
+                  </li>
+                </ul>
+              </template>
+              <p v-else class="field__hint">仅服务器管理员可查看全局黑名单</p>
+            </div>
+
+            <div v-else-if="tab === 'groups'" class="admin-modal__body">
               <div class="groups-toolbar">
                 <WinButton Style="AccentButtonStyle" @click="openCreateGroup">建组</WinButton>
               </div>

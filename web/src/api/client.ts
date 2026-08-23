@@ -13,6 +13,8 @@ import type {
   EditRetractResult,
   Emote,
   EmotePack,
+  FeatureRestrictionMode,
+  FeatureRestrictions,
   InstanceConfig,
   InviteCode,
   LoginPayload,
@@ -94,6 +96,41 @@ interface WireMemberEntry {
   joined_at: number
   is_guest: boolean
   home_domain?: string
+}
+
+interface WireBanEntry {
+  actor: string
+  operator: string
+  banned_at: number
+  expires_at: number | null
+}
+
+function toBanEntry(entry: WireBanEntry): BanEntry {
+  return {
+    actor: entry.actor,
+    banned_by: entry.operator,
+    banned_at: new Date(entry.banned_at).toISOString(),
+    expires_at: entry.expires_at == null ? null : new Date(entry.expires_at).toISOString(),
+  }
+}
+
+interface WireFeatureRestrictionState {
+  owner: { paused: boolean; expires_at: number | null }
+  server: { mode: FeatureRestrictionMode; expires_at: number | null }
+  effective: { paused: boolean; source: 'none' | 'owner' | 'server'; expires_at: number | null }
+}
+
+function toFeatureRestrictionState(entry: WireFeatureRestrictionState): FeatureRestrictions['chat'] {
+  const toIso = (value: number | null) => (value == null ? null : new Date(value).toISOString())
+  return {
+    owner: { ...entry.owner, expires_at: toIso(entry.owner.expires_at) },
+    server: { ...entry.server, expires_at: toIso(entry.server.expires_at) },
+    effective: { ...entry.effective, expires_at: toIso(entry.effective.expires_at) },
+  }
+}
+
+function toFeatureRestrictions(entry: { chat: WireFeatureRestrictionState; posts: WireFeatureRestrictionState }): FeatureRestrictions {
+  return { chat: toFeatureRestrictionState(entry.chat), posts: toFeatureRestrictionState(entry.posts) }
 }
 
 // groups is populated separately (task 048: server-level groups are no
@@ -360,6 +397,26 @@ export const realApi = {
   getStrongholdConfig: (token: string | null, nodeId: string) =>
     request<StrongholdConfig>(`/api/stronghold/${nodeId}/config`, { headers: optionalAuthHeaders(token) }),
 
+  getFeatureRestrictions: (token: string, nodeId: string) =>
+    request<{ chat: WireFeatureRestrictionState; posts: WireFeatureRestrictionState }>(
+      `/api/stronghold/${nodeId}/feature-restrictions`,
+      { headers: authHeaders(token) },
+    ).then(toFeatureRestrictions),
+
+  patchOwnerFeatureRestriction: (token: string, nodeId: string, feature: 'chat' | 'posts', paused: boolean, expiresAt: number | null) =>
+    request<unknown>(`/api/stronghold/${nodeId}/feature-restrictions/owner`, {
+      method: 'PATCH',
+      headers: authHeaders(token),
+      body: JSON.stringify({ feature, paused, expires_at: expiresAt }),
+    }),
+
+  patchServerFeatureRestriction: (token: string, nodeId: string, feature: 'chat' | 'posts', mode: FeatureRestrictionMode, expiresAt: number | null) =>
+    request<unknown>(`/api/stronghold/${nodeId}/feature-restrictions/server`, {
+      method: 'PATCH',
+      headers: authHeaders(token),
+      body: JSON.stringify({ feature, mode, expires_at: expiresAt }),
+    }),
+
   patchStrongholdConfig: (token: string, nodeId: string, patch: StrongholdConfigPatch) =>
     request<StrongholdConfig>(`/api/stronghold/${nodeId}/config`, {
       method: 'PATCH',
@@ -479,19 +536,38 @@ export const realApi = {
     }),
 
   listBans: (token: string, nodeId: string) =>
-    request<{ entries: { actor: string; operator: string; banned_at: number }[] }>(
+    request<{ entries: WireBanEntry[] }>(
       `/api/stronghold/${nodeId}/bans`,
       { headers: authHeaders(token) },
-    ).then((r): BanEntry[] => r.entries.map((e) => ({ actor: e.actor, banned_by: e.operator, banned_at: new Date(e.banned_at).toISOString() }))),
+    ).then((r): BanEntry[] => r.entries.map(toBanEntry)),
 
-  banMember: (token: string, nodeId: string, actor: string) =>
+  banMember: (token: string, nodeId: string, actor: string, expiresAt: number | null = null) =>
     request<void>(`/api/stronghold/${nodeId}/bans/${encodeURIComponent(actor)}`, {
       method: 'PUT',
       headers: authHeaders(token),
+      body: JSON.stringify({ expires_at: expiresAt }),
     }),
 
   unbanMember: (token: string, nodeId: string, actor: string) =>
     request<void>(`/api/stronghold/${nodeId}/bans/${encodeURIComponent(actor)}`, {
+      method: 'DELETE',
+      headers: authHeaders(token),
+    }),
+
+  // ---- server-wide account bans -----------------------------------------------
+
+  listGlobalBans: (token: string) =>
+    request<{ entries: WireBanEntry[] }>('/api/admin/bans', { headers: authHeaders(token) }).then((r): BanEntry[] => r.entries.map(toBanEntry)),
+
+  banAccountGlobally: (token: string, actor: string, expiresAt: number | null = null) =>
+    request<void>(`/api/admin/bans/${encodeURIComponent(actor)}`, {
+      method: 'PUT',
+      headers: authHeaders(token),
+      body: JSON.stringify({ expires_at: expiresAt }),
+    }),
+
+  unbanAccountGlobally: (token: string, actor: string) =>
+    request<void>(`/api/admin/bans/${encodeURIComponent(actor)}`, {
       method: 'DELETE',
       headers: authHeaders(token),
     }),

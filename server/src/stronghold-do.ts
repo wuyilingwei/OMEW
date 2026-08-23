@@ -22,6 +22,10 @@ export type ConfigRow = {
   allow_message_edit: number;
   allow_message_retract: number;
   edit_window_secs: number;
+  owner_chat_paused: number;
+  owner_chat_expires_at: number | null;
+  owner_posts_paused: number;
+  owner_posts_expires_at: number | null;
   owner_actor: string;
   created_at: number;
   slug: string;
@@ -58,6 +62,7 @@ export type MemberRow = {
   deny: number;
   restricted: number;
   banned_at: number | null;
+  expires_at: number | null;
   application_state: "pending" | "approved" | "rejected";
   joined_at: number;
 };
@@ -66,6 +71,7 @@ export type BanRow = {
   actor: string;
   operator: string;
   banned_at: number;
+  expires_at: number | null;
 };
 
 interface TipAttachment {
@@ -78,6 +84,27 @@ export interface EditConfigSnapshot {
   allow_message_edit: boolean;
   allow_message_retract: boolean;
   edit_window_secs: number;
+}
+
+export type RestrictedFeature = "chat" | "posts";
+export type ServerFeatureOverride = "inherit" | "force_allow" | "force_pause";
+
+export interface FeatureRestrictionRule {
+  owner_paused: boolean;
+  owner_expires_at: number | null;
+  server_override: ServerFeatureOverride;
+  server_expires_at: number | null;
+}
+
+export interface FeatureRestrictionSnapshot {
+  chat: FeatureRestrictionRule;
+  posts: FeatureRestrictionRule;
+}
+
+export function featurePaused(rule: FeatureRestrictionRule, now = Date.now()): boolean {
+  const serverActive = rule.server_override !== "inherit" && (rule.server_expires_at === null || rule.server_expires_at > now);
+  if (serverActive) return rule.server_override === "force_pause";
+  return rule.owner_paused && (rule.owner_expires_at === null || rule.owner_expires_at > now);
 }
 
 // m0-protocol §7.3 revocation propagation: local-only DO-to-DO frame (never
@@ -151,13 +178,13 @@ export class StrongholdDO extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS member (
         actor TEXT PRIMARY KEY, role TEXT NOT NULL DEFAULT 'member',
         deny INTEGER NOT NULL DEFAULT 0, restricted INTEGER NOT NULL DEFAULT 0,
-        banned_at INTEGER, application_state TEXT NOT NULL DEFAULT 'approved', joined_at INTEGER NOT NULL
+        banned_at INTEGER, expires_at INTEGER, application_state TEXT NOT NULL DEFAULT 'approved', joined_at INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS tip (
         room_ref TEXT PRIMARY KEY, latest_seq INTEGER NOT NULL, ts INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS ban (
-        actor TEXT PRIMARY KEY, operator TEXT NOT NULL, banned_at INTEGER NOT NULL
+        actor TEXT PRIMARY KEY, operator TEXT NOT NULL, banned_at INTEGER NOT NULL, expires_at INTEGER
       );
     `);
     this.addColumnIfMissing("config", "slug", "TEXT");
@@ -173,9 +200,15 @@ export class StrongholdDO extends DurableObject<Env> {
     // has already picked the columns up.
     this.addColumnIfMissing("config", "cover", "TEXT");
     this.addColumnIfMissing("config", "avatar", "TEXT");
+    this.addColumnIfMissing("member", "expires_at", "INTEGER");
+    this.addColumnIfMissing("ban", "expires_at", "INTEGER");
     this.addColumnIfMissing("config", "allow_message_edit", "INTEGER NOT NULL DEFAULT 1");
     this.addColumnIfMissing("config", "allow_message_retract", "INTEGER NOT NULL DEFAULT 1");
     this.addColumnIfMissing("config", "edit_window_secs", "INTEGER NOT NULL DEFAULT 300");
+    this.addColumnIfMissing("config", "owner_chat_paused", "INTEGER NOT NULL DEFAULT 0");
+    this.addColumnIfMissing("config", "owner_chat_expires_at", "INTEGER");
+    this.addColumnIfMissing("config", "owner_posts_paused", "INTEGER NOT NULL DEFAULT 0");
+    this.addColumnIfMissing("config", "owner_posts_expires_at", "INTEGER");
   }
 
   private addColumnIfMissing(table: string, column: string, definition: string): void {
@@ -220,8 +253,8 @@ export class StrongholdDO extends DurableObject<Env> {
     const createdAt = Date.now();
     const resolvedSlug = slug ?? id;
     this.ctx.storage.sql.exec(
-      "INSERT INTO config (id, name, description, visibility, icon, avatar, cover, allow_message_edit, allow_message_retract, edit_window_secs, owner_actor, created_at, slug) " +
-        "VALUES (?, ?, ?, ?, ?, NULL, NULL, 1, 1, 300, ?, ?, ?)",
+      "INSERT INTO config (id, name, description, visibility, icon, avatar, cover, allow_message_edit, allow_message_retract, edit_window_secs, owner_chat_paused, owner_chat_expires_at, owner_posts_paused, owner_posts_expires_at, owner_actor, created_at, slug) " +
+        "VALUES (?, ?, ?, ?, ?, NULL, NULL, 1, 1, 300, 0, NULL, 0, NULL, ?, ?, ?)",
       id, name, description ?? null, visibility, icon ?? null, ownerActor, createdAt, resolvedSlug
     );
     this.ctx.storage.sql.exec(
@@ -232,6 +265,7 @@ export class StrongholdDO extends DurableObject<Env> {
     return {
       id, name, description: description ?? null, visibility, icon: icon ?? null, avatar: null, cover: null,
       allow_message_edit: 1, allow_message_retract: 1, edit_window_secs: 300,
+      owner_chat_paused: 0, owner_chat_expires_at: null, owner_posts_paused: 0, owner_posts_expires_at: null,
       owner_actor: ownerActor, created_at: createdAt, slug: resolvedSlug,
     };
   }
@@ -299,6 +333,57 @@ export class StrongholdDO extends DurableObject<Env> {
     );
   }
 
+  async getFeatureRestrictions(): Promise<FeatureRestrictionSnapshot | null> {
+    const config = await this.getConfig();
+    if (!config) return null;
+    const { results } = await this.env.DB.prepare(
+      "SELECT feature, mode, expires_at FROM stronghold_feature_overrides WHERE stronghold_id = ?"
+    ).bind(config.id).all<{ feature: RestrictedFeature; mode: ServerFeatureOverride; expires_at: number | null }>();
+    const overrides = new Map(results.map((row) => [row.feature, row]));
+    const rule = (feature: RestrictedFeature, paused: number, expiresAt: number | null): FeatureRestrictionRule => {
+      const override = overrides.get(feature);
+      return {
+        owner_paused: Boolean(paused), owner_expires_at: expiresAt,
+        server_override: override?.mode ?? "inherit", server_expires_at: override?.expires_at ?? null,
+      };
+    };
+    return {
+      chat: rule("chat", config.owner_chat_paused, config.owner_chat_expires_at),
+      posts: rule("posts", config.owner_posts_paused, config.owner_posts_expires_at),
+    };
+  }
+
+  async updateOwnerFeatureRestriction(feature: RestrictedFeature, paused: boolean, expiresAt: number | null): Promise<FeatureRestrictionSnapshot | null> {
+    const config = await this.getConfig();
+    if (!config) return null;
+    const pausedColumn = feature === "chat" ? "owner_chat_paused" : "owner_posts_paused";
+    const expiresColumn = feature === "chat" ? "owner_chat_expires_at" : "owner_posts_expires_at";
+    const previousPaused = feature === "chat" ? config.owner_chat_paused : config.owner_posts_paused;
+    const previousExpiry = feature === "chat" ? config.owner_chat_expires_at : config.owner_posts_expires_at;
+    this.ctx.storage.sql.exec(`UPDATE config SET ${pausedColumn} = ?, ${expiresColumn} = ? WHERE id = ?`, paused ? 1 : 0, paused ? expiresAt : null, config.id);
+    try {
+      const snapshot = await this.getFeatureRestrictions();
+      if (snapshot) await this.pushFeatureRestrictionsToRooms(config, snapshot);
+      return snapshot;
+    } catch (error) {
+      this.ctx.storage.sql.exec(`UPDATE config SET ${pausedColumn} = ?, ${expiresColumn} = ? WHERE id = ?`, previousPaused, previousExpiry, config.id);
+      throw error;
+    }
+  }
+
+  async refreshFeatureRestrictions(): Promise<FeatureRestrictionSnapshot | null> {
+    const config = await this.getConfig();
+    const snapshot = await this.getFeatureRestrictions();
+    if (config && snapshot) await this.pushFeatureRestrictionsToRooms(config, snapshot);
+    return snapshot;
+  }
+
+  private async pushFeatureRestrictionsToRooms(config: ConfigRow, snapshot: FeatureRestrictionSnapshot): Promise<void> {
+    const rooms = await this.listRooms();
+    await Promise.all(rooms.map((room) => this.env.ROOM_DO.getByName(`${config.id}/${typeToKind(room.type)}/${room.res_id}`)
+      .setFeatureRestrictions(snapshot)));
+  }
+
   // ---- revocation propagation (m0-protocol §7.3) --------------------------------
   // Same DO-to-DO fire-and-forget convention as pushEditConfigToRooms above: every
   // room DO this stronghold owns gets the frame, a failed push to one room never
@@ -352,6 +437,7 @@ export class StrongholdDO extends DurableObject<Env> {
   }
 
   async revokeServerRole(actor: string): Promise<void> {
+    this.closeTipSockets(actor);
     await this.pushRevokeToRooms({ actor, scope: this.selfId, effect: "close" });
   }
 
@@ -401,6 +487,11 @@ export class StrongholdDO extends DurableObject<Env> {
       "INSERT INTO room (res_id, type, name, description, capabilities_json, restricted, position, archived, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)",
       resId, type, name, desc, JSON.stringify(caps), restricted ? 1 : 0, pos, createdAt
     );
+    const config = await this.getConfig();
+    const restrictions = await this.getFeatureRestrictions();
+    if (config && restrictions) {
+      await this.env.ROOM_DO.getByName(`${config.id}/${typeToKind(type)}/${resId}`).setFeatureRestrictions(restrictions);
+    }
     return { res_id: resId, type, name, description: desc, capabilities_json: JSON.stringify(caps), restricted: restricted ? 1 : 0, position: pos, archived: 0, created_at: createdAt };
   }
 
@@ -486,11 +577,21 @@ export class StrongholdDO extends DurableObject<Env> {
       actor, role, effectiveDeny, restricted ? 1 : 0, joinedAt
     );
     await this.indexMember(actor);
-    return { actor, role, deny: effectiveDeny, restricted: restricted ? 1 : 0, banned_at: null, application_state: "approved", joined_at: joinedAt };
+    return { actor, role, deny: effectiveDeny, restricted: restricted ? 1 : 0, banned_at: null, expires_at: null, application_state: "approved", joined_at: joinedAt };
+  }
+
+  private clearExpiredBans(): void {
+    const now = Date.now();
+    this.ctx.storage.sql.exec(
+      "UPDATE member SET banned_at = NULL, expires_at = NULL WHERE banned_at IS NOT NULL AND expires_at IS NOT NULL AND expires_at <= ?",
+      now
+    );
+    this.ctx.storage.sql.exec("DELETE FROM ban WHERE expires_at IS NOT NULL AND expires_at <= ?", now);
   }
 
   async getMember(actor: string): Promise<MemberRow | null> {
     try {
+      this.clearExpiredBans();
       const rows = this.ctx.storage.sql.exec<MemberRow>("SELECT * FROM member WHERE actor = ?", actor).toArray();
       if (rows[0]) return rows[0];
       return this.adoptLegacyActor(actor);
@@ -519,6 +620,7 @@ export class StrongholdDO extends DurableObject<Env> {
 
   async listMembers(): Promise<MemberRow[]> {
     try {
+      this.clearExpiredBans();
       return this.ctx.storage.sql.exec<MemberRow>("SELECT * FROM member ORDER BY joined_at").toArray();
     } catch {
       return [];
@@ -566,28 +668,29 @@ export class StrongholdDO extends DurableObject<Env> {
 
   // ---- bans (audit trail; member.banned_at stays the fast-path gate check) --------
 
-  async banMember(actor: string, operator: string): Promise<MemberRow | null> {
+  async banMember(actor: string, operator: string, expiresAt: number | null = null): Promise<MemberRow | null> {
     const target = await this.getMember(actor);
     if (!target || target.role === "owner") return null;
     const bannedAt = Date.now();
-    this.ctx.storage.sql.exec("UPDATE member SET banned_at = ? WHERE actor = ?", bannedAt, actor);
+    this.ctx.storage.sql.exec("UPDATE member SET banned_at = ?, expires_at = ? WHERE actor = ?", bannedAt, expiresAt, actor);
     this.ctx.storage.sql.exec(
-      "INSERT INTO ban (actor, operator, banned_at) VALUES (?, ?, ?) " +
-        "ON CONFLICT(actor) DO UPDATE SET operator = excluded.operator, banned_at = excluded.banned_at",
-      actor, operator, bannedAt
+      "INSERT INTO ban (actor, operator, banned_at, expires_at) VALUES (?, ?, ?, ?) " +
+        "ON CONFLICT(actor) DO UPDATE SET operator = excluded.operator, banned_at = excluded.banned_at, expires_at = excluded.expires_at",
+      actor, operator, bannedAt, expiresAt
     );
     await this.pushRevokeToRooms({ actor, scope: this.selfId, effect: "close" });
-    return { ...target, banned_at: bannedAt };
+    return { ...target, banned_at: bannedAt, expires_at: expiresAt };
   }
 
   async unbanMember(actor: string): Promise<MemberRow | null> {
     const target = await this.getMember(actor);
-    this.ctx.storage.sql.exec("UPDATE member SET banned_at = NULL WHERE actor = ?", actor);
+    this.ctx.storage.sql.exec("UPDATE member SET banned_at = NULL, expires_at = NULL WHERE actor = ?", actor);
     this.ctx.storage.sql.exec("DELETE FROM ban WHERE actor = ?", actor);
-    return target ? { ...target, banned_at: null } : null;
+    return target ? { ...target, banned_at: null, expires_at: null } : null;
   }
 
   async listBans(): Promise<BanRow[]> {
+    this.clearExpiredBans();
     return this.ctx.storage.sql.exec<BanRow>("SELECT * FROM ban ORDER BY banned_at DESC").toArray();
   }
 
