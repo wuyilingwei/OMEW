@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
 import { useStronghold } from '../composables/useStronghold'
 import AvatarBadge from './AvatarBadge.vue'
@@ -9,19 +9,34 @@ const { isReadOnly } = useStronghold()
 
 const roleLabels = { owner: '据点所有者', mod: '管理员', member: '成员' } as const
 const visibleMembers = computed(() => members.value)
+const now = ref(Date.now())
+let clock: ReturnType<typeof setInterval> | null = null
+
+onMounted(() => {
+  clock = setInterval(() => { now.value = Date.now() }, 60_000)
+})
+
+onBeforeUnmount(() => {
+  if (clock) clearInterval(clock)
+})
+
+function activityAge(lastActiveAt: string): number {
+  return now.value - Date.parse(lastActiveAt)
+}
 
 function activityLabel(lastActiveAt: string | null): string {
   if (!lastActiveAt) return '暂无活动记录'
-  const age = Date.now() - Date.parse(lastActiveAt)
-  if (age < 24 * 60 * 60 * 1000) return '最近活跃'
-  if (age < 7 * 24 * 60 * 60 * 1000) return '活跃'
+  const age = activityAge(lastActiveAt)
+  if (age < 5 * 60 * 1000) return '活跃'
+  if (age < 7 * 24 * 60 * 60 * 1000) return '最近活跃'
   return '暂不活跃'
 }
 
 function activityClass(lastActiveAt: string | null): string {
   if (!lastActiveAt) return 'member-roster__status-dot--unknown'
-  const age = Date.now() - Date.parse(lastActiveAt)
-  return age < 7 * 24 * 60 * 60 * 1000 ? 'member-roster__status-dot--active' : 'member-roster__status-dot--idle'
+  const age = activityAge(lastActiveAt)
+  if (age < 5 * 60 * 1000) return 'member-roster__status-dot--active'
+  return age < 7 * 24 * 60 * 60 * 1000 ? 'member-roster__status-dot--recent' : 'member-roster__status-dot--idle'
 }
 </script>
 
@@ -67,6 +82,7 @@ function activityClass(lastActiveAt: string | null): string {
 .member-roster__status { display: inline-flex; align-items: center; gap: .25rem; max-width: 5.5rem; color: var(--text-secondary); font-size: .63rem; text-align: right; }
 .member-roster__status-dot { width: .42rem; height: .42rem; flex: 0 0 auto; border: 1px solid var(--text-secondary); border-radius: 50%; opacity: .7; }
 .member-roster__status-dot--active { border-color: var(--success-text, #3ca370); background: var(--success-text, #3ca370); }
-.member-roster__status-dot--idle { border-color: var(--warning-text, #bd8b32); background: var(--warning-text, #bd8b32); }
+.member-roster__status-dot--recent { border-color: var(--warning-text, #bd8b32); background: var(--warning-text, #bd8b32); }
+.member-roster__status-dot--idle { border-color: var(--text-secondary); background: transparent; }
 .member-roster__status-dot--unknown { border-color: var(--text-secondary); }
 </style>

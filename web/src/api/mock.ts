@@ -248,6 +248,7 @@ function requireUser(token: string): MockUser {
   const actor = sessions.get(token)
   const user = users.find((candidate) => candidate.actor === actor)
   if (!user || isGloballyBanned(user.actor)) throw new ApiRequestError('AUTH_FAILED', 401)
+  touchMockActivity(user.actor)
   return user
 }
 
@@ -326,6 +327,15 @@ const strongholds = new Map<string, MockStrongholdState>()
 const strongholdMembers = new Map<string, StrongholdMember[]>()
 const strongholdBans = new Map<string, BanEntry[]>()
 const globalBans: BanEntry[] = []
+
+function touchMockActivity(actor: string): void {
+  const now = new Date().toISOString()
+  for (const members of strongholdMembers.values()) {
+    const member = members.find((candidate) => candidate.actor === actor)
+    if (member) member.last_active_at = now
+  }
+}
+
 type MockFeatureRestriction = { paused: boolean; expires_at: number | null; mode: FeatureRestrictionMode }
 const featureRestrictions = new Map<string, Record<'chat' | 'posts', { owner: MockFeatureRestriction; server: MockFeatureRestriction }>>()
 

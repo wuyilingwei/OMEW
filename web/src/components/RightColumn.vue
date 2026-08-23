@@ -19,6 +19,9 @@ const { selectedNodeId, isPublicPreview, isReadOnly, loadStrongholds } = useStro
 const { myRole } = useStrongholdMembers()
 const { openAuthModal } = useAuthModal()
 
+const personalName = computed(() => auth.user.value?.display_name || auth.user.value?.username || '')
+const personalCover = computed(() => auth.user.value?.cover ?? null)
+
 const modeLabel: Record<string, string> = {
   system: '跟随系统',
   light: '亮色',
@@ -83,6 +86,24 @@ async function joinCurrentStronghold() {
         </WinButton>
       </template>
     </div>
+
+    <section v-if="auth.isAuthenticated.value" class="right-column__personal-card" aria-label="个人资料封面">
+      <div class="right-column__personal-cover">
+        <img v-if="personalCover" :src="personalCover" :alt="`${personalName} 的个人封面`" />
+        <div v-else class="right-column__personal-cover-placeholder" aria-hidden="true" />
+      </div>
+      <div class="right-column__personal-identity">
+        <AvatarBadge
+          :seed="auth.user.value?.username ?? ''"
+          :size="40"
+          :avatar-url="auth.user.value?.avatar ?? undefined"
+        />
+        <span class="right-column__personal-copy">
+          <strong>{{ personalName }}</strong>
+          <span>@{{ auth.user.value?.username }}</span>
+        </span>
+      </div>
+    </section>
 
     <div class="right-column__actions">
       <template v-if="!isReadOnly">
@@ -161,6 +182,70 @@ async function joinCurrentStronghold() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.right-column__personal-card {
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid var(--card-stroke);
+  border-radius: var(--radius-sm);
+  background: var(--card-bg);
+}
+
+.right-column__personal-cover {
+  width: 100%;
+  aspect-ratio: 3 / 1;
+  overflow: hidden;
+  background: var(--ctrl-fill-secondary);
+}
+
+.right-column__personal-cover img,
+.right-column__personal-cover-placeholder {
+  width: 100%;
+  height: 100%;
+}
+
+.right-column__personal-cover img {
+  display: block;
+  object-fit: cover;
+}
+
+.right-column__personal-cover-placeholder {
+  background:
+    radial-gradient(circle at 78% 28%, color-mix(in srgb, var(--accent) 30%, transparent), transparent 42%),
+    linear-gradient(135deg, var(--ctrl-fill-secondary), var(--layer-default));
+}
+
+.right-column__personal-identity {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.7rem 0.8rem;
+}
+
+.right-column__personal-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+
+.right-column__personal-copy strong,
+.right-column__personal-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.right-column__personal-copy strong {
+  color: var(--text-primary);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.right-column__personal-copy span {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
 }
 
 .right-column__actions {
