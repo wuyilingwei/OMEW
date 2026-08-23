@@ -35,7 +35,7 @@ onMounted(async () => {
     <div class="member-info-overlay" @click.self="$emit('close')">
       <div class="member-info-card" role="dialog" aria-modal="true" :aria-label="member.display_name">
         <WinButton Style="SubtleButtonStyle" class="member-info-card__close" @click="$emit('close')">关闭</WinButton>
-        <AvatarBadge :seed="member.username" :size="64" />
+        <AvatarBadge :seed="member.username" :size="64" :avatar-url="profile?.avatar ?? member.avatar ?? undefined" />
         <h2 class="member-info-card__name">{{ profile?.display_name ?? member.display_name }}</h2>
         <p class="member-info-card__actor">{{ member.actor }}</p>
         <p v-if="member.is_guest" class="member-info-card__guest">宾客 · 来自 {{ member.home_domain }}</p>

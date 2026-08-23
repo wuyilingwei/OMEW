@@ -459,12 +459,13 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const password = String(body.password ?? "");
 
     const user = await env.DB.prepare(
-      "SELECT localpart, display_name, pw_hash, pw_salt, status, server_role, email, email_verified, totp_enabled FROM users WHERE localpart = ?"
+      "SELECT localpart, display_name, avatar, pw_hash, pw_salt, status, server_role, email, email_verified, totp_enabled FROM users WHERE localpart = ?"
     )
       .bind(username)
       .first<{
         localpart: string;
         display_name: string;
+        avatar: string | null;
         pw_hash: string | null;
         pw_salt: string | null;
         status: string;
@@ -513,12 +514,13 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (await totpRateLimited(env, localpart)) return apiError(429, "TOTP_RATE_LIMITED");
 
     const user = await env.DB.prepare(
-      "SELECT localpart, display_name, status, server_role, email, email_verified, totp_secret, totp_enabled FROM users WHERE localpart = ?"
+      "SELECT localpart, display_name, avatar, status, server_role, email, email_verified, totp_secret, totp_enabled FROM users WHERE localpart = ?"
     )
       .bind(localpart)
       .first<{
         localpart: string;
         display_name: string;
+        avatar: string | null;
         status: string;
         server_role: ServerRole;
         email: string | null;
@@ -568,6 +570,40 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
       .bind(displayName, localpartOfActor(actor))
       .run();
     return json({ display_name: displayName });
+  }
+
+  if (path === "/api/me/avatar" && (method === "POST" || method === "DELETE")) {
+    const actor = await requireActor(request, env);
+    if (!actor) return apiError(401, "AUTH_REQUIRED");
+    if (domainOfActor(actor) !== instanceDomain(env)) return apiError(403, "FORBIDDEN");
+    const localpart = localpartOfActor(actor);
+
+    if (method === "DELETE") {
+      const cleared = await env.DB.prepare("UPDATE users SET avatar = NULL WHERE localpart = ?").bind(localpart).run();
+      if (cleared.meta.changes === 0) return apiError(404, "NOT_FOUND");
+      return json({ avatar: null });
+    }
+
+    const mime = request.headers.get("Content-Type")?.split(";")[0]?.trim().toLowerCase() ?? "";
+    if (!SANITIZED_IMAGE_MIME_WHITELIST.has(mime)) {
+      await request.body?.cancel().catch(() => {});
+      return apiError(415, "AVATAR_IMAGE_REQUIRED");
+    }
+
+    const uploadedResponse = await handleMediaUpload(request, env);
+    if (!uploadedResponse.ok) return uploadedResponse;
+    const uploaded = await uploadedResponse.json() as { id: string; url: string; size: number; mime: string };
+    try {
+      const updated = await env.DB.prepare("UPDATE users SET avatar = ? WHERE localpart = ?")
+        .bind(uploaded.url, localpart)
+        .run();
+      if (updated.meta.changes === 0) throw new Error("USER_NOT_FOUND");
+    } catch {
+      await env.MEDIA.delete(`media/${uploaded.id}`).catch(() => {});
+      await env.DB.prepare("DELETE FROM media WHERE id = ?").bind(uploaded.id).run().catch(() => {});
+      return apiError(500, "AVATAR_UPDATE_FAILED");
+    }
+    return json({ ...uploaded, avatar: uploaded.url }, 201);
   }
 
   // ---- account: change password ----------------------------------------------------
@@ -866,7 +902,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
     const credentialId = response.id;
     const row = await env.DB.prepare(
-      "SELECT w.credential_id, w.public_key, w.counter, w.transports, w.localpart, u.status, u.server_role, u.email, u.email_verified, u.totp_enabled FROM webauthn_credentials w JOIN users u ON u.localpart = w.localpart WHERE w.credential_id = ?"
+      "SELECT w.credential_id, w.public_key, w.counter, w.transports, w.localpart, u.display_name, u.avatar, u.status, u.server_role, u.email, u.email_verified, u.totp_enabled FROM webauthn_credentials w JOIN users u ON u.localpart = w.localpart WHERE w.credential_id = ?"
     )
       .bind(credentialId)
       .first<{
@@ -875,6 +911,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
         counter: number;
         transports: string | null;
         localpart: string;
+        display_name: string;
+        avatar: string | null;
         status: string;
         server_role: ServerRole;
         email: string | null;
@@ -1267,6 +1305,9 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (row.owner_actor !== session.actor && !isElevated) return apiError(403, "FORBIDDEN");
     await env.MEDIA.delete(row.r2_key);
     await env.DB.prepare("DELETE FROM media WHERE id = ?").bind(mediaDeleteMatch.id!).run();
+    await env.DB.prepare("UPDATE users SET avatar = NULL WHERE avatar = ?")
+      .bind(`/media/${mediaDeleteMatch.id!}`)
+      .run();
     return new Response(null, { status: 204, headers: cors() });
   }
 
@@ -2178,11 +2219,11 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (!target.startsWith("@") || !target.includes(":")) return apiError(400, "MALFORMED");
 
     if (domainOfActor(target) === instanceDomain(env)) {
-      const row = await env.DB.prepare("SELECT display_name, created_at FROM users WHERE localpart = ?")
+      const row = await env.DB.prepare("SELECT display_name, avatar, created_at FROM users WHERE localpart = ?")
         .bind(localpartOfActor(target))
-        .first<{ display_name: string; created_at: number }>();
+        .first<{ display_name: string; avatar: string | null; created_at: number }>();
       if (!row) return apiError(404, "NOT_FOUND");
-      return json({ actor: target, display_name: row.display_name, avatar: null, created_at: row.created_at, is_guest: false });
+      return json({ actor: target, display_name: row.display_name, avatar: row.avatar, created_at: row.created_at, is_guest: false });
     }
 
     const row = await env.DB.prepare(
@@ -3021,6 +3062,7 @@ function roomErrorStatus(code: string): number {
 
 interface ActorProfile {
   display_name: string;
+  avatar: string | null;
   is_guest: boolean;
   home_domain?: string;
 }
@@ -3039,28 +3081,29 @@ async function actorProfiles(env: Env, actors: string[]): Promise<Map<string, Ac
     const localparts = localActors.map(localpartOfActor);
     const placeholders = localparts.map(() => "?").join(",");
     const { results } = await env.DB.prepare(
-      `SELECT localpart, display_name FROM users WHERE localpart IN (${placeholders})`
+      `SELECT localpart, display_name, avatar FROM users WHERE localpart IN (${placeholders})`
     )
       .bind(...localparts)
-      .all<{ localpart: string; display_name: string }>();
-    const byLocalpart = new Map(results.map((r) => [r.localpart, r.display_name]));
+      .all<{ localpart: string; display_name: string; avatar: string | null }>();
+    const byLocalpart = new Map(results.map((r) => [r.localpart, r]));
     for (const actor of localActors) {
       const localpart = localpartOfActor(actor);
-      result.set(actor, { display_name: byLocalpart.get(localpart) ?? localpart, is_guest: false });
+      const row = byLocalpart.get(localpart);
+      result.set(actor, { display_name: row?.display_name ?? localpart, avatar: row?.avatar ?? null, is_guest: false });
     }
   }
 
   if (guestActors.length > 0) {
     const placeholders = guestActors.map(() => "?").join(",");
     const { results } = await env.DB.prepare(
-      `SELECT actor, display_name, registered_origin FROM guest_identity WHERE actor IN (${placeholders})`
+      `SELECT actor, display_name, avatar, registered_origin FROM guest_identity WHERE actor IN (${placeholders})`
     )
       .bind(...guestActors)
-      .all<{ actor: string; display_name: string | null; registered_origin: string }>();
+      .all<{ actor: string; display_name: string | null; avatar: string | null; registered_origin: string }>();
     const byActor = new Map(results.map((r) => [r.actor, r]));
     for (const actor of guestActors) {
       const row = byActor.get(actor);
-      result.set(actor, { display_name: row?.display_name ?? actor, is_guest: true, home_domain: row?.registered_origin });
+      result.set(actor, { display_name: row?.display_name ?? actor, avatar: row?.avatar ?? null, is_guest: true, home_domain: row?.registered_origin });
     }
   }
 
@@ -3074,6 +3117,7 @@ function toMemberEntry(member: MemberRow, profile: ActorProfile | undefined) {
   return {
     actor: member.actor,
     display_name: profile?.display_name ?? member.actor,
+    avatar: profile?.avatar ?? null,
     role: member.role,
     deny: member.deny,
     joined_at: member.joined_at,

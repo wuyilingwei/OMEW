@@ -63,6 +63,10 @@ function displayName(actor: string): string {
   return members.value.find((m) => m.actor === actor)?.display_name ?? actorLocalpart(actor)
 }
 
+function avatarUrl(actor: string): string | null {
+  return members.value.find((m) => m.actor === actor)?.avatar ?? null
+}
+
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
@@ -77,6 +81,7 @@ const messages = computed<MessageVM[]>(() => {
     seq: item.seq,
     actor: item.actor,
     displayName: displayName(item.actor),
+    avatarUrl: avatarUrl(item.actor),
     content: item.body.text ?? '',
     media: item.body.media,
     timestamp: formatTime(item.ts),
@@ -94,6 +99,7 @@ const messages = computed<MessageVM[]>(() => {
     seq: null,
     actor: auth.user.value?.actor ?? '',
     displayName: displayName(auth.user.value?.actor ?? ''),
+    avatarUrl: auth.user.value?.avatar ?? null,
     content: p.text,
     media: p.media,
     timestamp: formatTime(p.ts),

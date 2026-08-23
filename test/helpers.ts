@@ -16,6 +16,7 @@ import migration0010 from "../server/migrations/0010_totp_passkey.sql?raw";
 import migration0011 from "../server/migrations/0011_totp_passkey_hardening.sql?raw";
 import migration0012 from "../server/migrations/0012_stronghold_slug.sql?raw";
 import migration0013 from "../server/migrations/0013_security_hardening.sql?raw";
+import migration0014 from "../server/migrations/0014_user_avatar.sql?raw";
 
 // Must match vitest.config.ts's miniflare.bindings.DEV_TOKEN_SECRET.
 export const TEST_SECRET = "test-secret-do-not-use-in-prod";
@@ -38,7 +39,7 @@ export async function ensureMigrated(): Promise<void> {
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'instance_config'"
   ).first();
   if (marker) return;
-  for (const sql of [migration0001, migration0002, migration0003, migration0004, migration0005, migration0006, migration0007, migration0008, migration0009, migration0010, migration0011, migration0012, migration0013]) {
+  for (const sql of [migration0001, migration0002, migration0003, migration0004, migration0005, migration0006, migration0007, migration0008, migration0009, migration0010, migration0011, migration0012, migration0013, migration0014]) {
     for (const statement of splitStatements(sql)) {
       await env.DB.prepare(statement).run();
     }
@@ -72,6 +73,26 @@ export function mediaUploadRequest(opts: {
       body: opts.body,
       duplex: opts.body instanceof ReadableStream ? "half" : undefined,
     } as RequestInit),
+    env
+  );
+}
+
+export function avatarUploadRequest(opts: {
+  token?: string;
+  contentType: string;
+  body: Uint8Array;
+}): Promise<Response> {
+  const headers: Record<string, string> = {
+    "Content-Type": opts.contentType,
+    "Content-Length": String(opts.body.byteLength),
+  };
+  if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
+  return worker.fetch(
+    new Request("http://local/api/me/avatar", {
+      method: "POST",
+      headers,
+      body: opts.body,
+    }),
     env
   );
 }

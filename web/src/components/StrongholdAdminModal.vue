@@ -310,7 +310,7 @@ watch(
               <ul v-else class="member-list">
                 <li v-for="member in members" :key="member.actor" class="member-row">
                   <button type="button" class="member-row__identity" @click="infoCardMember = member">
-                    <AvatarBadge :seed="member.username" :size="36" />
+                    <AvatarBadge :seed="member.username" :size="36" :avatar-url="member.avatar ?? undefined" />
                     <span class="member-row__names">
                       <span class="member-row__display-name">{{ member.display_name }}</span>
                       <span class="member-row__actor">{{ member.actor }}</span>

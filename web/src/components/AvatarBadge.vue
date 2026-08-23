@@ -2,8 +2,6 @@
 import { computed } from 'vue'
 import { defaultAvatarUrl } from '../utils/avatar'
 
-// avatarUrl is reserved for a future real-avatar-upload feature - no call site
-// passes it today, so every avatar currently falls back to the default image.
 const props = withDefaults(defineProps<{ seed: string; size?: number; avatarUrl?: string }>(), {
   size: 36,
 })
