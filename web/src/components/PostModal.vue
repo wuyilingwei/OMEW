@@ -12,6 +12,7 @@ import { useStrongholdMembers } from '../composables/useStrongholdMembers'
 import { actorLocalpart } from '../utils/actor'
 import { WinButton } from '../vendor/winui'
 import AvatarBadge from './AvatarBadge.vue'
+import AppIcon from './icons/AppIcon.vue'
 import ItemContextMenu from './ItemContextMenu.vue'
 import MediaGrid from './MediaGrid.vue'
 import ReactionChips from './ReactionChips.vue'
@@ -40,6 +41,7 @@ const replyDraft = ref('')
 const replyError = ref('')
 const editingSeq = ref<number | null>(null)
 const editingText = ref('')
+const actionNotice = ref('')
 const canParticipate = computed(() => auth.isAuthenticated.value && !isReadOnly.value)
 
 function displayName(actor: string): string {
@@ -208,6 +210,41 @@ function onReplyToggleReaction(reply: PostReply, name: string) {
   toggleReaction(reply.seq, name)
 }
 
+async function sharePost() {
+  const post = thread.value?.post
+  if (!post) return
+  const shareData = { title: post.title, text: post.title, url: window.location.href }
+  try {
+    if (navigator.share) {
+      await navigator.share(shareData)
+      return
+    }
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(shareData.url)
+      actionNotice.value = '链接已复制'
+      return
+    }
+    actionNotice.value = '当前浏览器不支持转发'
+  } catch {
+    // Cancelling a system share sheet is an expected no-op, while a clipboard
+    // failure gets a concise visible result instead of pretending it worked.
+    actionNotice.value = navigator.clipboard ? '未能复制链接' : ''
+  }
+}
+
+function openReactionPicker(event: MouseEvent) {
+  if (!auth.isAuthenticated.value) {
+    openAuthModal()
+    return
+  }
+  if (!canParticipate.value) {
+    actionNotice.value = '加入据点后即可添加反应'
+    return
+  }
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  postMenuRef.value?.openAt(rect.left + rect.width / 2, rect.top)
+}
+
 function onActiveReplyToggleReaction(name: string) {
   if (activeReply.value) onReplyToggleReaction(activeReply.value, name)
 }
@@ -257,6 +294,15 @@ const replyCanRetract = computed(() => (activeReply.value ? canRetract(activeRep
                   </p>
                   <MediaGrid v-if="thread.post.media?.length" :media="thread.post.media" />
                 </template>
+                <div class="post-modal__actions" role="group" aria-label="帖子操作">
+                  <button type="button" class="post-modal__action" aria-label="转发" title="转发" @click="sharePost">
+                    <AppIcon name="repeat" :size="19" />
+                  </button>
+                  <button type="button" class="post-modal__action" aria-label="添加反应" title="添加反应" @click="openReactionPicker">
+                    <AppIcon name="emote" :size="19" />
+                  </button>
+                </div>
+                <p v-if="actionNotice" class="post-modal__action-notice" role="status">{{ actionNotice }}</p>
                 <ReactionChips
                   :reactions="thread.post.reactions"
                   :can-toggle="canParticipate"
@@ -505,6 +551,46 @@ const replyCanRetract = computed(() => (activeReply.value ? canRetract(activeRep
   display: flex;
   gap: 0.5rem;
   justify-content: flex-end;
+}
+
+.post-modal__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding-top: 0.1rem;
+}
+
+.post-modal__action {
+  display: inline-grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: var(--ctrl-fill-secondary);
+  color: var(--text-secondary);
+  transition:
+    background var(--fast-duration) var(--fast-out-slow-in),
+    color var(--fast-duration) var(--fast-out-slow-in),
+    border-color var(--fast-duration) var(--fast-out-slow-in);
+}
+
+.post-modal__action:hover {
+  border-color: var(--ctrl-border);
+  background: var(--ctrl-fill-tertiary);
+  color: var(--text-primary);
+}
+
+.post-modal__action:focus-visible {
+  outline: 2px solid rgb(var(--colors-primary));
+  outline-offset: 2px;
+}
+
+.post-modal__action-notice {
+  margin: -0.45rem 0 0;
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
 }
 
 .post-modal__comments {
