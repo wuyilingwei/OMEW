@@ -51,6 +51,10 @@ describe('OMEW landing page contract', () => {
     expect(landing).toMatch(/class="landing-directory-card"[\s\S]*@click="emit\('browse', entry\.id\)"/)
   })
 
+  it('owns vertical scrolling because the application shell clips document overflow', () => {
+    expect(landing).toMatch(/\.landing-page\s*\{(?=[\s\S]*?height:\s*100%)(?=[\s\S]*?overflow-y:\s*auto)(?=[\s\S]*?overflow-x:\s*hidden)/)
+  })
+
   it('passes the clicked stronghold id into route installation so the chosen card is selected', () => {
     expect(app).toMatch(/function\s+installRoute\s*\(strongholdId\?\s*:\s*string\)/)
     expect(app).toMatch(/if\s*\(strongholdId\)\s*selectNode\(strongholdId\)/)

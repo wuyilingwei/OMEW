@@ -117,7 +117,10 @@ watch(
 .landing-page {
   isolation: isolate;
   position: relative;
+  height: 100%;
   min-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
   color: #fff;
   background: #14233f;
 }
@@ -370,6 +373,7 @@ h1 {
 }
 
 .landing-directory-card__cover {
+  display: block;
   width: 100%;
   aspect-ratio: 16 / 7;
   object-fit: cover;
@@ -399,6 +403,7 @@ h1 {
 }
 
 .landing-directory-card__avatar img {
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
