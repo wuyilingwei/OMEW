@@ -1,7 +1,7 @@
-import { createHash } from 'node:crypto'
-import { readFileSync, existsSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
+import { createHash } from 'node:crypto'
+import { existsSync, readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const testDir = dirname(fileURLToPath(import.meta.url))
@@ -17,10 +17,12 @@ describe('OMEW landing page contract', () => {
     expect(app).toMatch(/<LandingPage\b/)
     expect(app).toMatch(/useRoute\s*\(/)
     expect(app).toMatch(/auth\.isAuthenticated\.value/)
-    expect(app).toMatch(/allow_guest_browsing/)
+    expect(app).toMatch(/guestBrowsingAllowed|guest-browsing-allowed/)
     expect(app).toMatch(/<AuthModal\b/)
     expect(app).not.toMatch(/<AuthModal\b[^>]*(?:v-if|v-else|v-else-if)=/)
-    expect(app).toMatch(/(?:showLanding|landing|isAuthenticated|allow_guest_browsing)[\s\S]{0,500}useRoute\s*\(/)
+    expect(app).toMatch(/routeInstalled/)
+    expect(app).toMatch(/routeInstalled[\s\S]{0,500}auth\.isAuthenticated\.value[\s\S]{0,160}location\.pathname\s*!==\s*['"]\//)
+    expect(app).toMatch(/routeInstalled[\s\S]{0,500}useRoute\s*\(/)
   })
 
   it('defines the landing-page visual and interaction vocabulary', () => {
@@ -30,9 +32,10 @@ describe('OMEW landing page contract', () => {
     expect(landing).toMatch(/WinButton/)
     expect(landing).toMatch(/@Click=/)
     expect(landing).toMatch(/(?:登录|注册)/)
-    expect(landing).toMatch(/allow_guest_browsing/)
+    expect(landing).toMatch(/guestBrowsingAllowed|guest-browsing-allowed/)
     expect(landing).toMatch(/浏览公开据点/)
-    expect(landing).toMatch(/(?:@enter|enter\s*\()/)
+    expect(landing).toMatch(/(?:@authenticate|authenticate\s*\()/)
+    expect(landing).toMatch(/(?:@browse|browse\s*\()/)
     expect(landing).not.toMatch(/mew-fg|Mew Online/)
   })
 
