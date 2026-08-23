@@ -1,11 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { api } from '../api'
-import { DEFAULT_NODE_PAGE_BG } from '../assets/mew'
 import { useAuth } from '../composables/useAuth'
 import { useAuthModal } from '../composables/useAuthModal'
 import { useStronghold } from '../composables/useStronghold'
-import { useStrongholdConfig } from '../composables/useStrongholdConfig'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
 import { useTheme } from '../composables/useTheme'
 import { WinButton, WinDropDownButton } from '../vendor/winui'
@@ -16,15 +14,9 @@ const emit = defineEmits<{ 'open-server-admin': []; 'open-panel': ['members' | '
 
 const { mode, cycleTheme } = useTheme()
 const auth = useAuth()
-const { currentNode, selectedNodeId, isPublicPreview, isReadOnly, loadStrongholds } = useStronghold()
-const { config } = useStrongholdConfig()
+const { selectedNodeId, isPublicPreview, isReadOnly, loadStrongholds } = useStronghold()
 const { myRole } = useStrongholdMembers()
 const { openAuthModal } = useAuthModal()
-
-const strongholdName = computed(() => config.value?.name ?? currentNode.value?.name ?? '')
-const strongholdDescription = computed(() => config.value?.description ?? '')
-const strongholdAvatar = computed(() => config.value?.avatar ?? currentNode.value?.avatar ?? null)
-const strongholdCover = computed(() => config.value?.cover || currentNode.value?.cover || DEFAULT_NODE_PAGE_BG)
 
 const modeLabel: Record<string, string> = {
   system: '跟随系统',
@@ -89,17 +81,6 @@ async function joinCurrentStronghold() {
           登录 / 注册
         </WinButton>
       </template>
-    </div>
-
-    <div class="right-column__stronghold">
-      <img v-if="strongholdCover" class="right-column__cover" :src="strongholdCover" :alt="strongholdName" />
-      <div class="right-column__stronghold-body">
-        <div class="right-column__stronghold-heading">
-          <img v-if="strongholdAvatar" class="right-column__avatar" :src="strongholdAvatar" alt="" />
-          <h2 class="right-column__stronghold-name">{{ strongholdName }}</h2>
-        </div>
-        <p class="right-column__stronghold-description">{{ strongholdDescription }}</p>
-      </div>
     </div>
 
     <div class="right-column__actions">
@@ -178,59 +159,6 @@ async function joinCurrentStronghold() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.right-column__stronghold {
-  display: flex;
-  flex-direction: column;
-  border-radius: var(--radius-sm);
-  background: var(--card-bg);
-  border: 1px solid var(--card-stroke);
-  backdrop-filter: blur(20px) saturate(160%);
-  -webkit-backdrop-filter: blur(20px) saturate(160%);
-  overflow: hidden;
-}
-
-.right-column__cover {
-  width: 100%;
-  height: 96px;
-  object-fit: cover;
-}
-
-.right-column__stronghold-body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  padding: 0.75rem 0.85rem;
-}
-
-.right-column__stronghold-name {
-  margin: 0;
-  font-size: 0.98rem;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.right-column__stronghold-heading {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-}
-
-.right-column__avatar {
-  width: 32px;
-  height: 32px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  object-fit: cover;
-  border: 1px solid var(--card-stroke);
-}
-
-.right-column__stronghold-description {
-  margin: 0;
-  font-size: 0.78rem;
-  line-height: 1.5;
-  color: var(--text-secondary);
 }
 
 .right-column__actions {
