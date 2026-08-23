@@ -547,11 +547,12 @@ function requireManager(token: string, nodeId: string): { user: MockUser; member
   const user = requireUser(token)
   const member = strongholdMembers.get(nodeId)?.find((candidate) => candidate.actor === user.actor)
   // Keep the mock aligned with the real API's server-role overlay: a server
-  // owner/admin is owner-equivalent in every stronghold without joining it.
+  // owner/admin is owner-equivalent in every stronghold, even if it has a
+  // lower ordinary membership record there.
   if (user.is_admin) {
     return {
       user,
-      member: member ?? {
+      member: {
         actor: user.actor,
         username: user.username,
         display_name: user.display_name,
@@ -1184,13 +1185,18 @@ export const mockApi = {
   },
 
   async retractItem(token: string, nodeId: string, resId: string, seq: number): Promise<EditRetractResult> {
-    const user = requireUser(token)
+    const { user, member: manager } = requireManager(token, nodeId)
     const room = requireRoom(nodeId, resId)
     const item = room.items.find((i) => i.seq === seq)
     if (!item) throw new ApiRequestError('OMEW_TARGET_NOT_FOUND', 404)
-    const manager = findMember(nodeId, user.actor)
     const isModerator = manager?.role === 'owner' || manager?.role === 'mod'
     if (item.actor !== user.actor && !isModerator) throw new ApiRequestError('OMEW_FORBIDDEN', 403)
+    // Match RoomDO's local-mod boundary: a mod cannot retract an actual
+    // stronghold owner's item, while the server-role overlay is effective
+    // owner and may do so.
+    if (item.actor !== user.actor && manager.role === 'mod' && findMember(nodeId, item.actor)?.role === 'owner') {
+      throw new ApiRequestError('OMEW_FORBIDDEN', 403)
+    }
     room.tombstoned.add(seq)
     return delay({ seq, target_seq: seq })
   },
