@@ -4,6 +4,7 @@ import { api, ApiRequestError } from '../api'
 import type {
   AdminInstanceConfig,
   AdminUserEntry,
+  BanEntry,
   DirectoryEntry,
   Emote,
   EmotePack,
@@ -36,14 +37,15 @@ const auth = useAuth()
 const ROOT_REQUIREMENT_LABEL: Record<RootRequirement, string> = { email: '邮箱', phone: '手机号', code: '邀请码' }
 const CREATION_POLICY_LABEL: Record<StrongholdCreationPolicy, string> = { open: '开放', restricted: '限制', application: '申请制' }
 
-const TAB_OPTIONS: { Text: string; value: 'overview' | 'members' | 'groups' }[] = [
+const TAB_OPTIONS: { Text: string; value: 'overview' | 'members' | 'bans' | 'groups' }[] = [
   { Text: '概览', value: 'overview' },
   { Text: '服务器成员', value: 'members' },
+  { Text: '全局黑名单', value: 'bans' },
   { Text: '用户组', value: 'groups' },
 ]
-const tab = ref<'overview' | 'members' | 'groups'>('overview')
+const tab = ref<'overview' | 'members' | 'bans' | 'groups'>('overview')
 const tabSelected = computed(() => TAB_OPTIONS.find((o) => o.value === tab.value))
-function onTabSelect(item: { value: 'overview' | 'members' | 'groups' }) {
+function onTabSelect(item: { value: 'overview' | 'members' | 'bans' | 'groups' }) {
   tab.value = item.value
 }
 
@@ -78,6 +80,76 @@ const roleChangingLocalpart = ref('')
 const userGroups = ref<Record<string, MemberGroupRef[]>>({})
 const openGroupPickerFor = ref('')
 const groupTogglePending = ref('')
+const globalBans = ref<BanEntry[]>([])
+const globalBansError = ref('')
+const globalBanBusyActor = ref('')
+const globalBanExpiresAt = ref('')
+
+function formatExpiry(expiresAt: string | null) {
+  return expiresAt ? `自动解封：${new Date(expiresAt).toLocaleString()}` : '永久封禁'
+}
+
+function selectedGlobalExpiry(): number | null | undefined {
+  if (!globalBanExpiresAt.value) return null
+  const expiresAt = new Date(globalBanExpiresAt.value).getTime()
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    globalBansError.value = '自动解封时间必须晚于当前时间'
+    return undefined
+  }
+  return expiresAt
+}
+
+function canGloballyBan(user: AdminUserEntry) {
+  return user.server_role !== 'owner' && (auth.isServerOwner.value || user.server_role === 'user')
+}
+
+function canGloballyUnban(ban: BanEntry) {
+  if (auth.isServerOwner.value) return true
+  const localpart = ban.actor.replace(/^@/, '').split(':')[0]
+  return users.value.find((user) => user.localpart === localpart)?.server_role === 'user'
+}
+
+async function loadGlobalBans() {
+  if (!auth.token.value || !auth.isAdmin.value) return
+  globalBansError.value = ''
+  try {
+    globalBans.value = await api.listGlobalBans(auth.token.value)
+  } catch {
+    globalBansError.value = '加载全局黑名单失败'
+  }
+}
+
+async function banGlobally(user: AdminUserEntry) {
+  if (!auth.token.value || !canGloballyBan(user) || globalBanBusyActor.value) return
+  const expiresAt = selectedGlobalExpiry()
+  if (expiresAt === undefined) return
+  const duration = expiresAt == null ? '永久' : `至 ${new Date(expiresAt).toLocaleString()}`
+  if (!confirm(`确定全局封禁「${user.localpart}」吗？该账号将无法访问本服务器；${duration}。`)) return
+  globalBanBusyActor.value = user.localpart
+  globalBansError.value = ''
+  try {
+    await api.banAccountGlobally(auth.token.value, `@${user.localpart}:local`, expiresAt)
+    await loadGlobalBans()
+  } catch {
+    globalBansError.value = '全局封禁失败，请稍后重试'
+  } finally {
+    globalBanBusyActor.value = ''
+  }
+}
+
+async function unbanGlobally(ban: BanEntry) {
+  if (!auth.token.value || !canGloballyUnban(ban) || globalBanBusyActor.value) return
+  globalBanBusyActor.value = ban.actor
+  globalBansError.value = ''
+  try {
+    await api.unbanAccountGlobally(auth.token.value, ban.actor)
+    await loadGlobalBans()
+  } catch {
+    globalBansError.value = '解除全局封禁失败，请稍后重试'
+  } finally {
+    globalBanBusyActor.value = ''
+  }
+}
 
 async function loadUsers(reset = true) {
   if (!auth.token.value || !auth.isAdmin.value) return
@@ -464,7 +536,10 @@ watch(
     loadInviteCodes()
     loadPacks()
     loadStrongholdsList()
-    if (auth.isAdmin.value) void loadUsers()
+    if (auth.isAdmin.value) {
+      void loadUsers()
+      void loadGlobalBans()
+    }
   },
   { immediate: true },
 )
@@ -631,9 +706,14 @@ watch(
             <div v-else-if="tab === 'members'" class="admin-modal__body">
               <template v-if="auth.isAdmin.value">
                 <p class="field__hint">
-                  管理每个用户的服务器级用户组。仅服务器领主可任免服务器管理员；领主身份唯一且不可通过此处转移。
+                  管理每个用户的服务器级用户组与全局封禁。仅服务器领主可任免服务器管理员；领主身份唯一且不可通过此处转移。
                 </p>
                 <p v-if="usersError" class="field__error">{{ usersError }}</p>
+                <div class="field">
+                  <label class="field__label" for="global-ban-expires-at">全局封禁自动解封时间（可选）</label>
+                  <input id="global-ban-expires-at" v-model="globalBanExpiresAt" type="datetime-local" />
+                  <p class="field__hint">留空为永久封禁；服务器管理员只能全局封禁普通账号。</p>
+                </div>
                 <ul v-if="users.length" class="user-list">
                   <li v-for="user in users" :key="user.localpart" class="user-row">
                     <div class="user-row__main">
@@ -658,6 +738,15 @@ watch(
                           撤销管理员
                         </WinButton>
                         <span v-else-if="user.server_role === 'owner'" class="field__hint">领主</span>
+                        <WinButton
+                          v-if="canGloballyBan(user)"
+                          Style="AccentButtonStyle"
+                          class="win-btn--danger"
+                          :IsEnabled="!globalBanBusyActor"
+                          @click="banGlobally(user)"
+                        >
+                          全局封禁
+                        </WinButton>
                         <WinButton
                           Style="SubtleButtonStyle"
                           @click="openGroupPickerFor = openGroupPickerFor === user.localpart ? '' : user.localpart"
@@ -696,7 +785,34 @@ watch(
               <p v-else class="field__hint">仅服务器管理员可查看与管理服务器成员</p>
             </div>
 
-            <div v-else class="admin-modal__body">
+            <div v-else-if="tab === 'bans'" class="admin-modal__body">
+              <template v-if="auth.isAdmin.value">
+                <p class="field__hint">全局封禁会阻止账号访问整个服务器，不影响其他服务器；到期后自动解除。</p>
+                <p v-if="globalBansError" class="field__error">{{ globalBansError }}</p>
+                <p v-if="!globalBans.length && !globalBansError" class="field__hint">全局黑名单为空</p>
+                <ul v-else class="user-list">
+                  <li v-for="ban in globalBans" :key="ban.actor" class="user-row">
+                    <div class="user-row__main">
+                      <span class="user-row__name">{{ ban.actor }}</span>
+                      <span class="field__hint">{{ formatExpiry(ban.expires_at) }}</span>
+                      <div class="user-row__actions">
+                        <WinButton
+                          v-if="canGloballyUnban(ban)"
+                          Style="SubtleButtonStyle"
+                          :IsEnabled="!globalBanBusyActor"
+                          @click="unbanGlobally(ban)"
+                        >
+                          解除全局封禁
+                        </WinButton>
+                      </div>
+                    </div>
+                  </li>
+                </ul>
+              </template>
+              <p v-else class="field__hint">仅服务器管理员可查看全局黑名单</p>
+            </div>
+
+            <div v-else-if="tab === 'groups'" class="admin-modal__body">
               <div class="groups-toolbar">
                 <WinButton Style="AccentButtonStyle" @click="openCreateGroup">建组</WinButton>
               </div>

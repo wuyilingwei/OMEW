@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { api } from '../api'
-import type { MemberPatch, MemberTab, StrongholdConfigPatch, StrongholdMember } from '../api/types'
+import type { BanEntry, MemberPatch, MemberTab, StrongholdConfigPatch, StrongholdMember } from '../api/types'
 import { EMPTY_STATE } from '../assets/mew'
 import { useAuth } from '../composables/useAuth'
 import { useStorageUsage } from '../composables/useStorageUsage'
@@ -89,14 +89,34 @@ const membersLoading = ref(false)
 const membersError = ref('')
 const actionError = ref('')
 const infoCardMember = ref<StrongholdMember | null>(null)
+const bansByActor = ref<Record<string, BanEntry>>({})
+const strongholdBanExpiresAt = ref('')
+
+function formatExpiry(expiresAt: string | null) {
+  return expiresAt ? `自动解封：${new Date(expiresAt).toLocaleString()}` : '永久封禁'
+}
+
+function selectedStrongholdExpiry(): number | null | undefined {
+  if (!strongholdBanExpiresAt.value) return null
+  const expiresAt = new Date(strongholdBanExpiresAt.value).getTime()
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    actionError.value = '自动解封时间必须晚于当前时间'
+    return undefined
+  }
+  return expiresAt
+}
 
 async function loadMembers() {
   if (!auth.token.value || !props.open) return
   membersLoading.value = true
   membersError.value = ''
   try {
-    const page = await api.getStrongholdMembers(auth.token.value, selectedNodeId.value, memberTab.value)
+    const [page, bans] = await Promise.all([
+      api.getStrongholdMembers(auth.token.value, selectedNodeId.value, memberTab.value),
+      memberTab.value === 'banned' ? api.listBans(auth.token.value, selectedNodeId.value) : Promise.resolve([]),
+    ])
     members.value = page.members
+    bansByActor.value = Object.fromEntries(bans.map((ban) => [ban.actor, ban]))
   } catch {
     membersError.value = '加载成员列表失败'
   } finally {
@@ -144,8 +164,11 @@ function kick(member: StrongholdMember) {
 }
 
 function ban(member: StrongholdMember) {
-  if (!confirm(`拉黑「${member.display_name}」？此操作不可撤销——对方将无法再次加入本据点，除非管理员从黑名单手动解除。`)) return
-  runAction((token) => api.banMember(token, selectedNodeId.value, member.actor))
+  const expiresAt = selectedStrongholdExpiry()
+  if (expiresAt === undefined) return
+  const duration = expiresAt == null ? '永久' : `至 ${new Date(expiresAt).toLocaleString()}`
+  if (!confirm(`确定据点级封禁「${member.display_name}」吗？对方将无法加入本据点；${duration}。`)) return
+  runAction((token) => api.banMember(token, selectedNodeId.value, member.actor, expiresAt))
 }
 
 function unban(member: StrongholdMember) {
@@ -304,6 +327,11 @@ watch(
               />
 
               <p v-if="actionError" class="field__error">{{ actionError }}</p>
+              <div v-if="panelTab === 'members' && canManage" class="field">
+                <label class="field__label" for="stronghold-ban-expires-at">据点封禁自动解封时间（可选）</label>
+                <input id="stronghold-ban-expires-at" v-model="strongholdBanExpiresAt" type="datetime-local" />
+                <p class="field__hint">留空为永久封禁；该设置只影响本据点。</p>
+              </div>
               <div v-if="membersLoading" class="admin-modal__loading">加载中…</div>
               <WinInfoBar v-else-if="membersError" :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Error">
                 {{ membersError }}
@@ -326,6 +354,9 @@ watch(
                     </span>
                   </button>
                   <span class="member-row__role" :class="`member-row__role--${member.role}`">{{ ROLE_LABEL[member.role] }}</span>
+                  <span v-if="panelTab === 'banned' && bansByActor[member.actor]" class="field__hint">
+                    {{ formatExpiry(bansByActor[member.actor].expires_at) }}
+                  </span>
 
                   <template v-if="panelTab !== 'banned'">
                     <div class="member-row__deny">
@@ -361,7 +392,7 @@ watch(
                       </WinButton>
                       <template v-if="hasOwnerOverlay || member.role !== 'mod'">
                         <WinButton Style="SubtleButtonStyle" @click="kick(member)">踢出</WinButton>
-                        <WinButton Style="AccentButtonStyle" class="win-btn--danger" @click="ban(member)">拉黑</WinButton>
+                        <WinButton Style="AccentButtonStyle" class="win-btn--danger" @click="ban(member)">据点封禁</WinButton>
                       </template>
                       <WinButton v-if="canTransferOwnership" Style="AccentButtonStyle" class="win-btn--danger" @click="transfer(member)">
                         转让领主
@@ -370,7 +401,7 @@ watch(
                   </template>
 
                   <div v-else class="member-row__actions">
-                    <WinButton v-if="canManage" Style="SubtleButtonStyle" @click="unban(member)">解除拉黑</WinButton>
+                    <WinButton v-if="canManage" Style="SubtleButtonStyle" @click="unban(member)">解除据点封禁</WinButton>
                   </div>
                 </li>
               </ul>

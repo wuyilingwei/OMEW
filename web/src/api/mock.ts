@@ -320,6 +320,7 @@ function uniqueSlug(name: string): string {
 const strongholds = new Map<string, MockStrongholdState>()
 const strongholdMembers = new Map<string, StrongholdMember[]>()
 const strongholdBans = new Map<string, BanEntry[]>()
+const globalBans: BanEntry[] = []
 
 // task 048: server-level user groups, and each local user's group membership
 // as a set of group ids - mirrors the server's `server_groups` /
@@ -343,6 +344,11 @@ function daysAgo(days: number): string {
 
 function minutesAgo(mins: number): number {
   return Date.now() - mins * 60_000
+}
+
+function activeBans(bans: BanEntry[]): BanEntry[] {
+  const now = Date.now()
+  return bans.filter((ban) => ban.expires_at == null || Date.parse(ban.expires_at) > now)
 }
 
 function makeRoom(resId: string, type: RoomType, name: string, position = 0, description: string | null = null): MockRoomState {
@@ -1334,10 +1340,12 @@ export const mockApi = {
 
   async listBans(token: string, nodeId: string): Promise<BanEntry[]> {
     requireManager(token, nodeId)
-    return delay([...(strongholdBans.get(nodeId) ?? [])])
+    const bans = activeBans(strongholdBans.get(nodeId) ?? [])
+    strongholdBans.set(nodeId, bans)
+    return delay([...bans])
   },
 
-  async banMember(token: string, nodeId: string, actor: string): Promise<void> {
+  async banMember(token: string, nodeId: string, actor: string, expiresAt: number | null = null): Promise<void> {
     const { user, member: manager } = requireManager(token, nodeId)
     const target = findMember(nodeId, actor)
     if (!target) throw new ApiRequestError('NOT_FOUND', 404)
@@ -1345,7 +1353,9 @@ export const mockApi = {
     if (target.role === 'mod' && manager.role !== 'owner') throw new ApiRequestError('FORBIDDEN', 403)
     strongholdMembers.set(nodeId, (strongholdMembers.get(nodeId) ?? []).filter((m) => m.actor !== actor))
     const bans = strongholdBans.get(nodeId) ?? []
-    bans.push({ actor: target.actor, banned_by: user.username, banned_at: new Date().toISOString() })
+    const expires_at = expiresAt == null ? null : new Date(expiresAt).toISOString()
+    bans.splice(0, bans.length, ...activeBans(bans).filter((ban) => ban.actor !== target.actor))
+    bans.push({ actor: target.actor, banned_by: user.username, banned_at: new Date().toISOString(), expires_at })
     strongholdBans.set(nodeId, bans)
     return delay(undefined)
   },
@@ -1353,6 +1363,30 @@ export const mockApi = {
   async unbanMember(token: string, nodeId: string, actor: string): Promise<void> {
     requireManager(token, nodeId)
     strongholdBans.set(nodeId, (strongholdBans.get(nodeId) ?? []).filter((ban) => ban.actor !== actor))
+    return delay(undefined)
+  },
+
+  async listGlobalBans(token: string): Promise<BanEntry[]> {
+    requireAdmin(token)
+    globalBans.splice(0, globalBans.length, ...activeBans(globalBans))
+    return delay([...globalBans])
+  },
+
+  async banAccountGlobally(token: string, actor: string, expiresAt: number | null = null): Promise<void> {
+    const operator = requireAdmin(token)
+    const target = users.find((user) => user.actor === actor)
+    if (!target) throw new ApiRequestError('NOT_FOUND', 404)
+    if (target.server_role === 'owner') throw new ApiRequestError('FORBIDDEN', 403)
+    if (operator.server_role !== 'owner' && target.server_role !== 'user') throw new ApiRequestError('FORBIDDEN', 403)
+    const expires_at = expiresAt == null ? null : new Date(expiresAt).toISOString()
+    globalBans.splice(0, globalBans.length, ...activeBans(globalBans).filter((ban) => ban.actor !== actor))
+    globalBans.push({ actor, banned_by: operator.username, banned_at: new Date().toISOString(), expires_at })
+    return delay(undefined)
+  },
+
+  async unbanAccountGlobally(token: string, actor: string): Promise<void> {
+    requireAdmin(token)
+    globalBans.splice(0, globalBans.length, ...globalBans.filter((ban) => ban.actor !== actor))
     return delay(undefined)
   },
 

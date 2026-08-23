@@ -194,6 +194,7 @@ export interface BanEntry {
   actor: string
   banned_by: string
   banned_at: string
+  expires_at: string | null
 }
 
 export interface PublicUser {
