@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import chatRoomSource from '../web/src/composables/useChatRoom.ts?raw'
 import chatPaneSource from '../web/src/components/ChatPane.vue?raw'
+import imageEditorSource from '../web/src/components/ImageEditor.vue?raw'
 import { automaticOutputMime, isGif } from '../web/src/utils/imageProcessing'
 
 describe('image editor contract', () => {
@@ -14,6 +15,17 @@ describe('image editor contract', () => {
     const gif = new Blob([Uint8Array.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x00])])
     expect(await isGif(gif)).toBe(true)
     expect(chatPaneSource).toContain('ImageEditor')
+  })
+
+  it('previews animated GIFs with a revocable object URL and uses the WinUI format selector in automatic mode', () => {
+    expect(imageEditorSource).toContain('const gifPreviewUrl = ref(\'\')')
+    expect(imageEditorSource).toContain('URL.createObjectURL(file)')
+    expect(imageEditorSource).toContain('URL.revokeObjectURL(gifPreviewUrl.value)')
+    expect(imageEditorSource).toContain('<img v-if="gif" class="image-editor__gif" :src="gifPreviewUrl"')
+    expect(imageEditorSource).toContain('WinComboBox')
+    expect(imageEditorSource).toContain('SelectedValuePath="Value"')
+    expect(imageEditorSource).toContain('v-model:SelectedValue="mode"')
+    expect(imageEditorSource).toContain("const mode = ref<ImageOutputMode>('auto')")
   })
 
   it('sends every selected chat image as its own item instead of one combined media array', () => {
