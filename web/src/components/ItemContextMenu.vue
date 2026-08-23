@@ -41,7 +41,7 @@ function estimateMenuSize(): { width: number; height: number } {
   const commandsHeight = commandCount * LIST_ITEM_HEIGHT
   if (!props.canReact) return { width: MIN_WIDTH + CHROME, height: commandsHeight + CHROME }
 
-  const REACTION_COLUMNS = window.innerWidth <= NARROW_VIEWPORT ? 2 : 3
+  const REACTION_COLUMNS = window.innerWidth <= NARROW_VIEWPORT ? 4 : 6
   const reactionRows = Math.ceil(reactionNames.length / REACTION_COLUMNS)
   const gridWidth = REACTION_COLUMNS * REACTION_CELL + (REACTION_COLUMNS - 1) * REACTION_GAP + REACTION_PAD * 2
   const gridHeight = reactionRows * REACTION_CELL + (reactionRows - 1) * REACTION_GAP + REACTION_PAD * 2
@@ -143,7 +143,7 @@ defineExpose({ openAt })
 
 .item-context-menu__reactions {
   display: grid;
-  grid-template-columns: repeat(3, 32px);
+  grid-template-columns: repeat(6, 32px);
   justify-content: center;
   gap: 4px;
   padding: 4px;
@@ -182,7 +182,7 @@ defineExpose({ openAt })
 
 @media (max-width: 360px) {
   .item-context-menu__reactions {
-    grid-template-columns: repeat(2, 32px);
+    grid-template-columns: repeat(4, 32px);
   }
 }
 </style>
