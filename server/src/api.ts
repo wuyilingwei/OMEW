@@ -3120,15 +3120,10 @@ async function requireRole(request: Request, env: Env, strongholdId: string, rol
 }
 
 // ---- guest read gate (task 034 / m0-protocol §8.2) -------------------------------
-// A public stronghold MAY serve unauthenticated reads; this instance's
-// allow_guest_browsing toggle decides whether it actually does. An authenticated
-// request keeps the existing membership gate untouched (works the same on a
-// private stronghold as before - guest fallback only ever applies when no actor
-// could be resolved from the request, and only to GET/read routes). No
-// distinction is made between a missing Authorization header and an invalid one -
-// both already collapse to "no session" here, same as every other route in this
-// file. A server_owner/server_admin actor always resolves to "member" (§7.10),
-// even without a real membership row.
+// A public stronghold MAY serve guest reads when allow_guest_browsing is on.
+// Authenticated non-members use that same read-only gate; banned members remain
+// blocked, and private/write routes keep their membership requirements. A
+// server_owner/server_admin still resolves to "member" through the §7.10 overlay.
 async function resolveGuestOrMember(
   request: Request,
   env: Env,

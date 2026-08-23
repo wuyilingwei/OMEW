@@ -11,7 +11,8 @@ let loadedForNode = ''
 
 async function loadMembers(nodeId: string, tab: MemberTab = 'all') {
   const auth = useAuth()
-  if (!auth.token.value) return
+  const { isReadOnly } = useStronghold()
+  if (!auth.token.value || isReadOnly.value) return
   loading.value = true
   loadError.value = ''
   try {
@@ -27,14 +28,19 @@ async function loadMembers(nodeId: string, tab: MemberTab = 'all') {
 
 export function useStrongholdMembers() {
   const auth = useAuth()
-  const { selectedNodeId } = useStronghold()
+  const { selectedNodeId, isReadOnly } = useStronghold()
 
   // keep the "all" roster fresh whenever the active stronghold changes, so
   // myRole below stays correct without every caller having to trigger a load
   watch(
-    selectedNodeId,
-    (nodeId) => {
-      if (nodeId && nodeId !== loadedForNode) loadMembers(nodeId, 'all')
+    [selectedNodeId, isReadOnly],
+    ([nodeId, readOnly]) => {
+      if (readOnly) {
+        members.value = []
+        loadedForNode = ''
+      } else if (nodeId && nodeId !== loadedForNode) {
+        void loadMembers(nodeId, 'all')
+      }
     },
     { immediate: true },
   )

@@ -8,28 +8,63 @@ const nodes = ref<StrongholdSummary[]>([])
 const selectedNodeId = ref('')
 const loading = ref(false)
 const loadError = ref('')
-// guest mode (task 034): unauthenticated + instance allows browsing - nodes
-// then come from the public directory instead of "my strongholds", and rooms
-// load lazily per selection since directory entries don't carry them.
+const authState = useAuth()
+// Public browsing covers both anonymous visitors and authenticated users who
+// have not joined any stronghold yet. The latter keep their session so they can
+// join directly, but remain read-only until membership is established.
 const isGuestMode = ref(false)
+const isPublicPreview = ref(false)
+const isDirectoryBrowsing = computed(() => isGuestMode.value || isPublicPreview.value)
+const isReadOnly = computed(() => isGuestMode.value || (isPublicPreview.value && !authState.isAdmin.value))
+const joinedNodeIds = ref<Set<string>>(new Set())
 let loaded = false
-let loadedGuest = false
-const guestRoomsFetched = new Set<string>()
+let loadedPublic = false
+const publicRoomsFetched = new Set<string>()
 // single-flight: useStronghold() has many callers whose watchers can all fire
 // before the first fetch resolves - without this every mounted caller issues
 // its own identical request.
 let inflight: Promise<void> | null = null
 
-function loadStrongholds(force = false): Promise<void> {
+async function replaceWithPublicDirectory() {
+  const entries = await api.getDirectory()
+  publicRoomsFetched.clear()
+  nodes.value = entries.map((entry) => ({
+    id: entry.id,
+    name: entry.name,
+    avatar: entry.avatar,
+    cover: entry.cover,
+    slug: entry.slug,
+    rooms: [],
+  }))
+  if (!nodes.value.some((node) => node.id === selectedNodeId.value)) {
+    selectedNodeId.value = nodes.value[0]?.id ?? ''
+  }
+  if (selectedNodeId.value) await ensurePublicRooms(selectedNodeId.value)
+  loadedPublic = true
+}
+
+function loadStrongholds(
+  force = false,
+  allowPublicPreview = useInstanceConfig().config.value?.allow_guest_browsing ?? false,
+): Promise<void> {
   const auth = useAuth()
   if (!auth.token.value) return Promise.resolve()
   if (loaded && !force) return Promise.resolve()
-  if (inflight) return inflight
+  if (inflight) return inflight.then(() => loadStrongholds(force, allowPublicPreview))
   loading.value = true
   loadError.value = ''
   inflight = (async () => {
     try {
-      nodes.value = await api.listMyStrongholds(auth.token.value!)
+      const memberNodes = await api.listMyStrongholds(auth.token.value!)
+      joinedNodeIds.value = new Set(memberNodes.map((node) => node.id))
+      if (memberNodes.length === 0 && allowPublicPreview) {
+        await replaceWithPublicDirectory()
+        isPublicPreview.value = true
+      } else {
+        nodes.value = memberNodes
+        loadedPublic = false
+        isPublicPreview.value = false
+      }
       if (!nodes.value.some((n) => n.id === selectedNodeId.value)) {
         selectedNodeId.value = nodes.value[0]?.id ?? ''
       }
@@ -44,19 +79,14 @@ function loadStrongholds(force = false): Promise<void> {
   return inflight
 }
 
-function loadGuestDirectory(force = false): Promise<void> {
-  if (loadedGuest && !force) return Promise.resolve()
-  if (inflight) return inflight
+function loadPublicDirectory(force = false): Promise<void> {
+  if (loadedPublic && !force) return Promise.resolve()
+  if (inflight) return inflight.then(() => loadPublicDirectory(force))
   loading.value = true
   loadError.value = ''
   inflight = (async () => {
     try {
-      const entries = await api.getDirectory()
-      nodes.value = entries.map((e) => ({ id: e.id, name: e.name, avatar: e.avatar, cover: e.cover, slug: e.slug, rooms: [] }))
-      if (!nodes.value.some((n) => n.id === selectedNodeId.value)) {
-        selectedNodeId.value = nodes.value[0]?.id ?? ''
-      }
-      loadedGuest = true
+      await replaceWithPublicDirectory()
     } catch {
       loadError.value = '无法加载据点目录'
     } finally {
@@ -67,15 +97,16 @@ function loadGuestDirectory(force = false): Promise<void> {
   return inflight
 }
 
-async function ensureGuestRooms(nodeId: string) {
-  if (!nodeId || guestRoomsFetched.has(nodeId)) return
-  guestRoomsFetched.add(nodeId)
+async function ensurePublicRooms(nodeId: string) {
+  if (!nodeId || publicRoomsFetched.has(nodeId)) return
+  publicRoomsFetched.add(nodeId)
   try {
-    const rooms = await api.getStrongholdRooms(null, nodeId)
+    const auth = useAuth()
+    const rooms = await api.getStrongholdRooms(isGuestMode.value ? null : auth.token.value, nodeId)
     const idx = nodes.value.findIndex((n) => n.id === nodeId)
     if (idx >= 0) nodes.value.splice(idx, 1, { ...nodes.value[idx]!, rooms })
   } catch {
-    guestRoomsFetched.delete(nodeId)
+    publicRoomsFetched.delete(nodeId)
   }
 }
 
@@ -97,39 +128,56 @@ function installWatchers() {
 
   const scope = effectScope(true)
   scope.run(() => {
-  watch(
-    [auth.isAuthenticated, () => instanceConfig.value?.allow_guest_browsing ?? false],
-    ([authenticated, guestAllowed]) => {
-      if (authenticated) {
-        isGuestMode.value = false
-        loadedGuest = false
-        void loadStrongholds()
-      } else if (guestAllowed) {
-        loaded = false
-        isGuestMode.value = true
-        void loadGuestDirectory()
-      } else {
-        loaded = false
-        loadedGuest = false
-        isGuestMode.value = false
-        nodes.value = []
-        selectedNodeId.value = ''
-      }
-    },
-    { immediate: true },
-  )
+    watch(
+      [auth.isAuthenticated, () => instanceConfig.value?.allow_guest_browsing ?? false],
+      ([authenticated, guestAllowed]) => {
+        if (authenticated) {
+          isGuestMode.value = false
+          isPublicPreview.value = joinedNodeIds.value.size === 0
+          const needsPublicFallback = guestAllowed && nodes.value.length === 0
+          void loadStrongholds(needsPublicFallback, guestAllowed)
+        } else if (guestAllowed) {
+          loaded = false
+          joinedNodeIds.value = new Set()
+          isPublicPreview.value = false
+          isGuestMode.value = true
+          void loadPublicDirectory()
+        } else {
+          loaded = false
+          loadedPublic = false
+          joinedNodeIds.value = new Set()
+          isPublicPreview.value = false
+          isGuestMode.value = false
+          nodes.value = []
+          selectedNodeId.value = ''
+        }
+      },
+      { immediate: true },
+    )
 
-  watch(
-    selectedNodeId,
-    (nodeId) => {
-      if (nodeId && isGuestMode.value) void ensureGuestRooms(nodeId)
-    },
-    { immediate: true },
-  )
+    watch(
+      [selectedNodeId, isDirectoryBrowsing],
+      ([nodeId, directoryBrowsing]) => {
+        if (nodeId && directoryBrowsing) void ensurePublicRooms(nodeId)
+      },
+      { immediate: true },
+    )
   })
 }
 
 export function useStronghold() {
   installWatchers()
-  return { nodes, selectedNodeId, currentNode, loading, loadError, isGuestMode, selectNode, loadStrongholds }
+  return {
+    nodes,
+    joinedNodeIds,
+    selectedNodeId,
+    currentNode,
+    loading,
+    loadError,
+    isGuestMode,
+    isPublicPreview,
+    isReadOnly,
+    selectNode,
+    loadStrongholds,
+  }
 }

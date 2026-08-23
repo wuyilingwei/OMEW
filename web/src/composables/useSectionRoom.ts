@@ -65,8 +65,8 @@ function bumpPost(update: { post_seq: number; last_reply_seq: number; reply_coun
   }
 }
 
-async function connectRoom(nodeId: string, room: RoomSummary) {
-  const wsKey = `${nodeId}/${room.id}`
+async function connectRoom(nodeId: string, room: RoomSummary, readOnly: boolean) {
+  const wsKey = `${nodeId}/${room.id}/${readOnly ? 'preview' : 'member'}`
   const key = wsKey
   if (key === loadKey) return
   loadKey = key
@@ -89,10 +89,9 @@ async function connectRoom(nodeId: string, room: RoomSummary) {
 
   if (!wsNeedsReconnect) return
 
-  // guest (no session): the read-only list/thread above already came through
-  // over REST - posting needs the room WS, which stays member-only.
+  // Public previews read over REST; posting needs the member-only room WS.
   const auth = useAuth()
-  if (!auth.token.value) return
+  if (readOnly || !auth.token.value) return
 
   transport = createRoomTransport({
     nodeId,
@@ -309,14 +308,14 @@ async function loadMorePosts(reset = false) {
 }
 
 export function useSectionRoom() {
-  const { selectedNodeId } = useStronghold()
+  const { selectedNodeId, isReadOnly } = useStronghold()
   const { selectedSection } = useSection()
   const postRoom = selectedSection
 
   watch(
-    [selectedNodeId, selectedSection],
-    ([nodeId, room]) => {
-      if (nodeId && room) void connectRoom(nodeId, room)
+    [selectedNodeId, selectedSection, isReadOnly],
+    ([nodeId, room, readOnly]) => {
+      if (nodeId && room) void connectRoom(nodeId, room, readOnly)
       else {
         transport?.close()
         transport = null

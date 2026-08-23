@@ -8,6 +8,7 @@ import { useChatRoom } from '../composables/useChatRoom'
 import { useImageAttachments } from '../composables/useImageAttachments'
 import { useItemPermissions } from '../composables/useItemPermissions'
 import { useStickyScroll } from '../composables/useStickyScroll'
+import { useStronghold } from '../composables/useStronghold'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
 import { actorLocalpart } from '../utils/actor'
 import { filterImageFiles } from '../utils/imageProcessing'
@@ -21,6 +22,7 @@ import MessageBubble, { type MessageVM } from './MessageBubble.vue'
 
 const auth = useAuth()
 const { openAuthModal } = useAuthModal()
+const { isReadOnly } = useStronghold()
 const { canEdit, canRetract } = useItemPermissions()
 const { members } = useStrongholdMembers()
 const { selectedChannel } = useChannel()
@@ -46,6 +48,7 @@ const showEmotePicker = ref(false)
 const imageInput = ref<HTMLInputElement | null>(null)
 const imageQueue = ref<File[]>([])
 const editingImage = ref<File | null>(null)
+const canParticipate = computed(() => auth.isAuthenticated.value && !isReadOnly.value)
 
 // one shared context-menu instance for every message row (rather than one per
 // row) - activeMessage tracks which row's right-click/long-press opened it.
@@ -76,7 +79,7 @@ const messages = computed<MessageVM[]>(() => {
     pending: false,
     failed: false,
     reactions: item.reactions,
-    canReact: auth.isAuthenticated.value,
+    canReact: canParticipate.value,
   }))
   const optimistic: MessageVM[] = pending.value.map((p) => ({
     key: `p${p.clientId}`,
@@ -269,7 +272,7 @@ watch(() => selectedChannel.value?.id, pin, { flush: 'post' })
         @retract="onMenuRetract"
       />
     </div>
-    <div v-if="auth.isAuthenticated.value" class="chat-pane__compose-wrap" @dragover.prevent @drop="onDrop">
+    <div v-if="canParticipate" class="chat-pane__compose-wrap" @dragover.prevent @drop="onDrop">
       <WinInfoBar v-if="muted" :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Warning">
         你在此据点被禁言
       </WinInfoBar>
@@ -324,9 +327,12 @@ watch(() => selectedChannel.value?.id, pin, { flush: 'post' })
         <WinButton Style="AccentButtonStyle" class="chat-pane__send" :IsEnabled="!muted" @click="submit">发送</WinButton>
       </div>
     </div>
-    <div v-else class="chat-pane__compose-wrap chat-pane__compose-wrap--guest">
+    <div v-else-if="!auth.isAuthenticated.value" class="chat-pane__compose-wrap chat-pane__compose-wrap--guest">
       <p class="chat-pane__guest-text">登录后参与聊天</p>
       <WinButton Style="AccentButtonStyle" @click="openAuthModal">登录 / 注册</WinButton>
+    </div>
+    <div v-else class="chat-pane__compose-wrap chat-pane__compose-wrap--guest">
+      <p class="chat-pane__guest-text">加入据点后参与聊天</p>
     </div>
     <ImageEditor :file="editingImage" :uploading="attachments.uploading.value" @confirm="confirmImage" @cancel="cancelImage" />
   </section>

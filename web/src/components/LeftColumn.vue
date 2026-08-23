@@ -5,6 +5,7 @@ import { useAuth } from '../composables/useAuth'
 import { useAuthModal } from '../composables/useAuthModal'
 import { useSection } from '../composables/useSection'
 import { useSectionRoom } from '../composables/useSectionRoom'
+import { useStronghold } from '../composables/useStronghold'
 import { WinButton, WinDropDownButton } from '../vendor/winui'
 import ComposePostModal from './ComposePostModal.vue'
 import EmptyState from './EmptyState.vue'
@@ -12,10 +13,12 @@ import PostCard from './PostCard.vue'
 
 const auth = useAuth()
 const { openAuthModal } = useAuthModal()
+const { isReadOnly } = useStronghold()
 const { posts, postsLoading, hasMorePosts, loadMorePosts, postRoom, toggleReaction } = useSectionRoom()
 const { sectionRooms, selectedSection, selectSection } = useSection()
 
 const showCompose = ref(false)
+const canParticipate = computed(() => auth.isAuthenticated.value && !isReadOnly.value)
 
 const sectionFlyout = computed(() => ({
   Items: sectionRooms.value.map((room) => ({ Text: room.name, Value: room.id })),
@@ -48,16 +51,17 @@ function closeCompose() {
       </WinDropDownButton>
       <span v-else>{{ selectedSection?.name ?? '帖子' }}</span>
       <WinButton
-        v-if="postRoom && auth.isAuthenticated.value"
+        v-if="postRoom && canParticipate"
         Style="AccentButtonStyle"
         class="left-column__compose-btn"
         @click="openCompose"
       >
         发帖
       </WinButton>
-      <WinButton v-else-if="postRoom" Style="DefaultButtonStyle" class="left-column__compose-btn" @click="openAuthModal">
+      <WinButton v-else-if="postRoom && !auth.isAuthenticated.value" Style="DefaultButtonStyle" class="left-column__compose-btn" @click="openAuthModal">
         登录后发帖
       </WinButton>
+      <span v-else-if="postRoom" class="left-column__preview-hint">加入后发帖</span>
     </div>
 
     <ComposePostModal :open="showCompose" @close="closeCompose" />
@@ -105,6 +109,12 @@ function closeCompose() {
 
 .left-column__compose-btn {
   font-size: 0.78rem;
+}
+
+.left-column__preview-hint {
+  font-size: 0.78rem;
+  font-weight: 400;
+  color: var(--text-tertiary);
 }
 
 .left-column__section-switcher {
