@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest'
 import itemContextMenuSource from '../web/src/components/ItemContextMenu.vue?raw'
 
 describe('item context menu layout contract', () => {
-  it('uses a three-column reaction grid that narrows to two columns', () => {
-    expect(itemContextMenuSource).toContain('grid-template-columns: repeat(3, 32px)')
-    expect(itemContextMenuSource).toContain('grid-template-columns: repeat(2, 32px)')
-    expect(itemContextMenuSource).toContain('const REACTION_COLUMNS = window.innerWidth <= NARROW_VIEWPORT ? 2 : 3')
+  it('uses two reaction rows that become three on a narrow viewport', () => {
+    expect(itemContextMenuSource).toContain('grid-template-columns: repeat(6, 32px)')
+    expect(itemContextMenuSource).toContain('grid-template-columns: repeat(4, 32px)')
+    expect(itemContextMenuSource).toContain('const REACTION_COLUMNS = window.innerWidth <= NARROW_VIEWPORT ? 4 : 6')
     expect(itemContextMenuSource).not.toContain('overflow-x: auto')
   })
 

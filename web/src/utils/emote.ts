@@ -44,3 +44,7 @@ export function parseMessageText(text: string, lookup: Map<string, EmoteToken>):
 export function pureEmoteToken(segments: MessageSegment[]): EmoteToken | null {
   return segments.length === 1 && segments[0]!.type === 'emote' ? segments[0]!.token : null
 }
+
+export function standaloneEmoteToken(text: string, lookup: Map<string, EmoteToken>): EmoteToken | null {
+  return pureEmoteToken(parseMessageText(text.trim(), lookup))
+}
