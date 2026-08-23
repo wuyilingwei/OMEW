@@ -3,12 +3,12 @@ import { api } from '../api'
 import { createRoomTransport } from '../api/transport'
 import type { ItemBody, MediaAttachment, PostReply, PostSummary, PostThread, ReactionEntry, RoomSummary } from '../api/types'
 import type { RoomTransport } from '../api/roomSocket'
+import { canCommitPostPage } from '../utils/postLoad'
 import { applyReactionToggle, invertReactionOp } from '../utils/reactions'
 import { useAuth } from './useAuth'
 import { usePostModal } from './usePostModal'
 import { useSection } from './useSection'
 import { useStronghold } from './useStronghold'
-import { canCommitPostPage } from '../utils/postLoad'
 
 const POSTS_PAGE_SIZE = 20
 const REPLIES_PAGE_SIZE = 30

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { canCommitPostPage } from '../web/src/utils/postLoad'
+import sectionRoomSource from '../web/src/composables/useSectionRoom.ts?raw'
 
 describe('section post list request fencing', () => {
   it('rejects a response from an older room generation', () => {
@@ -12,5 +13,12 @@ describe('section post list request fencing', () => {
 
   it('accepts only the current room request', () => {
     expect(canCommitPostPage(4, 'node/posts', 4, 'node/posts')).toBe(true)
+  })
+
+  it('fences both page commits and loading completion in the section room flow', () => {
+    expect(sectionRoomSource).toContain('if (!canCommitPostPage(loadGeneration, loadKey, expectedGeneration, expectedKey)) return')
+    expect(sectionRoomSource).toContain(
+      'if (canCommitPostPage(loadGeneration, loadKey, expectedGeneration, expectedKey)) postsLoading.value = false',
+    )
   })
 })
