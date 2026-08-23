@@ -58,6 +58,7 @@ export type MemberRow = {
   deny: number;
   restricted: number;
   banned_at: number | null;
+  expires_at: number | null;
   application_state: "pending" | "approved" | "rejected";
   joined_at: number;
 };
@@ -66,6 +67,7 @@ export type BanRow = {
   actor: string;
   operator: string;
   banned_at: number;
+  expires_at: number | null;
 };
 
 interface TipAttachment {
@@ -151,13 +153,13 @@ export class StrongholdDO extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS member (
         actor TEXT PRIMARY KEY, role TEXT NOT NULL DEFAULT 'member',
         deny INTEGER NOT NULL DEFAULT 0, restricted INTEGER NOT NULL DEFAULT 0,
-        banned_at INTEGER, application_state TEXT NOT NULL DEFAULT 'approved', joined_at INTEGER NOT NULL
+        banned_at INTEGER, expires_at INTEGER, application_state TEXT NOT NULL DEFAULT 'approved', joined_at INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS tip (
         room_ref TEXT PRIMARY KEY, latest_seq INTEGER NOT NULL, ts INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS ban (
-        actor TEXT PRIMARY KEY, operator TEXT NOT NULL, banned_at INTEGER NOT NULL
+        actor TEXT PRIMARY KEY, operator TEXT NOT NULL, banned_at INTEGER NOT NULL, expires_at INTEGER
       );
     `);
     this.addColumnIfMissing("config", "slug", "TEXT");
@@ -173,6 +175,8 @@ export class StrongholdDO extends DurableObject<Env> {
     // has already picked the columns up.
     this.addColumnIfMissing("config", "cover", "TEXT");
     this.addColumnIfMissing("config", "avatar", "TEXT");
+    this.addColumnIfMissing("member", "expires_at", "INTEGER");
+    this.addColumnIfMissing("ban", "expires_at", "INTEGER");
     this.addColumnIfMissing("config", "allow_message_edit", "INTEGER NOT NULL DEFAULT 1");
     this.addColumnIfMissing("config", "allow_message_retract", "INTEGER NOT NULL DEFAULT 1");
     this.addColumnIfMissing("config", "edit_window_secs", "INTEGER NOT NULL DEFAULT 300");
@@ -352,6 +356,7 @@ export class StrongholdDO extends DurableObject<Env> {
   }
 
   async revokeServerRole(actor: string): Promise<void> {
+    this.closeTipSockets(actor);
     await this.pushRevokeToRooms({ actor, scope: this.selfId, effect: "close" });
   }
 
@@ -486,11 +491,21 @@ export class StrongholdDO extends DurableObject<Env> {
       actor, role, effectiveDeny, restricted ? 1 : 0, joinedAt
     );
     await this.indexMember(actor);
-    return { actor, role, deny: effectiveDeny, restricted: restricted ? 1 : 0, banned_at: null, application_state: "approved", joined_at: joinedAt };
+    return { actor, role, deny: effectiveDeny, restricted: restricted ? 1 : 0, banned_at: null, expires_at: null, application_state: "approved", joined_at: joinedAt };
+  }
+
+  private clearExpiredBans(): void {
+    const now = Date.now();
+    this.ctx.storage.sql.exec(
+      "UPDATE member SET banned_at = NULL, expires_at = NULL WHERE banned_at IS NOT NULL AND expires_at IS NOT NULL AND expires_at <= ?",
+      now
+    );
+    this.ctx.storage.sql.exec("DELETE FROM ban WHERE expires_at IS NOT NULL AND expires_at <= ?", now);
   }
 
   async getMember(actor: string): Promise<MemberRow | null> {
     try {
+      this.clearExpiredBans();
       const rows = this.ctx.storage.sql.exec<MemberRow>("SELECT * FROM member WHERE actor = ?", actor).toArray();
       if (rows[0]) return rows[0];
       return this.adoptLegacyActor(actor);
@@ -519,6 +534,7 @@ export class StrongholdDO extends DurableObject<Env> {
 
   async listMembers(): Promise<MemberRow[]> {
     try {
+      this.clearExpiredBans();
       return this.ctx.storage.sql.exec<MemberRow>("SELECT * FROM member ORDER BY joined_at").toArray();
     } catch {
       return [];
@@ -566,28 +582,29 @@ export class StrongholdDO extends DurableObject<Env> {
 
   // ---- bans (audit trail; member.banned_at stays the fast-path gate check) --------
 
-  async banMember(actor: string, operator: string): Promise<MemberRow | null> {
+  async banMember(actor: string, operator: string, expiresAt: number | null = null): Promise<MemberRow | null> {
     const target = await this.getMember(actor);
     if (!target || target.role === "owner") return null;
     const bannedAt = Date.now();
-    this.ctx.storage.sql.exec("UPDATE member SET banned_at = ? WHERE actor = ?", bannedAt, actor);
+    this.ctx.storage.sql.exec("UPDATE member SET banned_at = ?, expires_at = ? WHERE actor = ?", bannedAt, expiresAt, actor);
     this.ctx.storage.sql.exec(
-      "INSERT INTO ban (actor, operator, banned_at) VALUES (?, ?, ?) " +
-        "ON CONFLICT(actor) DO UPDATE SET operator = excluded.operator, banned_at = excluded.banned_at",
-      actor, operator, bannedAt
+      "INSERT INTO ban (actor, operator, banned_at, expires_at) VALUES (?, ?, ?, ?) " +
+        "ON CONFLICT(actor) DO UPDATE SET operator = excluded.operator, banned_at = excluded.banned_at, expires_at = excluded.expires_at",
+      actor, operator, bannedAt, expiresAt
     );
     await this.pushRevokeToRooms({ actor, scope: this.selfId, effect: "close" });
-    return { ...target, banned_at: bannedAt };
+    return { ...target, banned_at: bannedAt, expires_at: expiresAt };
   }
 
   async unbanMember(actor: string): Promise<MemberRow | null> {
     const target = await this.getMember(actor);
-    this.ctx.storage.sql.exec("UPDATE member SET banned_at = NULL WHERE actor = ?", actor);
+    this.ctx.storage.sql.exec("UPDATE member SET banned_at = NULL, expires_at = NULL WHERE actor = ?", actor);
     this.ctx.storage.sql.exec("DELETE FROM ban WHERE actor = ?", actor);
-    return target ? { ...target, banned_at: null } : null;
+    return target ? { ...target, banned_at: null, expires_at: null } : null;
   }
 
   async listBans(): Promise<BanRow[]> {
+    this.clearExpiredBans();
     return this.ctx.storage.sql.exec<BanRow>("SELECT * FROM ban ORDER BY banned_at DESC").toArray();
   }
 

@@ -120,7 +120,7 @@ const RES_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 function cors(): HeadersInit {
   return {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
   };
 }
@@ -157,6 +157,25 @@ async function readJsonBody(request: Request): Promise<Record<string, unknown> |
   }
 }
 
+function readBanExpiry(body: Record<string, unknown>): number | null | "invalid" {
+  if (!("expires_at" in body) || body.expires_at === null) return null;
+  return typeof body.expires_at === "number" && Number.isSafeInteger(body.expires_at) && body.expires_at > Date.now()
+    ? body.expires_at
+    : "invalid";
+}
+
+// Timed bans are restored at the authorization boundary instead of depending on
+// an alarm to run at an exact instant. This makes expiry reliable after Worker
+// restarts and keeps every login/session path consistent.
+async function clearExpiredGlobalBan(env: Env, localpart: string): Promise<void> {
+  await env.DB.prepare(
+    "UPDATE users SET status = 'active', banned_at = NULL, banned_by = NULL, banned_until = NULL " +
+      "WHERE localpart = ? AND status = 'banned' AND banned_until IS NOT NULL AND banned_until <= ?"
+  )
+    .bind(localpart, Date.now())
+    .run();
+}
+
 // Full session claims. Local server roles are mutable authorization state, so
 // they are re-resolved from D1 instead of trusting the token's issuance-time
 // snapshot. Remote actors can never receive a local server-role overlay.
@@ -169,6 +188,7 @@ async function requireSession(request: Request, env: Env): Promise<SessionTokenC
     return { ...claims, server_role: "user" };
   }
   const localpart = localpartOfActor(claims.actor);
+  await clearExpiredGlobalBan(env, localpart);
   const current = await env.DB.prepare("SELECT server_role, status FROM users WHERE localpart = ?")
     .bind(localpart)
     .first<{ server_role: ServerRole; status: string }>();
@@ -457,6 +477,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (!body) return apiError(413, "PAYLOAD_INVALID");
     const username = normalizeUsername(String(body.username ?? ""));
     const password = String(body.password ?? "");
+    await clearExpiredGlobalBan(env, username);
 
     const user = await env.DB.prepare(
       "SELECT localpart, display_name, avatar, pw_hash, pw_salt, status, server_role, email, email_verified, totp_enabled FROM users WHERE localpart = ?"
@@ -512,6 +533,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
     const localpart = localpartOfActor(claims.actor);
     if (await totpRateLimited(env, localpart)) return apiError(429, "TOTP_RATE_LIMITED");
+    await clearExpiredGlobalBan(env, localpart);
 
     const user = await env.DB.prepare(
       "SELECT localpart, display_name, avatar, status, server_role, email, email_verified, totp_secret, totp_enabled FROM users WHERE localpart = ?"
@@ -919,7 +941,13 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
         email_verified: number;
         totp_enabled: number;
       }>();
-    if (!row || row.status !== "active") return apiError(401, "AUTH_FAILED");
+    if (!row) return apiError(401, "AUTH_FAILED");
+    await clearExpiredGlobalBan(env, row.localpart);
+    if (row.status === "banned") {
+      const current = await env.DB.prepare("SELECT status FROM users WHERE localpart = ?").bind(row.localpart).first<{ status: string }>();
+      if (current?.status === "active") row.status = "active";
+    }
+    if (row.status !== "active") return apiError(401, "AUTH_FAILED");
 
     let verification: Awaited<ReturnType<typeof verifyAuthenticationResponse>>;
     try {
@@ -1018,6 +1046,57 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const hasMore = results.length > USERS_PAGE_SIZE;
     const page = hasMore ? results.slice(0, USERS_PAGE_SIZE) : results;
     return json({ users: page, next_cursor: hasMore ? page[page.length - 1]!.localpart : null });
+  }
+
+  if (method === "GET" && path === "/api/admin/bans") {
+    const gate = await requireServerRole(request, env, "admin");
+    if (gate instanceof Response) return gate;
+    await env.DB.prepare(
+      "UPDATE users SET status = 'active', banned_at = NULL, banned_by = NULL, banned_until = NULL " +
+        "WHERE status = 'banned' AND banned_until IS NOT NULL AND banned_until <= ?"
+    ).bind(Date.now()).run();
+    const { results } = await env.DB.prepare(
+      "SELECT localpart, banned_by, banned_at, banned_until FROM users WHERE status = 'banned' ORDER BY banned_at DESC"
+    ).all<{ localpart: string; banned_by: string; banned_at: number; banned_until: number | null }>();
+    return json({ entries: results.map((entry) => ({ actor: `@${entry.localpart}:${instanceDomain(env)}`, operator: entry.banned_by, banned_at: entry.banned_at, expires_at: entry.banned_until })) });
+  }
+
+  const globalBanMatch = match("/api/admin/bans/:actor", path);
+  if (globalBanMatch && (method === "PUT" || method === "DELETE")) {
+    const gate = await requireServerRole(request, env, "admin");
+    if (gate instanceof Response) return gate;
+    const targetActor = globalBanMatch.actor!;
+    if (domainOfActor(targetActor) !== instanceDomain(env) || !localpartOfActor(targetActor)) return apiError(404, "NOT_FOUND");
+    const localpart = localpartOfActor(targetActor);
+    const target = await env.DB.prepare("SELECT server_role FROM users WHERE localpart = ?")
+      .bind(localpart)
+      .first<{ server_role: ServerRole }>();
+    if (!target) return apiError(404, "NOT_FOUND");
+    // The instance owner cannot be locked out. Server admins may moderate only
+    // ordinary accounts; the owner retains authority over admin accounts.
+    if (target.server_role === "owner" || (gate.serverRole === "admin" && target.server_role !== "user")) return apiError(403, "FORBIDDEN");
+
+    if (method === "DELETE") {
+      await env.DB.prepare(
+        "UPDATE users SET status = 'active', banned_at = NULL, banned_by = NULL, banned_until = NULL WHERE localpart = ? AND status = 'banned'"
+      ).bind(localpart).run();
+      return new Response(null, { status: 204, headers: cors() });
+    }
+
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    const expiresAt = readBanExpiry(body);
+    if (expiresAt === "invalid") return apiError(400, "EXPIRY_INVALID");
+    const bannedAt = Date.now();
+    await env.DB.prepare(
+      "UPDATE users SET status = 'banned', banned_at = ?, banned_by = ?, banned_until = ? WHERE localpart = ?"
+    ).bind(bannedAt, gate.actor, expiresAt, localpart).run();
+    // Server admins may be connected through the server-role overlay without a
+    // membership-index row, so enumerate the global stronghold slug index.
+    const { results } = await env.DB.prepare("SELECT DISTINCT stronghold_id FROM stronghold_slug_index")
+      .all<{ stronghold_id: string }>();
+    await Promise.all(results.map((row) => env.STRONGHOLD_DO.getByName(row.stronghold_id).revokeServerRole(targetActor).catch(() => {})));
+    return json({ actor: targetActor, operator: gate.actor, banned_at: bannedAt, expires_at: expiresAt });
   }
 
   const userRoleMatch = match("/api/admin/users/:localpart", path);
@@ -2123,9 +2202,13 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (target.role === "owner") return apiError(403, "FORBIDDEN");
     if (target.role === "mod" && eff.role !== "owner") return apiError(403, "FORBIDDEN");
 
-    const banned = await stub.banMember(m.actor!, session.actor);
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    const expiresAt = readBanExpiry(body);
+    if (expiresAt === "invalid") return apiError(400, "EXPIRY_INVALID");
+    const banned = await stub.banMember(m.actor!, session.actor, expiresAt);
     if (!banned) return apiError(404, "NOT_FOUND");
-    return json({ actor: banned.actor, operator: session.actor, banned_at: banned.banned_at });
+    return json({ actor: banned.actor, operator: session.actor, banned_at: banned.banned_at, expires_at: banned.expires_at });
   }
   if (m && method === "DELETE") {
     const session = await requireSession(request, env);
