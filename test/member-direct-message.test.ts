@@ -65,4 +65,31 @@ describe("ordinary member blocks and private messages", () => {
     expect(message.status).toBe(400);
     expect(await message.json()).toEqual({ error: "SELF_TARGET" });
   });
+
+  it("does not expose the private-message surface without shared membership", async () => {
+    const pair = await createPair();
+    const outsider = await registerUser({ username: `dmx${Date.now().toString(36)}`, password: "password123", ...OWNERSHIP });
+    const outsiderToken = outsider.json.token as string;
+    const outsiderActor = (outsider.json.user as { actor: string }).actor;
+
+    const targetOutside = await apiRequest(
+      `/api/stronghold/${pair.id}/direct-messages/${encodeURIComponent(outsiderActor)}`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${pair.ownerToken}` },
+        body: JSON.stringify({ body: "must remain private" }),
+      }
+    );
+    expect(targetOutside.status).toBe(404);
+
+    const requesterOutside = await apiRequest(
+      `/api/stronghold/${pair.id}/direct-messages/${encodeURIComponent(pair.peerActor)}`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${outsiderToken}` },
+        body: JSON.stringify({ body: "must remain private" }),
+      }
+    );
+    expect(requesterOutside.status).toBe(403);
+  });
 });
