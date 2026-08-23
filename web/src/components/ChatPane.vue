@@ -49,9 +49,11 @@ const editingSeq = ref<number | null>(null)
 const editingText = ref('')
 const showEmotePicker = ref(false)
 const imageInput = ref<HTMLInputElement | null>(null)
+const chatInput = ref<HTMLTextAreaElement | null>(null)
 const imageQueue = ref<File[]>([])
 const editingImage = ref<File | null>(null)
 const canParticipate = computed(() => auth.isAuthenticated.value && !isReadOnly.value)
+const CHAT_INPUT_MAX_HEIGHT = 140
 
 // one shared context-menu instance for every message row (rather than one per
 // row) - activeMessage tracks which row's right-click/long-press opened it.
@@ -125,11 +127,25 @@ const groupedMessages = computed(() =>
   }),
 )
 
+function resizeInput() {
+  const input = chatInput.value
+  if (!input) return
+  input.style.height = 'auto'
+  const height = Math.min(input.scrollHeight, CHAT_INPUT_MAX_HEIGHT)
+  input.style.height = `${height}px`
+  input.style.overflowY = input.scrollHeight > CHAT_INPUT_MAX_HEIGHT ? 'auto' : 'hidden'
+}
+
+watch(draft, () => {
+  void nextTick(resizeInput)
+})
+
 function submit() {
   if (muted.value || (!draft.value.trim() && !attachments.items.value.length)) return
   const text = draft.value
   const media = attachments.items.value.length ? [...attachments.items.value] : undefined
   draft.value = ''
+  void nextTick(resizeInput)
   attachments.reset()
   sendText(text, media)
   pin()
@@ -330,12 +346,14 @@ watch(() => selectedChannel.value?.id, pin, { flush: 'post' })
           <AppIcon name="image" :size="18" />
         </WinButton>
         <textarea
+          ref="chatInput"
           v-model="draft"
           class="chat-pane__input"
           rows="1"
           :placeholder="muted ? '你在此据点被禁言' : '说点什么…'"
           :disabled="muted"
           @keydown.enter="onEnter"
+          @input="resizeInput"
           @paste="onPaste"
         ></textarea>
         <WinButton Style="AccentButtonStyle" class="chat-pane__send" :IsEnabled="!muted" @click="submit">发送</WinButton>
@@ -451,6 +469,7 @@ watch(() => selectedChannel.value?.id, pin, { flush: 'post' })
 
 .chat-pane__emote-btn,
 .chat-pane__image-btn {
+  flex: 0 0 auto;
   min-height: 40px;
   padding: 0 0.7rem;
   border-radius: var(--radius-md);
@@ -467,6 +486,7 @@ watch(() => selectedChannel.value?.id, pin, { flush: 'post' })
 
 .chat-pane__input {
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 40px;
   max-height: 140px;
   padding: 0.5rem 0.85rem;
@@ -477,6 +497,7 @@ watch(() => selectedChannel.value?.id, pin, { flush: 'post' })
   color: var(--text-primary);
   font: inherit;
   line-height: 1.4;
+  overflow-y: hidden;
   resize: none;
   transition:
     border-color var(--fast-duration) var(--fast-out-slow-in),
@@ -498,6 +519,7 @@ watch(() => selectedChannel.value?.id, pin, { flush: 'post' })
 }
 
 .chat-pane__send {
+  flex: 0 0 auto;
   min-height: 40px;
   padding: 0 1.1rem;
   border-radius: var(--radius-md);

@@ -25,6 +25,10 @@
   transition: background var(--fast-duration) var(--fast-out-slow-in), border-color var(--fast-duration);
 }
 
+.field__textarea--fixed {
+  resize: none;
+}
+
 .field input::placeholder,
 .field textarea::placeholder {
   color: var(--text-tertiary);
