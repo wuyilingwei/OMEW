@@ -10,4 +10,19 @@ describe("管理员用户列表 mock 契约", () => {
     expect(listing).not.toContain("requireOwner(token)");
     expect(rolePatch).toContain("const owner = requireOwner(token)");
   });
+
+  it("对齐真实 API 的服务器管理员据点 overlay 与成员列表边界", () => {
+    const manager = mockSource.slice(mockSource.indexOf("function requireManager"), mockSource.indexOf("function toPost"));
+    const memberList = mockSource.slice(mockSource.indexOf("async getStrongholdMembers"), mockSource.indexOf("async patchMember"));
+    const transfer = mockSource.slice(mockSource.indexOf("async transferOwnership"), mockSource.indexOf("async getUser"));
+    const retract = mockSource.slice(mockSource.indexOf("async retractItem"), mockSource.indexOf("// ---- posts"));
+
+    expect(manager).toContain("if (user.is_admin)");
+    expect(manager).toContain("role: 'owner'");
+    expect(manager).not.toContain("member ??");
+    expect(memberList).toContain("if (!user.is_admin && !findMember(nodeId, user.actor))");
+    expect(transfer).toContain("if (!isRealOwner && user.server_role !== 'owner')");
+    expect(retract).toContain("const { user, member: manager } = requireManager(token, nodeId)");
+    expect(retract).toContain("manager.role === 'mod' && findMember(nodeId, item.actor)?.role === 'owner'");
+  });
 });
