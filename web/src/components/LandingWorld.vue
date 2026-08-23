@@ -17,12 +17,12 @@ type WorldLayer = {
 const world = ref<HTMLElement | null>(null)
 const layers: WorldLayer[] = [
   { key: 'sky', src: HOME_WORLD, depthX: 2, depthY: 1.5, scale: 1.04, idleFromX: '-1px', idleFromY: '0px', idleToX: '1px', idleToY: '-1px' },
-  { key: 'atmosphere', src: HOME_WORLD_LAYERS.atmosphere, depthX: 4, depthY: 3, scale: 1.05, idleFromX: '-2px', idleFromY: '1px', idleToX: '2px', idleToY: '-2px' },
-  { key: 'glow-far', src: HOME_WORLD_LAYERS.glowFar, depthX: 6, depthY: 4, scale: 1, idleFromX: '-3px', idleFromY: '2px', idleToX: '3px', idleToY: '-2px' },
-  { key: 'glow-near', src: HOME_WORLD_LAYERS.glowNear, depthX: 8, depthY: 5.5, scale: 1, idleFromX: '3px', idleFromY: '-2px', idleToX: '-3px', idleToY: '2px' },
+  { key: 'glow-far', src: HOME_WORLD_LAYERS.glowFar, depthX: 5, depthY: 3, scale: 1, idleFromX: '-3px', idleFromY: '2px', idleToX: '3px', idleToY: '-2px' },
+  { key: 'glow-near', src: HOME_WORLD_LAYERS.glowNear, depthX: 16, depthY: 10, scale: 1, idleFromX: '7px', idleFromY: '-5px', idleToX: '-7px', idleToY: '5px' },
   { key: 'city', src: HOME_WORLD_LAYERS.city, depthX: 13, depthY: 8, scale: 1.07, idleFromX: '-5px', idleFromY: '3px', idleToX: '5px', idleToY: '-3px' },
   { key: 'clouds', src: HOME_WORLD_LAYERS.clouds, depthX: 18, depthY: 12, scale: 1.09, idleFromX: '7px', idleFromY: '-4px', idleToX: '-7px', idleToY: '4px' },
   { key: 'foreground', src: HOME_WORLD_LAYERS.foreground, depthX: 26, depthY: 18, scale: 1.12, idleFromX: '-9px', idleFromY: '6px', idleToX: '9px', idleToY: '-6px' },
+  { key: 'atmosphere', src: HOME_WORLD_LAYERS.atmosphere, depthX: 32, depthY: 23, scale: 1.16, idleFromX: '-11px', idleFromY: '7px', idleToX: '11px', idleToY: '-7px' },
 ]
 
 let layerElements: HTMLElement[] = []
@@ -185,20 +185,22 @@ onBeforeUnmount(() => {
 
 .landing-world__layer--glow-far .landing-world__art,
 .landing-world__layer--glow-near .landing-world__art {
-  width: min(108vmin, 82vw);
-  height: min(108vmin, 82vw);
+  width: min(122vmin, 92vw);
+  height: min(122vmin, 92vw);
   object-fit: contain;
-  opacity: 0.78;
+  opacity: 0.68;
 }
 
 .landing-world__layer--glow-far .landing-world__art {
+  translate: -9% -7%;
   animation: landing-glow-clockwise 58s linear infinite;
 }
 
 .landing-world__layer--glow-near .landing-world__art {
-  width: min(94vmin, 72vw);
-  height: min(94vmin, 72vw);
-  opacity: 0.68;
+  width: min(72vmin, 56vw);
+  height: min(72vmin, 56vw);
+  translate: 12% 10%;
+  opacity: 0.76;
   animation: landing-glow-counterclockwise 46s linear infinite;
 }
 
