@@ -176,11 +176,22 @@ function readRestrictedFeature(value: unknown): RestrictedFeature | null {
 }
 
 function featureRestrictionsResponse(snapshot: FeatureRestrictionSnapshot) {
-  const entry = (feature: RestrictedFeature) => ({
-    owner: { paused: snapshot[feature].owner_paused, expires_at: snapshot[feature].owner_expires_at },
-    server: { mode: snapshot[feature].server_override, expires_at: snapshot[feature].server_expires_at },
-    effective: { paused: featurePaused(snapshot[feature]) },
-  });
+  const now = Date.now();
+  const entry = (feature: RestrictedFeature) => {
+    const rule = snapshot[feature];
+    const serverActive = rule.server_override !== "inherit" && (rule.server_expires_at === null || rule.server_expires_at > now);
+    const ownerActive = rule.owner_paused && (rule.owner_expires_at === null || rule.owner_expires_at > now);
+    const source = serverActive ? "server" : ownerActive ? "owner" : "none";
+    return {
+      owner: { paused: rule.owner_paused, expires_at: rule.owner_expires_at },
+      server: { mode: rule.server_override, expires_at: rule.server_expires_at },
+      effective: {
+        paused: featurePaused(rule, now),
+        source,
+        expires_at: serverActive ? rule.server_expires_at : ownerActive ? rule.owner_expires_at : null,
+      },
+    };
+  };
   return { chat: entry("chat"), posts: entry("posts") };
 }
 

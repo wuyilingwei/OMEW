@@ -35,7 +35,11 @@ describe("stronghold feature restrictions", () => {
     const initial = await apiRequest(`/api/stronghold/${created.id}/feature-restrictions`, { headers: { Authorization: `Bearer ${modToken}` } });
     expect(initial.status).toBe(200);
     expect(await initial.json()).toMatchObject({
-      chat: { owner: { paused: false, expires_at: null }, server: { mode: "inherit", expires_at: null }, effective: { paused: false } },
+      chat: {
+        owner: { paused: false, expires_at: null },
+        server: { mode: "inherit", expires_at: null },
+        effective: { paused: false, source: "none", expires_at: null },
+      },
       posts: { effective: { paused: false } },
     });
 
@@ -52,11 +56,14 @@ describe("stronghold feature restrictions", () => {
     });
     expect(byOrdinaryOwner.status).toBe(403);
 
+    const ownerExpiry = Date.now() + 60_000;
     const paused = await apiRequest(`/api/stronghold/${created.id}/feature-restrictions/owner`, {
-      method: "PATCH", headers: { Authorization: `Bearer ${ownerToken}` }, body: JSON.stringify({ feature: "chat", paused: true, expires_at: Date.now() + 60_000 }),
+      method: "PATCH", headers: { Authorization: `Bearer ${ownerToken}` }, body: JSON.stringify({ feature: "chat", paused: true, expires_at: ownerExpiry }),
     });
     expect(paused.status).toBe(200);
-    expect(await paused.json()).toMatchObject({ chat: { owner: { paused: true }, effective: { paused: true } } });
+    expect(await paused.json()).toMatchObject({
+      chat: { owner: { paused: true }, effective: { paused: true, source: "owner", expires_at: ownerExpiry } },
+    });
   });
 
   it("enforces chat and post pauses in already connected RoomDO sockets without allocating a sequence", async () => {
@@ -121,7 +128,7 @@ describe("stronghold feature restrictions", () => {
       method: "PATCH", headers: { Authorization: `Bearer ${adminToken}` }, body: JSON.stringify({ feature: "chat", mode: "force_allow" }),
     });
     expect(allow.status).toBe(200);
-    expect(await allow.json()).toMatchObject({ chat: { effective: { paused: false } } });
+    expect(await allow.json()).toMatchObject({ chat: { effective: { paused: false, source: "server", expires_at: null } } });
     room.ws.send(itemCreateFrame("allowed", "allowed"));
     expect(await nextMessage(room.ws)).toMatchObject({ type: "ack", status: "ok" });
 
