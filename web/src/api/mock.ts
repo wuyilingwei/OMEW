@@ -1048,9 +1048,10 @@ export const mockApi = {
     const user = requireUser(token)
     const state = strongholds.get(nodeId)
     if (!state) throw new ApiRequestError('NOT_FOUND', 404)
-    // Keep the mock's authority model aligned with production: this is not a
-    // server-admin operation, only the recorded stronghold owner can erase it.
-    if (state.owner_actor !== user.actor || findMember(nodeId, user.actor)?.role !== 'owner') {
+    const isActualOwner = state.owner_actor === user.actor && findMember(nodeId, user.actor)?.role === 'owner'
+    // The server owner has an explicit force-dissolve override; server admins
+    // do not inherit this irreversible instance-governance operation.
+    if (!isActualOwner && user.server_role !== 'owner') {
       throw new ApiRequestError('FORBIDDEN', 403)
     }
     strongholds.delete(nodeId)

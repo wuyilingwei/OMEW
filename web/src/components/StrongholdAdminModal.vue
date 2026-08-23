@@ -52,6 +52,8 @@ const isOwner = computed(() => myRole.value === 'owner')
 // stronghold management. Actual ownership stays separate for deletion.
 const hasOwnerOverlay = computed(() => isOwner.value || auth.isAdmin.value)
 const canTransferOwnership = computed(() => isOwner.value || auth.isServerOwner.value)
+const canDeleteStronghold = computed(() => isOwner.value || auth.isServerOwner.value)
+const isForceDissolve = computed(() => auth.isServerOwner.value && !isOwner.value)
 
 const panelTabOptions = computed(() => {
   const opts: { Text: string; value: PanelTab }[] = [{ Text: '成员', value: 'members' }]
@@ -231,10 +233,11 @@ async function saveSettings() {
 }
 
 async function deleteStronghold() {
-  if (!auth.token.value || !currentNode.value || !isOwner.value || strongholdDeleting.value) return
+  if (!auth.token.value || !currentNode.value || !canDeleteStronghold.value || strongholdDeleting.value) return
   const name = currentNode.value.name
-  if (!confirm(`确定删除据点「${name}」吗？所有话题、话题组、消息和成员关系将永久移除。`)) return
-  if (!confirm(`这是最终确认：删除「${name}」后无法恢复。`)) return
+  const action = isForceDissolve.value ? '强制解散' : '删除'
+  if (!confirm(`确定${action}据点「${name}」吗？所有话题、话题组、消息和成员关系将永久移除。`)) return
+  if (!confirm(`这是最终确认：${action}「${name}」后无法恢复。`)) return
 
   strongholdDeleting.value = true
   strongholdDeleteError.value = ''
@@ -428,12 +431,13 @@ watch(
                   </WinButton>
                 </div>
 
-                <section v-if="isOwner" class="stronghold-danger" aria-label="危险操作">
+                <section v-if="canDeleteStronghold" class="stronghold-danger" aria-label="危险操作">
                   <h2>危险操作</h2>
-                  <p>删除据点会永久清除成员、话题、话题组和全部消息，且不可恢复。</p>
+                  <p v-if="isForceDissolve">服务器所有者可强制解散此据点；全部成员、话题、话题组和消息将永久清除，且不可恢复。</p>
+                  <p v-else>删除据点会永久清除成员、话题、话题组和全部消息，且不可恢复。</p>
                   <p v-if="strongholdDeleteError" class="field__error">{{ strongholdDeleteError }}</p>
                   <WinButton Style="AccentButtonStyle" class="win-btn--danger" :IsEnabled="!strongholdDeleting" @click="deleteStronghold">
-                    {{ strongholdDeleting ? '删除中…' : '删除据点' }}
+                    {{ strongholdDeleting ? '处理中…' : isForceDissolve ? '强制解散据点' : '删除据点' }}
                   </WinButton>
                 </section>
 

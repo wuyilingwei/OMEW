@@ -1972,10 +1972,9 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   }
 
   // A stronghold is a graph of one StrongholdDO, one RoomDO per room,
-  // and several D1 discovery/federation indexes.  Only its *actual* owner may
-  // erase that graph: the server-role overlay intentionally does not apply.
-  // In particular, an instance admin/owner cannot delete another owner's
-  // stronghold merely by virtue of their server role.
+  // and several D1 discovery/federation indexes. Its actual owner may erase
+  // that graph, and the server owner has an explicit instance-governance
+  // override. A server admin does not inherit this irreversible operation.
   m = match("/api/stronghold/:id", path);
   if (m && method === "DELETE") {
     const session = await requireSession(request, env);
@@ -1985,7 +1984,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const [config, requester] = await Promise.all([stub.getConfig(), stub.getMember(session.actor)]);
     if (!config) return apiError(404, "NOT_FOUND");
     const isActualOwner = config.owner_actor === session.actor && requester?.role === "owner" && !requester.banned_at;
-    if (!isActualOwner) return apiError(403, "FORBIDDEN");
+    if (!isActualOwner && session.server_role !== "owner") return apiError(403, "FORBIDDEN");
 
     // Purge children first.  A failed child purge leaves the authoritative
     // StrongholdDO intact, so a retry is safe and cannot strand inaccessible
