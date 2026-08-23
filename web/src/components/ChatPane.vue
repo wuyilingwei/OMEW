@@ -10,11 +10,12 @@ import { useItemPermissions } from '../composables/useItemPermissions'
 import { useStickyScroll } from '../composables/useStickyScroll'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
 import { actorLocalpart } from '../utils/actor'
-import { WinButton, WinInfoBar, WinToggleSwitch } from '../vendor/winui'
+import { WinButton, WinInfoBar } from '../vendor/winui'
 import EmotePicker from './EmotePicker.vue'
 import EmptyState from './EmptyState.vue'
 import AppIcon from './icons/AppIcon.vue'
 import ItemContextMenu from './ItemContextMenu.vue'
+import ImageEditor from './ImageEditor.vue'
 import MessageBubble, { type MessageVM } from './MessageBubble.vue'
 
 const auth = useAuth()
@@ -42,6 +43,8 @@ const editingSeq = ref<number | null>(null)
 const editingText = ref('')
 const showEmotePicker = ref(false)
 const imageInput = ref<HTMLInputElement | null>(null)
+const imageQueue = ref<File[]>([])
+const editingImage = ref<File | null>(null)
 
 // one shared context-menu instance for every message row (rather than one per
 // row) - activeMessage tracks which row's right-click/long-press opened it.
@@ -136,7 +139,7 @@ function pickImages() {
 
 function onImageInputChange(event: Event) {
   const input = event.target as HTMLInputElement
-  if (input.files?.length) void attachments.addFiles(input.files)
+  if (input.files?.length) queueImages(input.files)
   input.value = ''
 }
 
@@ -147,14 +150,28 @@ function onPaste(event: ClipboardEvent) {
     .filter((file): file is File => file != null)
   if (files.length) {
     event.preventDefault()
-    void attachments.addFiles(files)
+    queueImages(files)
   }
 }
 
 function onDrop(event: DragEvent) {
   event.preventDefault()
   const files = [...(event.dataTransfer?.files ?? [])].filter((file) => file.type.startsWith('image/'))
-  if (files.length) void attachments.addFiles(files)
+  if (files.length) queueImages(files)
+}
+
+function queueImages(files: Iterable<File>) {
+  imageQueue.value.push(...[...files].filter((file) => file.type.startsWith('image/')))
+  if (!editingImage.value) editingImage.value = imageQueue.value.shift() ?? null
+}
+
+async function confirmImage(blob: Blob) {
+  await attachments.addProcessed(blob)
+  editingImage.value = imageQueue.value.shift() ?? null
+}
+
+function cancelImage() {
+  editingImage.value = imageQueue.value.shift() ?? null
 }
 
 function startEdit(message: MessageVM) {
@@ -292,7 +309,6 @@ watch(() => selectedChannel.value?.id, pin, { flush: 'post' })
         >
           <AppIcon name="image" :size="18" />
         </WinButton>
-        <WinToggleSwitch class="chat-pane__image-mode" :model-value="attachments.mode.value === 'original'" OnContent="原图" OffContent="WebP" @update:model-value="attachments.mode.value = $event ? 'original' : 'webp'" />
         <textarea
           v-model="draft"
           class="chat-pane__input"
@@ -309,6 +325,7 @@ watch(() => selectedChannel.value?.id, pin, { flush: 'post' })
       <p class="chat-pane__guest-text">登录后参与聊天</p>
       <WinButton Style="AccentButtonStyle" @click="openAuthModal">登录 / 注册</WinButton>
     </div>
+    <ImageEditor :file="editingImage" @confirm="confirmImage" @cancel="cancelImage" />
   </section>
 </template>
 
@@ -415,22 +432,6 @@ watch(() => selectedChannel.value?.id, pin, { flush: 'post' })
   padding: 0 0.7rem;
   border-radius: var(--radius-md);
   font-size: 1.1rem;
-}
-
-.chat-pane__image-mode {
-  min-width: 0;
-  flex: 0 0 auto;
-  font-size: 0.72rem;
-}
-
-.chat-pane__image-mode :deep(.win-switch-label) {
-  margin-left: 0.2rem;
-}
-
-@media (max-width: 375px) {
-  .chat-pane__image-mode :deep(.win-switch-label) {
-    display: none;
-  }
 }
 
 .chat-pane__image-input {

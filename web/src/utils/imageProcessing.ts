@@ -1,4 +1,4 @@
-export type ImageOutputMode = 'webp' | 'original'
+export type ImageOutputMode = 'auto' | 'webp' | 'jpeg' | 'png' | 'original'
 
 export interface SquareCrop {
   zoom: number
@@ -14,10 +14,17 @@ export interface ProcessedImage {
   isGif: boolean
 }
 
+export interface MosaicStroke {
+  x: number
+  y: number
+  radius: number
+}
+
 export interface ImageProcessOptions {
   mode: ImageOutputMode
   crop?: SquareCrop
   outputSize?: number
+  mosaic?: MosaicStroke[]
 }
 
 const GIF_HEADER = /^(GIF87a|GIF89a)$/
@@ -49,12 +56,41 @@ export function drawSquareCrop(image: CanvasImageSource, width: number, height: 
   return canvas
 }
 
+export function automaticOutputMime(sourceMime: string, supportsWebp: boolean): string {
+  if (supportsWebp && ENCODABLE_SOURCE_MIMES.has(sourceMime)) return 'image/webp'
+  return sourceMime === 'image/jpeg' ? 'image/jpeg' : 'image/png'
+}
+
+export function applyMosaic(canvas: HTMLCanvasElement, strokes: MosaicStroke[] = []): void {
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('CANVAS_UNAVAILABLE')
+  for (const stroke of strokes) {
+    const radius = Math.max(4, Math.round(stroke.radius))
+    const x = Math.round(stroke.x * canvas.width)
+    const y = Math.round(stroke.y * canvas.height)
+    const left = Math.max(0, x - radius)
+    const top = Math.max(0, y - radius)
+    const width = Math.min(canvas.width - left, radius * 2)
+    const height = Math.min(canvas.height - top, radius * 2)
+    if (width <= 0 || height <= 0) continue
+    const sample = document.createElement('canvas')
+    sample.width = Math.max(1, Math.ceil(width / 12))
+    sample.height = Math.max(1, Math.ceil(height / 12))
+    const sampleCtx = sample.getContext('2d')
+    if (!sampleCtx) continue
+    sampleCtx.drawImage(canvas, left, top, width, height, 0, 0, sample.width, sample.height)
+    ctx.imageSmoothingEnabled = false
+    ctx.drawImage(sample, 0, 0, sample.width, sample.height, left, top, width, height)
+    ctx.imageSmoothingEnabled = true
+  }
+}
+
 export async function processImage(file: File, options: ImageProcessOptions): Promise<ProcessedImage> {
   if (await isGif(file)) {
     const blob = file.type === 'image/gif' ? file : new Blob([file], { type: 'image/gif' })
     return { blob, mime: 'image/gif', preservedOriginal: true, webpFallback: false, isGif: true }
   }
-  if (options.mode === 'original' && !options.crop) {
+  if (options.mode === 'original' && !options.crop && !options.mosaic?.length) {
     return { blob: file, mime: file.type || 'application/octet-stream', preservedOriginal: true, webpFallback: false, isGif: false }
   }
 
@@ -63,12 +99,40 @@ export async function processImage(file: File, options: ImageProcessOptions): Pr
   const canvas = options.crop
     ? drawSquareCrop(image, size, size, options.crop)
     : drawContain(image, scaledDimensions(image, size))
-  const requestedMime = options.mode === 'webp' ? 'image/webp' : sourceEncodingMime(file.type)
+  applyMosaic(canvas, options.mosaic)
+  const requestedMime = outputMime(options.mode, file.type)
   const encoded = await canvasToBlob(canvas, requestedMime)
-  if (options.mode === 'webp' && encoded.type !== 'image/webp') {
+  if ((options.mode === 'webp' || options.mode === 'auto') && encoded.type !== requestedMime) {
     return { blob: encoded, mime: encoded.type, preservedOriginal: false, webpFallback: true, isGif: false }
   }
   return { blob: encoded, mime: encoded.type, preservedOriginal: false, webpFallback: false, isGif: false }
+}
+
+export async function previewImage(file: File, options: Omit<ImageProcessOptions, 'mode'>): Promise<HTMLCanvasElement | null> {
+  if (await isGif(file)) return null
+  const image = await loadImage(file)
+  const size = options.outputSize ?? Math.min(Math.max(image.naturalWidth, image.naturalHeight), MAX_STATIC_EDGE)
+  const canvas = options.crop
+    ? drawSquareCrop(image, size, size, options.crop)
+    : drawContain(image, scaledDimensions(image, size))
+  applyMosaic(canvas, options.mosaic)
+  return canvas
+}
+
+function outputMime(mode: ImageOutputMode, sourceMime: string): string {
+  if (mode === 'auto') return automaticOutputMime(sourceMime, supportsWebpEncoding())
+  if (mode === 'webp') return 'image/webp'
+  if (mode === 'jpeg') return 'image/jpeg'
+  if (mode === 'png') return 'image/png'
+  return sourceEncodingMime(sourceMime)
+}
+
+function supportsWebpEncoding(): boolean {
+  try {
+    return document.createElement('canvas').toDataURL('image/webp').startsWith('data:image/webp')
+  } catch {
+    return false
+  }
 }
 
 function scaledDimensions(image: HTMLImageElement, maxEdge: number): { width: number; height: number } {

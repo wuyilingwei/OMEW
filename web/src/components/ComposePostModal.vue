@@ -6,8 +6,9 @@ import { useSection } from '../composables/useSection'
 import { useSectionRoom } from '../composables/useSectionRoom'
 import { resolveSectionTarget } from '../utils/contentMetadata'
 import { requiredError, requiredMaxLengthError } from '../utils/validate'
-import { WinButton, WinDropDownButton, WinInfoBar, WinToggleSwitch } from '../vendor/winui'
+import { WinButton, WinDropDownButton, WinInfoBar } from '../vendor/winui'
 import CoverUploader from './CoverUploader.vue'
+import ImageEditor from './ImageEditor.vue'
 import AppIcon from './icons/AppIcon.vue'
 
 const props = defineProps<{ open: boolean }>()
@@ -23,6 +24,8 @@ const targetSectionId = ref('')
 const targetSection = computed(() => resolveSectionTarget(sectionRooms.value, targetSectionId.value, selectedSection.value?.id ?? ''))
 const composeError = ref('')
 const imageInput = ref<HTMLInputElement | null>(null)
+const imageQueue = ref<File[]>([])
+const editingImage = ref<File | null>(null)
 
 const isDirty = computed(
   () =>
@@ -86,7 +89,7 @@ function pickImages() {
 
 function onImageInputChange(event: Event) {
   const input = event.target as HTMLInputElement
-  if (input.files?.length) void attachments.addFiles(input.files)
+  if (input.files?.length) queueImages(input.files)
   input.value = ''
 }
 
@@ -97,14 +100,28 @@ function onTextPaste(event: ClipboardEvent) {
     .filter((file): file is File => file != null)
   if (files.length) {
     event.preventDefault()
-    void attachments.addFiles(files)
+    queueImages(files)
   }
 }
 
 function onDrop(event: DragEvent) {
   event.preventDefault()
   const files = [...(event.dataTransfer?.files ?? [])].filter((file) => file.type.startsWith('image/'))
-  if (files.length) void attachments.addFiles(files)
+  if (files.length) queueImages(files)
+}
+
+function queueImages(files: Iterable<File>) {
+  imageQueue.value.push(...[...files].filter((file) => file.type.startsWith('image/')))
+  if (!editingImage.value) editingImage.value = imageQueue.value.shift() ?? null
+}
+
+async function confirmImage(blob: Blob) {
+  await attachments.addProcessed(blob)
+  editingImage.value = imageQueue.value.shift() ?? null
+}
+
+function cancelImage() {
+  editingImage.value = imageQueue.value.shift() ?? null
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -160,7 +177,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             <div class="field">
               <span class="field__label">配图（可选）</span>
               <input ref="imageInput" class="compose-modal__image-input" type="file" accept="image/*" multiple @change="onImageInputChange" />
-              <WinToggleSwitch :model-value="attachments.mode.value === 'original'" OnContent="保留原图" OffContent="默认压缩为 WebP" @update:model-value="attachments.mode.value = $event ? 'original' : 'webp'" />
               <div class="compose-modal__images">
                 <div v-for="item in attachments.items.value" :key="item.id" class="compose-modal__image">
                   <img :src="item.url" alt="" />
@@ -187,6 +203,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
       </div>
     </Transition>
   </Teleport>
+  <ImageEditor :file="editingImage" @confirm="confirmImage" @cancel="cancelImage" />
 </template>
 
 <style scoped>
