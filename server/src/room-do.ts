@@ -229,9 +229,19 @@ export class RoomDO extends DurableObject<Env> {
 
   private async ensureFeatureRestrictions(strongholdId: string): Promise<FeatureRestrictionSnapshot> {
     const cached = this.readFeatureRestrictions();
-    if (cached) return cached;
-    const fetched = await this.env.STRONGHOLD_DO.getByName(strongholdId).getFeatureRestrictions();
-    const snapshot = fetched ?? {
+    try {
+      // Query back for every item.create. The durable snapshot remains the
+      // fallback for a transient RPC outage, but cannot permanently conceal a
+      // failed or newly-applied policy push from an old websocket.
+      const fetched = await this.env.STRONGHOLD_DO.getByName(strongholdId).getFeatureRestrictions();
+      if (fetched) {
+        this.persistFeatureRestrictions(fetched);
+        return fetched;
+      }
+    } catch {
+      if (cached) return cached;
+    }
+    const snapshot = cached ?? {
       chat: { owner_paused: false, owner_expires_at: null, server_override: "inherit" as const, server_expires_at: null },
       posts: { owner_paused: false, owner_expires_at: null, server_override: "inherit" as const, server_expires_at: null },
     };
@@ -437,7 +447,7 @@ export class RoomDO extends DurableObject<Env> {
     const strongholdId = attachment.room.split("/")[0]!;
     const restrictions = await this.ensureFeatureRestrictions(strongholdId);
     if (featurePaused(restrictions[feature])) {
-      this.sendError(ws, feature === "chat" ? "OMEW_CHAT_PAUSED" : "OMEW_POSTS_PAUSED", "feature is temporarily paused");
+      this.sendError(ws, "OMEW_FEATURE_RESTRICTED", `${feature} is temporarily paused`);
       return;
     }
 

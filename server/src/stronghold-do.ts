@@ -358,10 +358,17 @@ export class StrongholdDO extends DurableObject<Env> {
     if (!config) return null;
     const pausedColumn = feature === "chat" ? "owner_chat_paused" : "owner_posts_paused";
     const expiresColumn = feature === "chat" ? "owner_chat_expires_at" : "owner_posts_expires_at";
+    const previousPaused = feature === "chat" ? config.owner_chat_paused : config.owner_posts_paused;
+    const previousExpiry = feature === "chat" ? config.owner_chat_expires_at : config.owner_posts_expires_at;
     this.ctx.storage.sql.exec(`UPDATE config SET ${pausedColumn} = ?, ${expiresColumn} = ? WHERE id = ?`, paused ? 1 : 0, paused ? expiresAt : null, config.id);
-    const snapshot = await this.getFeatureRestrictions();
-    if (snapshot) await this.pushFeatureRestrictionsToRooms(config, snapshot);
-    return snapshot;
+    try {
+      const snapshot = await this.getFeatureRestrictions();
+      if (snapshot) await this.pushFeatureRestrictionsToRooms(config, snapshot);
+      return snapshot;
+    } catch (error) {
+      this.ctx.storage.sql.exec(`UPDATE config SET ${pausedColumn} = ?, ${expiresColumn} = ? WHERE id = ?`, previousPaused, previousExpiry, config.id);
+      throw error;
+    }
   }
 
   async refreshFeatureRestrictions(): Promise<FeatureRestrictionSnapshot | null> {
@@ -374,7 +381,7 @@ export class StrongholdDO extends DurableObject<Env> {
   private async pushFeatureRestrictionsToRooms(config: ConfigRow, snapshot: FeatureRestrictionSnapshot): Promise<void> {
     const rooms = await this.listRooms();
     await Promise.all(rooms.map((room) => this.env.ROOM_DO.getByName(`${config.id}/${typeToKind(room.type)}/${room.res_id}`)
-      .setFeatureRestrictions(snapshot).catch(() => {})));
+      .setFeatureRestrictions(snapshot)));
   }
 
   // ---- revocation propagation (m0-protocol §7.3) --------------------------------
@@ -480,6 +487,11 @@ export class StrongholdDO extends DurableObject<Env> {
       "INSERT INTO room (res_id, type, name, description, capabilities_json, restricted, position, archived, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)",
       resId, type, name, desc, JSON.stringify(caps), restricted ? 1 : 0, pos, createdAt
     );
+    const config = await this.getConfig();
+    const restrictions = await this.getFeatureRestrictions();
+    if (config && restrictions) {
+      await this.env.ROOM_DO.getByName(`${config.id}/${typeToKind(type)}/${resId}`).setFeatureRestrictions(restrictions);
+    }
     return { res_id: resId, type, name, description: desc, capabilities_json: JSON.stringify(caps), restricted: restricted ? 1 : 0, position: pos, archived: 0, created_at: createdAt };
   }
 

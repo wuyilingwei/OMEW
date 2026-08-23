@@ -178,7 +178,7 @@ function readRestrictedFeature(value: unknown): RestrictedFeature | null {
 function featureRestrictionsResponse(snapshot: FeatureRestrictionSnapshot) {
   const entry = (feature: RestrictedFeature) => ({
     owner: { paused: snapshot[feature].owner_paused, expires_at: snapshot[feature].owner_expires_at },
-    server: { override: snapshot[feature].server_override, expires_at: snapshot[feature].server_expires_at },
+    server: { mode: snapshot[feature].server_override, expires_at: snapshot[feature].server_expires_at },
     effective: { paused: featurePaused(snapshot[feature]) },
   });
   return { chat: entry("chat"), posts: entry("posts") };
@@ -2032,7 +2032,12 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (!feature || typeof body.paused !== "boolean") return apiError(400, "CONFIG_INVALID");
     const expiresAt = readRestrictionExpiry(body);
     if (expiresAt === "invalid") return apiError(400, "EXPIRY_INVALID");
-    const snapshot = await stub.updateOwnerFeatureRestriction(feature, body.paused, expiresAt);
+    let snapshot: FeatureRestrictionSnapshot | null;
+    try {
+      snapshot = await stub.updateOwnerFeatureRestriction(feature, body.paused, expiresAt);
+    } catch {
+      return apiError(503, "FEATURE_RESTRICTION_SYNC_FAILED");
+    }
     if (!snapshot) return apiError(404, "NOT_FOUND");
     return json(featureRestrictionsResponse(snapshot));
   }
@@ -2051,11 +2056,26 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const stub = env.STRONGHOLD_DO.getByName(m.id!);
     if (!(await stub.getConfig())) return apiError(404, "NOT_FOUND");
     const persistedExpiry = override === "inherit" ? null : expiresAt;
+    const previous = await env.DB.prepare(
+      "SELECT mode, expires_at, updated_by, updated_at FROM stronghold_feature_overrides WHERE stronghold_id = ? AND feature = ?"
+    ).bind(m.id!, feature).first<{ mode: ServerFeatureOverride; expires_at: number | null; updated_by: string; updated_at: number }>();
     await env.DB.prepare(
       "INSERT INTO stronghold_feature_overrides (stronghold_id, feature, mode, expires_at, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?) " +
         "ON CONFLICT(stronghold_id, feature) DO UPDATE SET mode = excluded.mode, expires_at = excluded.expires_at, updated_by = excluded.updated_by, updated_at = excluded.updated_at"
     ).bind(m.id!, feature, override, persistedExpiry, gate.actor, Date.now()).run();
-    const snapshot = await stub.refreshFeatureRestrictions();
+    let snapshot: FeatureRestrictionSnapshot | null;
+    try {
+      snapshot = await stub.refreshFeatureRestrictions();
+    } catch {
+      if (previous) {
+        await env.DB.prepare(
+          "UPDATE stronghold_feature_overrides SET mode = ?, expires_at = ?, updated_by = ?, updated_at = ? WHERE stronghold_id = ? AND feature = ?"
+        ).bind(previous.mode, previous.expires_at, previous.updated_by, previous.updated_at, m.id!, feature).run();
+      } else {
+        await env.DB.prepare("DELETE FROM stronghold_feature_overrides WHERE stronghold_id = ? AND feature = ?").bind(m.id!, feature).run();
+      }
+      return apiError(503, "FEATURE_RESTRICTION_SYNC_FAILED");
+    }
     if (!snapshot) return apiError(404, "NOT_FOUND");
     return json(featureRestrictionsResponse(snapshot));
   }
