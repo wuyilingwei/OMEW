@@ -33,7 +33,7 @@ export function createCropPreset(aspectRatio: number, sourceAspect = 1): CropRec
   if (!Number.isFinite(aspectRatio) || aspectRatio <= 0 || !Number.isFinite(sourceAspect) || sourceAspect <= 0) return createFreeCropRect()
   const normalizedRatio = aspectRatio / sourceAspect
   let width = 1; let height = 1 / normalizedRatio
-  if (height > 1) { height = 1; width = aspectRatio }
+  if (height > 1) { height = 1; width = normalizedRatio }
   return { x: (1 - width) / 2, y: (1 - height) / 2, width, height }
 }
 

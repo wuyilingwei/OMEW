@@ -22,6 +22,11 @@ describe('normalized crop contract', () => {
   it('creates aspect-ratio presets and preserves their ratio at the edges', () => {
     expect(createCropPreset(16 / 9, 3 / 2)).toEqual({ x: 0, y: 0.078125, width: 1, height: 0.84375 })
     expect((1 * (3 / 2)) / 0.84375).toBeCloseTo(16 / 9)
+    const squarePreset = createCropPreset(1, 3 / 2)
+    expect(squarePreset.x).toBeCloseTo(1 / 6)
+    expect(squarePreset.width).toBeCloseTo(2 / 3)
+    expect(squarePreset.height).toBe(1)
+    expect(((2 / 3) * (3 / 2)) / 1).toBeCloseTo(1)
     const constrained = constrainCropRect({ x: 0.8, y: 0.8, width: 0.5, height: 0.5 }, 16 / 9, 3 / 2)
     expect(constrained.x + constrained.width).toBeLessThanOrEqual(1)
     expect(constrained.y + constrained.height).toBeLessThanOrEqual(1)
