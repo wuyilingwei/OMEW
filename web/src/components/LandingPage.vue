@@ -2,6 +2,7 @@
 import { watch } from 'vue'
 import { useStronghold } from '../composables/useStronghold'
 import { WinButton } from '../vendor/winui'
+import AppIcon from './icons/AppIcon.vue'
 import LandingWorld from './LandingWorld.vue'
 
 const props = defineProps<{ guestBrowsingAllowed: boolean }>()
@@ -56,23 +57,29 @@ watch(
         </div>
       </section>
 
-      <section class="landing-page__features" aria-label="OMEW 的能力">
-        <article>
-          <h2>完全重写</h2>
-          <p>面向今天重新设计，不背负旧系统的重量。</p>
-        </article>
-        <article>
-          <h2>轻而高效</h2>
-          <p>高性能轻架构，让每一个据点都能自在运行。</p>
-        </article>
-        <article>
-          <h2>互联世界</h2>
-          <p>去中心化部署，多服务商互联，让群体拥有姓名。</p>
-        </article>
-      </section>
+      <div class="landing-page__hero-footer">
+        <section class="landing-page__features" aria-label="OMEW 的能力">
+          <article>
+            <h2>完全重写</h2>
+            <p>面向今天重新设计，不背负旧系统的重量。</p>
+          </article>
+          <article>
+            <h2>轻而高效</h2>
+            <p>高性能轻架构，让每一个据点都能自在运行。</p>
+          </article>
+          <article>
+            <h2>互联世界</h2>
+            <p>去中心化部署，多服务商互联，让群体拥有姓名。</p>
+          </article>
+        </section>
+        <a class="landing-page__scroll-cue" href="#landing-directory">
+          <span>向下浏览据点</span>
+          <AppIcon name="chevron-right" :size="16" />
+        </a>
+      </div>
     </div>
 
-    <section class="landing-page__directory" aria-labelledby="directory-title">
+    <section id="landing-directory" class="landing-page__directory" aria-labelledby="directory-title">
       <div class="landing-page__directory-heading">
         <div>
           <p class="landing-page__directory-eyebrow">DISCOVER</p>
@@ -244,6 +251,46 @@ h1 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: clamp(1rem, 3vw, 3rem);
   max-width: 61rem;
+}
+
+.landing-page__hero-footer {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 2rem;
+}
+
+.landing-page__scroll-cue {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.45rem 0;
+  color: rgb(239 246 255 / 0.82);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  transition: color var(--fast-duration) var(--fast-out-slow-in);
+}
+
+.landing-page__scroll-cue .app-icon {
+  transform: rotate(90deg);
+  transition: transform var(--fast-duration) var(--fast-out-slow-in);
+}
+
+.landing-page__scroll-cue:hover {
+  color: #fff;
+}
+
+.landing-page__scroll-cue:hover .app-icon {
+  transform: rotate(90deg) translateX(2px);
+}
+
+.landing-page__scroll-cue:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 5px;
+  border-radius: 4px;
 }
 
 .landing-page__features article {
@@ -449,6 +496,13 @@ h1 {
   .landing-page__features {
     grid-template-columns: 1fr;
     gap: 0.7rem;
+  }
+
+  .landing-page__hero-footer {
+    display: flex;
+    flex-direction: column;
+    align-items: start;
+    gap: 1rem;
   }
 
   .landing-page__features article {

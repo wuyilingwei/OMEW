@@ -185,21 +185,19 @@ onBeforeUnmount(() => {
 
 .landing-world__layer--glow-far .landing-world__art,
 .landing-world__layer--glow-near .landing-world__art {
-  width: min(122vmin, 92vw);
-  height: min(122vmin, 92vw);
+  width: min(136vmin, 100vw);
+  height: min(136vmin, 100vw);
   object-fit: contain;
   opacity: 0.68;
 }
 
 .landing-world__layer--glow-far .landing-world__art {
-  translate: -9% -7%;
   animation: landing-glow-clockwise 58s linear infinite;
 }
 
 .landing-world__layer--glow-near .landing-world__art {
-  width: min(72vmin, 56vw);
-  height: min(72vmin, 56vw);
-  translate: 12% 10%;
+  width: min(52vmin, 40vw);
+  height: min(52vmin, 40vw);
   opacity: 0.76;
   animation: landing-glow-counterclockwise 46s linear infinite;
 }
@@ -233,14 +231,6 @@ onBeforeUnmount(() => {
 @media (max-width: 700px) {
   .landing-world__art {
     object-position: 59% center;
-  }
-
-  .landing-world__layer--glow-far .landing-world__art {
-    translate: -3% -6%;
-  }
-
-  .landing-world__layer--glow-near .landing-world__art {
-    translate: 18% 9%;
   }
 }
 
