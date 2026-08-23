@@ -24,7 +24,7 @@ import { useStronghold } from './composables/useStronghold'
 
 const auth = useAuth()
 const { openAuthModal } = useAuthModal()
-const routeInstalled = ref(location.pathname !== '/')
+const routeInstalled = ref(auth.isAuthenticated.value || location.pathname !== '/')
 if (routeInstalled.value) useRoute()
 // ServerAdminModal and StrongholdAdminModal are two independent
 // PostModal-style floating overlays with separate entry points (task 039
