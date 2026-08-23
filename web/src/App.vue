@@ -4,6 +4,7 @@ import AuthGate from './components/AuthGate.vue'
 import AuthModal from './components/AuthModal.vue'
 import ColumnResizer from './components/ColumnResizer.vue'
 import LeftColumn from './components/LeftColumn.vue'
+import LandingPage from './components/LandingPage.vue'
 import MiddleColumn from './components/MiddleColumn.vue'
 import MobileNavBar from './components/MobileNavBar.vue'
 import NodeRail from './components/NodeRail.vue'
@@ -16,12 +17,15 @@ import { useAuth } from './composables/useAuth'
 import { LEFT_WIDTH_DEFAULT, LEFT_WIDTH_KEY, RIGHT_WIDTH_DEFAULT, RIGHT_WIDTH_KEY } from './composables/useColumnResize'
 import { useDocumentTitle } from './composables/useDocumentTitle'
 import { useInstanceConfig } from './composables/useInstanceConfig'
+import { useAuthModal } from './composables/useAuthModal'
 import { useRoute } from './composables/useRoute'
 import { useShellView } from './composables/useShellView'
 import { useStronghold } from './composables/useStronghold'
 
 const auth = useAuth()
-useRoute()
+const { openAuthModal } = useAuthModal()
+const routeInstalled = ref(location.pathname !== '/')
+if (routeInstalled.value) useRoute()
 // ServerAdminModal and StrongholdAdminModal are two independent
 // PostModal-style floating overlays with separate entry points (task 039
 // split, task 048 modal-ized) - the shell underneath keeps rendering while
@@ -40,6 +44,13 @@ useDocumentTitle()
 // yet, same fallback as before) - otherwise the four-column shell renders
 // directly in its read-only guest state (useStronghold's isGuestMode).
 const showAuthGate = computed(() => !auth.isAuthenticated.value && !instanceConfig.value?.allow_guest_browsing)
+const showLanding = computed(() => !auth.isAuthenticated.value && !routeInstalled.value)
+
+function installRoute() {
+  if (routeInstalled.value) return
+  routeInstalled.value = true
+  useRoute()
+}
 
 function openStrongholdAdmin(tab: 'members' | 'settings') {
   strongholdAdminTab.value = tab
@@ -47,6 +58,7 @@ function openStrongholdAdmin(tab: 'members' | 'settings') {
 }
 
 watch(auth.isAuthenticated, (authenticated) => {
+  if (authenticated) installRoute()
   if (!authenticated) {
     serverAdminOpen.value = false
     strongholdAdminOpen.value = false
@@ -56,7 +68,14 @@ watch(auth.isAuthenticated, (authenticated) => {
 
 <template>
   <div class="shell">
-    <AuthGate v-if="showAuthGate" />
+    <LandingPage
+      v-if="showLanding"
+      :guest-browsing-allowed="instanceConfig?.allow_guest_browsing ?? false"
+      @authenticate="openAuthModal"
+      @browse="installRoute"
+    />
+
+    <AuthGate v-else-if="showAuthGate" />
 
     <div
       v-else-if="strongholdsLoading && !hasStrongholds"
@@ -87,9 +106,9 @@ watch(auth.isAuthenticated, (authenticated) => {
       </div>
       <MobileNavBar />
       <PostModal />
-      <AuthModal />
     </template>
 
+    <AuthModal />
     <ServerAdminModal :open="serverAdminOpen" @close="serverAdminOpen = false" />
     <StrongholdAdminModal :open="strongholdAdminOpen" :initial-tab="strongholdAdminTab" @close="strongholdAdminOpen = false" />
   </div>

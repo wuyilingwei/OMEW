@@ -6,6 +6,7 @@ import defaultAvatar0Url from './default-avatar-0.png'
 import defaultAvatar1Url from './default-avatar-1.png'
 import defaultNodePageBgUrl from './default-node-page-bg.png'
 import helpfulUrl from './helpful.webp'
+import homeWorldUrl from './home-world.jpg'
 import kusaUrl from './kusa.webp'
 import lanceUrl from './lance.webp'
 import likeUrl from './like.webp'
@@ -33,6 +34,7 @@ import uhhuhUrl from './uhhuh.webp'
 
 export const DEFAULT_AVATARS = [defaultAvatar0Url, defaultAvatar1Url]
 export const DEFAULT_NODE_PAGE_BG = defaultNodePageBgUrl
+export const HOME_WORLD = homeWorldUrl
 
 export const EMPTY_STATE = {
   chat: noMsgUrl,
