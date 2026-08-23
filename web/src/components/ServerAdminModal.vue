@@ -727,7 +727,7 @@ watch(
   </Teleport>
 
   <GroupEditorModal :open="groupEditorOpen" :group="editingGroup" @close="groupEditorOpen = false" @saved="onGroupSaved" />
-  <ImageEditor :file="emoteEditorFile" @confirm="confirmEmote" @cancel="emoteEditorFile = null; emoteEditorPack = null" />
+  <ImageEditor :file="emoteEditorFile" :uploading="emoteEditorPack ? !!emoteUploading[emoteEditorPack.id] : false" @confirm="confirmEmote" @cancel="emoteEditorFile = null; emoteEditorPack = null" />
 </template>
 
 <style scoped>

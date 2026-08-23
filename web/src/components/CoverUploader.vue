@@ -71,7 +71,7 @@ async function uploadProcessed(blob: Blob) {
       </div>
     </div>
     <p v-if="error" class="field__error">{{ error }}</p>
-    <ImageEditor :file="selectedFile" @confirm="uploadProcessed" @cancel="selectedFile = null" />
+    <ImageEditor :file="selectedFile" :uploading="uploading" @confirm="uploadProcessed" @cancel="selectedFile = null" />
   </div>
 </template>
 

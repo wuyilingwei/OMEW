@@ -5,6 +5,7 @@ import { useImageAttachments } from '../composables/useImageAttachments'
 import { useSection } from '../composables/useSection'
 import { useSectionRoom } from '../composables/useSectionRoom'
 import { resolveSectionTarget } from '../utils/contentMetadata'
+import { filterImageFiles } from '../utils/imageProcessing'
 import { requiredError, requiredMaxLengthError } from '../utils/validate'
 import { WinButton, WinDropDownButton, WinInfoBar } from '../vendor/winui'
 import CoverUploader from './CoverUploader.vue'
@@ -95,7 +96,7 @@ function onImageInputChange(event: Event) {
 
 function onTextPaste(event: ClipboardEvent) {
   const files = [...(event.clipboardData?.items ?? [])]
-    .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+    .filter((item) => item.kind === 'file')
     .map((item) => item.getAsFile())
     .filter((file): file is File => file != null)
   if (files.length) {
@@ -106,12 +107,14 @@ function onTextPaste(event: ClipboardEvent) {
 
 function onDrop(event: DragEvent) {
   event.preventDefault()
-  const files = [...(event.dataTransfer?.files ?? [])].filter((file) => file.type.startsWith('image/'))
+  const files = [...(event.dataTransfer?.files ?? [])]
   if (files.length) queueImages(files)
 }
 
-function queueImages(files: Iterable<File>) {
-  imageQueue.value.push(...[...files].filter((file) => file.type.startsWith('image/')))
+async function queueImages(files: Iterable<File>) {
+  const { accepted, rejected } = await filterImageFiles(files)
+  if (rejected) attachments.error.value = '仅支持图片文件'
+  imageQueue.value.push(...accepted)
   if (!editingImage.value) editingImage.value = imageQueue.value.shift() ?? null
 }
 
@@ -203,7 +206,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
       </div>
     </Transition>
   </Teleport>
-  <ImageEditor :file="editingImage" @confirm="confirmImage" @cancel="cancelImage" />
+  <ImageEditor :file="editingImage" :uploading="attachments.uploading.value" @confirm="confirmImage" @cancel="cancelImage" />
 </template>
 
 <style scoped>

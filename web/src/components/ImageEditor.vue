@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { isGif, previewImage, processImage, type ImageOutputMode, type MosaicStroke } from '../utils/imageProcessing'
 import { WinButton, WinComboBox } from '../vendor/winui'
 
-const props = withDefaults(defineProps<{ file: File | null; square?: boolean; outputSize?: number }>(), { square: false, outputSize: 1600 })
+const props = withDefaults(defineProps<{ file: File | null; square?: boolean; outputSize?: number; uploading?: boolean }>(), { square: false, outputSize: 1600, uploading: false })
 const emit = defineEmits<{ confirm: [Blob]; cancel: [] }>()
 
 const canvas = ref<HTMLCanvasElement | null>(null)
@@ -22,6 +22,7 @@ let pointerId: number | null = null
 let lastPoint: { x: number; y: number } | null = null
 
 const canEdit = computed(() => props.file !== null && !gif.value)
+const locked = computed(() => busy.value || props.uploading)
 const title = computed(() => gif.value ? 'GIF 预览' : '编辑图片')
 const FORMAT_OPTIONS: { Text: string; Value: ImageOutputMode }[] = [
   { Text: '自动', Value: 'auto' },
@@ -125,6 +126,7 @@ async function confirm() {
       mosaic: strokes.value,
     })
     emit('confirm', processed.blob)
+    await nextTick()
   } catch {
     error.value = '无法处理这张图片'
   } finally {
@@ -135,7 +137,7 @@ async function confirm() {
 
 <template>
   <Teleport to="body">
-    <div v-if="file" class="image-editor__overlay" @click.self="!busy && emit('cancel')">
+    <div v-if="file" class="image-editor__overlay" @click.self="!locked && emit('cancel')">
       <section class="image-editor" role="dialog" aria-modal="true" :aria-label="title">
         <div class="image-editor__header"><h2>{{ title }}</h2><span>{{ file.name }}</span></div>
         <p v-if="gif" class="image-editor__note">GIF 为保留动画，只能按原图上传，不能裁剪、打码或转换格式。</p>
@@ -151,7 +153,7 @@ async function confirm() {
           <WinComboBox :ItemsSource="FORMAT_OPTIONS" SelectedValuePath="Value" v-model:SelectedValue="mode" Header="输出格式" />
         </div>
         <p v-if="error" class="field__error">{{ error }}</p>
-        <div class="image-editor__actions"><WinButton Style="SubtleButtonStyle" :IsEnabled="!busy" @click="emit('cancel')">取消</WinButton><WinButton Style="AccentButtonStyle" :IsEnabled="!busy" @click="confirm">{{ busy ? '处理中…' : '确认并上传' }}</WinButton></div>
+        <div class="image-editor__actions"><WinButton Style="SubtleButtonStyle" :IsEnabled="!locked" @click="emit('cancel')">取消</WinButton><WinButton Style="AccentButtonStyle" :IsEnabled="!locked" @click="confirm">{{ locked ? '处理中或上传中…' : '确认并上传' }}</WinButton></div>
       </section>
     </div>
   </Teleport>

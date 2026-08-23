@@ -10,6 +10,7 @@ import { useItemPermissions } from '../composables/useItemPermissions'
 import { useStickyScroll } from '../composables/useStickyScroll'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
 import { actorLocalpart } from '../utils/actor'
+import { filterImageFiles } from '../utils/imageProcessing'
 import { WinButton, WinInfoBar } from '../vendor/winui'
 import EmotePicker from './EmotePicker.vue'
 import EmptyState from './EmptyState.vue'
@@ -145,7 +146,7 @@ function onImageInputChange(event: Event) {
 
 function onPaste(event: ClipboardEvent) {
   const files = [...(event.clipboardData?.items ?? [])]
-    .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+    .filter((item) => item.kind === 'file')
     .map((item) => item.getAsFile())
     .filter((file): file is File => file != null)
   if (files.length) {
@@ -156,12 +157,14 @@ function onPaste(event: ClipboardEvent) {
 
 function onDrop(event: DragEvent) {
   event.preventDefault()
-  const files = [...(event.dataTransfer?.files ?? [])].filter((file) => file.type.startsWith('image/'))
+  const files = [...(event.dataTransfer?.files ?? [])]
   if (files.length) queueImages(files)
 }
 
-function queueImages(files: Iterable<File>) {
-  imageQueue.value.push(...[...files].filter((file) => file.type.startsWith('image/')))
+async function queueImages(files: Iterable<File>) {
+  const { accepted, rejected } = await filterImageFiles(files)
+  if (rejected) attachments.error.value = '仅支持图片文件'
+  imageQueue.value.push(...accepted)
   if (!editingImage.value) editingImage.value = imageQueue.value.shift() ?? null
 }
 
@@ -325,7 +328,7 @@ watch(() => selectedChannel.value?.id, pin, { flush: 'post' })
       <p class="chat-pane__guest-text">登录后参与聊天</p>
       <WinButton Style="AccentButtonStyle" @click="openAuthModal">登录 / 注册</WinButton>
     </div>
-    <ImageEditor :file="editingImage" @confirm="confirmImage" @cancel="cancelImage" />
+    <ImageEditor :file="editingImage" :uploading="attachments.uploading.value" @confirm="confirmImage" @cancel="cancelImage" />
   </section>
 </template>
 

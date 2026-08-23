@@ -37,6 +37,12 @@ export async function isGif(file: Blob): Promise<boolean> {
   return GIF_HEADER.test(String.fromCharCode(...header))
 }
 
+export async function filterImageFiles(files: Iterable<File>): Promise<{ accepted: File[]; rejected: number }> {
+  const candidates = [...files]
+  const accepted = await Promise.all(candidates.map(async (file) => (file.type.startsWith('image/') || await isGif(file)) ? file : null))
+  return { accepted: accepted.filter((file): file is File => file !== null), rejected: candidates.length - accepted.filter(Boolean).length }
+}
+
 export function drawSquareCrop(image: CanvasImageSource, width: number, height: number, crop: SquareCrop): HTMLCanvasElement {
   const canvas = document.createElement('canvas')
   canvas.width = width
