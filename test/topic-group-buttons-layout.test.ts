@@ -3,12 +3,18 @@ import leftColumnSource from '../web/src/components/LeftColumn.vue?raw'
 
 describe('topic group button layout contract', () => {
   it('renders every section as an explicit horizontally scrollable tab button', () => {
+    expect(leftColumnSource).toContain('<span class="left-column__section-title">话题组</span>')
     expect(leftColumnSource).toContain('v-for="(room, index) in sectionRooms"')
     expect(leftColumnSource).toContain('role="tablist"')
     expect(leftColumnSource).toContain('role="tab"')
+    expect(leftColumnSource).toContain('<span class="left-column__section-hash" aria-hidden="true">#</span>')
     expect(leftColumnSource).toContain('overflow-x: auto')
     expect(leftColumnSource).toContain(":Style=\"selectedSection?.id === room.id ? 'AccentButtonStyle' : 'DefaultButtonStyle'\"")
     expect(leftColumnSource).not.toContain('WinDropDownButton')
+    expect(leftColumnSource).toMatch(/\.left-column__section-button\s*\{[\s\S]*?width: 3\.5rem;/)
+    expect(leftColumnSource).toMatch(/\.left-column__section-button\s*\{[\s\S]*?height: 3\.5rem;/)
+    expect(leftColumnSource).toMatch(/\.left-column__section-button\s*\{[\s\S]*?border-radius: 0\.25rem;/)
+    expect(leftColumnSource).toMatch(/\.left-column__section-button\s*\{[\s\S]*?flex-direction: column;/)
   })
 
   it('exposes selected state and keyboard navigation without mixing topic labels', () => {
@@ -29,11 +35,13 @@ describe('topic group button layout contract', () => {
     expect(leftColumnSource).not.toContain('left-column__section-empty')
   })
 
-  it('pins the topic group controls while the post column scrolls', () => {
-    expect(leftColumnSource).toMatch(/\.left-column__header\s*\{[\s\S]*?position: sticky;/)
-    expect(leftColumnSource).toMatch(/\.left-column__header\s*\{[\s\S]*?top: 0;/)
-    expect(leftColumnSource).toMatch(/\.left-column__header\s*\{[\s\S]*?z-index: 2;/)
+  it('keeps the topic group controls outside the post-feed scroll area', () => {
+    expect(leftColumnSource).toMatch(/\.left-column\s*\{[\s\S]*?overflow: hidden;/)
+    expect(leftColumnSource).toMatch(/\.left-column__feed\s*\{[\s\S]*?flex: 1 1 auto;/)
+    expect(leftColumnSource).toMatch(/\.left-column__feed\s*\{[\s\S]*?min-height: 0;/)
+    expect(leftColumnSource).toMatch(/\.left-column__feed\s*\{[\s\S]*?overflow-y: auto;/)
     expect(leftColumnSource).toMatch(/\.left-column__header\s*\{[\s\S]*?background: var\(--app-bg\);/)
     expect(leftColumnSource).toMatch(/\.left-column__header\s*\{[\s\S]*?border-bottom: 1px solid var\(--stroke-divider\);/)
+    expect(leftColumnSource).not.toMatch(/\.left-column__header\s*\{[\s\S]*?position: sticky;/)
   })
 })
