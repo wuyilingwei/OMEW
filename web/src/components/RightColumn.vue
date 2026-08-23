@@ -9,6 +9,7 @@ import { useTheme } from '../composables/useTheme'
 import { WinButton, WinDropDownButton } from '../vendor/winui'
 import AvatarBadge from './AvatarBadge.vue'
 import PersonalSettingsModal from './PersonalSettingsModal.vue'
+import StrongholdMemberRoster from './StrongholdMemberRoster.vue'
 
 const emit = defineEmits<{ 'open-server-admin': []; 'open-panel': ['members' | 'settings'] }>()
 
@@ -113,6 +114,7 @@ async function joinCurrentStronghold() {
       </WinButton>
     </div>
 
+    <StrongholdMemberRoster />
     <PersonalSettingsModal :open="showPersonalSettings" @close="showPersonalSettings = false" />
   </aside>
 </template>
@@ -128,7 +130,7 @@ async function joinCurrentStronghold() {
   padding: 1rem;
   background: var(--app-bg);
   border-left: 1px solid var(--stroke-divider);
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .right-column__topbar {
