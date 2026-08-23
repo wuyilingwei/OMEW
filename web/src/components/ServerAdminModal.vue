@@ -67,9 +67,8 @@ async function loadConfig() {
 }
 
 // ---- server member appointment + group assignment (task 035/039/048) --------
-// listing every account is owner-only (server's GET /api/admin/users) - so
-// the inline group-assignment control below lives on this same owner-gated
-// list rather than trying to support a plain admin picking an arbitrary user.
+// Every server admin can list accounts and maintain their server-level groups.
+// Server-role appointment remains an owner-only action below.
 
 const users = ref<AdminUserEntry[]>([])
 const usersLoading = ref(false)
@@ -81,7 +80,7 @@ const openGroupPickerFor = ref('')
 const groupTogglePending = ref('')
 
 async function loadUsers(reset = true) {
-  if (!auth.token.value || !auth.isServerOwner.value) return
+  if (!auth.token.value || !auth.isAdmin.value) return
   usersLoading.value = true
   usersError.value = ''
   try {
@@ -106,7 +105,7 @@ async function loadUsers(reset = true) {
 }
 
 async function setUserRole(user: AdminUserEntry, role: Extract<ServerRole, 'admin' | 'user'>) {
-  if (!auth.token.value || roleChangingLocalpart.value) return
+  if (!auth.token.value || !auth.isServerOwner.value || roleChangingLocalpart.value) return
   usersError.value = ''
   roleChangingLocalpart.value = user.localpart
   try {
@@ -189,7 +188,7 @@ function openEditGroup(group: ServerGroup) {
 
 function onGroupSaved() {
   void loadGroups()
-  if (auth.isServerOwner.value) void loadUsers()
+  if (auth.isAdmin.value) void loadUsers()
 }
 
 async function deleteGroupConfirm(group: ServerGroup) {
@@ -199,7 +198,7 @@ async function deleteGroupConfirm(group: ServerGroup) {
   try {
     await api.deleteServerGroup(auth.token.value, group.id)
     await loadGroups()
-    if (auth.isServerOwner.value) await loadUsers()
+    if (auth.isAdmin.value) await loadUsers()
   } catch {
     groupsError.value = '删除失败，请稍后重试'
   }
@@ -465,7 +464,7 @@ watch(
     loadInviteCodes()
     loadPacks()
     loadStrongholdsList()
-    if (auth.isServerOwner.value) void loadUsers()
+    if (auth.isAdmin.value) void loadUsers()
   },
   { immediate: true },
 )
@@ -630,8 +629,10 @@ watch(
             </div>
 
             <div v-else-if="tab === 'members'" class="admin-modal__body">
-              <template v-if="auth.isServerOwner.value">
-                <p class="field__hint">任免服务器管理员（server_admin），并管理每个用户的服务器级用户组。领主身份唯一且不可通过此处转移。</p>
+              <template v-if="auth.isAdmin.value">
+                <p class="field__hint">
+                  管理每个用户的服务器级用户组。仅服务器领主可任免服务器管理员；领主身份唯一且不可通过此处转移。
+                </p>
                 <p v-if="usersError" class="field__error">{{ usersError }}</p>
                 <ul v-if="users.length" class="user-list">
                   <li v-for="user in users" :key="user.localpart" class="user-row">
@@ -641,7 +642,7 @@ watch(
                       <span class="user-row__date">{{ new Date(user.created_at).toLocaleDateString() }}</span>
                       <div class="user-row__actions">
                         <WinButton
-                          v-if="user.server_role === 'user'"
+                          v-if="auth.isServerOwner.value && user.server_role === 'user'"
                           Style="SubtleButtonStyle"
                           :IsEnabled="!roleChangingLocalpart"
                           @click="setUserRole(user, 'admin')"
@@ -649,14 +650,14 @@ watch(
                           设为管理员
                         </WinButton>
                         <WinButton
-                          v-else-if="user.server_role === 'admin'"
+                          v-else-if="auth.isServerOwner.value && user.server_role === 'admin'"
                           Style="SubtleButtonStyle"
                           :IsEnabled="!roleChangingLocalpart"
                           @click="setUserRole(user, 'user')"
                         >
                           撤销管理员
                         </WinButton>
-                        <span v-else class="field__hint">领主</span>
+                        <span v-else-if="user.server_role === 'owner'" class="field__hint">领主</span>
                         <WinButton
                           Style="SubtleButtonStyle"
                           @click="openGroupPickerFor = openGroupPickerFor === user.localpart ? '' : user.localpart"
@@ -692,7 +693,7 @@ watch(
                   {{ usersLoading ? '加载中…' : '加载更多' }}
                 </WinButton>
               </template>
-              <p v-else class="field__hint">仅领主可查看与管理服务器成员</p>
+              <p v-else class="field__hint">仅服务器管理员可查看与管理服务器成员</p>
             </div>
 
             <div v-else class="admin-modal__body">
