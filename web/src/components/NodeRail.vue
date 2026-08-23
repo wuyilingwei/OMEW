@@ -16,7 +16,15 @@ function onCreated() {
 
 <template>
   <nav class="node-rail">
-    <img class="node-rail__logo" src="/favicon.svg" alt="OMEW" />
+    <button
+      class="node-rail__logo"
+      type="button"
+      title="打开公开据点大厅"
+      aria-label="OMEW，打开公开据点大厅"
+      @click="showDirectory = true"
+    >
+      <img src="/favicon.svg" alt="" aria-hidden="true" />
+    </button>
     <ul class="node-rail__list">
       <li v-for="node in nodes" :key="node.id">
         <button
@@ -76,7 +84,9 @@ function onCreated() {
 .node-rail__logo {
   width: 36px;
   height: 36px;
+  padding: 0;
   border-radius: 50%;
+  border: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -85,6 +95,14 @@ function onCreated() {
   background: rgb(var(--colors-primary));
   color: var(--on-accent);
   margin-bottom: 0.5rem;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.node-rail__logo img {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
 .node-rail__list {
