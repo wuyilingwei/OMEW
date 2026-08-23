@@ -27,6 +27,7 @@ describe('image editor contract', () => {
     expect(imageEditorSource).toContain('SelectedValuePath="Value"')
     expect(imageEditorSource).toContain('v-model:SelectedValue="mode"')
     expect(imageEditorSource).toContain("const mode = ref<ImageOutputMode>('auto')")
+    expect(imageEditorSource).toContain("mode.value = 'auto'")
   })
 
   it('keeps the editor locked through parent uploads and restores byte-sniffed GIF selection in chat and posts', () => {

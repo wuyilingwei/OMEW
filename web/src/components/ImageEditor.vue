@@ -60,6 +60,7 @@ async function redraw() {
 async function reset(file: File | null) {
   releaseGifPreview()
   error.value = ''
+  mode.value = 'auto'
   gif.value = file ? await isGif(file) : false
   if (file !== props.file) return
   if (gif.value && file) gifPreviewUrl.value = URL.createObjectURL(file)

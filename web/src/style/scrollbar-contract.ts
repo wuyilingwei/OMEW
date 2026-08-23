@@ -1,6 +1,6 @@
 /** Native scrollbar surfaces intentionally exclude the vendored WinScrollViewer. */
 export const nativeScrollbarSurfaces = [
-  '.left-column', '.right-column', '.node-rail', '.emote-picker',
+  '.left-column', '.right-column', '.node-rail', '.emote-picker', '.image-editor',
   '.auth-modal__scroll', '.compose-modal__scroll', '.group-modal__form',
   '.chat-pane__messages', '.post-modal__scroll', '.personal-modal__scroll',
   '.directory-modal__scroll', '.admin-modal__scroll',

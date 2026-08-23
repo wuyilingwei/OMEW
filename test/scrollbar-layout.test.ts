@@ -5,6 +5,7 @@ describe('Fluent native scrollbar contract', () => {
   it('covers app-owned scrolling surfaces without vendored rails', () => {
     expect(nativeScrollbarSurfaces).toContain('.chat-pane__messages')
     expect(nativeScrollbarSurfaces).toContain('.directory-modal__scroll')
+    expect(nativeScrollbarSurfaces).toContain('.image-editor')
     expect(nativeScrollbarSurfaces).not.toContain('.win-scroll-viewer')
   })
 
