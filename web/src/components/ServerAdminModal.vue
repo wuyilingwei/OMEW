@@ -18,9 +18,9 @@ import type {
 import { useAuth } from '../composables/useAuth'
 import { useStorageUsage } from '../composables/useStorageUsage'
 import { fileUploadError } from '../utils/validate'
-import { processImage, type ImageOutputMode } from '../utils/imageProcessing'
-import { WinButton, WinInfoBar, WinSelectorBar, WinToggleSwitch } from '../vendor/winui'
+import { WinButton, WinInfoBar, WinSelectorBar } from '../vendor/winui'
 import GroupEditorModal from './GroupEditorModal.vue'
+import ImageEditor from './ImageEditor.vue'
 
 // Server-level administration only (m0-protocol §7.9/§7.10/§7.10a) - instance
 // policy, server member appointment, server-level user groups, invite codes,
@@ -293,8 +293,8 @@ const newPackName = ref('')
 const packBusy = ref(false)
 const newEmoteName = reactive<Record<string, string>>({})
 const emoteUploading = reactive<Record<string, boolean>>({})
-const emoteMode = ref<ImageOutputMode>('webp')
-const emoteKeepOriginal = computed({ get: () => emoteMode.value === 'original', set: (value: boolean) => { emoteMode.value = value ? 'original' : 'webp' } })
+const emoteEditorFile = ref<File | null>(null)
+const emoteEditorPack = ref<EmotePack | null>(null)
 const { usage: storage } = useStorageUsage()
 
 async function loadPacks() {
@@ -338,21 +338,14 @@ async function deletePack(pack: EmotePack) {
   }
 }
 
-async function addEmote(pack: EmotePack, file: File) {
+async function addEmote(pack: EmotePack, blob: Blob) {
   if (!auth.token.value || emoteUploading[pack.id]) return
   const name = (newEmoteName[pack.id] ?? '').trim()
   if (!name || name.length > 32 || name.includes(':')) {
     packsError.value = '表情名称需为 1-32 字，且不能包含冒号'
     return
   }
-  let processed
-  try {
-    processed = await processImage(file, { mode: emoteMode.value })
-  } catch {
-    packsError.value = '无法处理这张图片'
-    return
-  }
-  const preflight = fileUploadError(processed.blob, storage.value)
+  const preflight = fileUploadError(blob, storage.value)
   if (preflight) {
     packsError.value = preflight
     return
@@ -360,12 +353,10 @@ async function addEmote(pack: EmotePack, file: File) {
   packsError.value = ''
   emoteUploading[pack.id] = true
   try {
-    const uploaded = await api.uploadMedia(auth.token.value, processed.blob)
+    const uploaded = await api.uploadMedia(auth.token.value, blob)
     await api.createEmote(auth.token.value, pack.id, name, uploaded.id)
     newEmoteName[pack.id] = ''
     await loadPacks()
-    if (processed.isGif) packsError.value = 'GIF 为保留动画不压缩，已按原图上传'
-    else if (processed.webpFallback) packsError.value = '此浏览器不能编码 WebP，已改用 PNG 上传'
   } catch {
     packsError.value = '添加失败，请稍后重试'
   } finally {
@@ -376,8 +367,18 @@ async function addEmote(pack: EmotePack, file: File) {
 function onEmoteFileChange(pack: EmotePack, event: Event) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
-  if (file) void addEmote(pack, file)
+  if (file) {
+    emoteEditorPack.value = pack
+    emoteEditorFile.value = file
+  }
   input.value = ''
+}
+
+async function confirmEmote(blob: Blob) {
+  const pack = emoteEditorPack.value
+  if (pack) await addEmote(pack, blob)
+  emoteEditorFile.value = null
+  emoteEditorPack.value = null
 }
 
 async function deleteEmote(emote: Emote) {
@@ -613,7 +614,6 @@ watch(
                   <p v-else class="field__hint">此包暂无表情</p>
                   <div class="admin-pack__add">
                     <input v-model="newEmoteName[pack.id]" type="text" maxlength="32" placeholder="新表情名称" />
-                    <WinToggleSwitch v-model="emoteKeepOriginal" OnContent="保留原图" OffContent="默认压缩为 WebP" />
                     <label class="admin-pack__upload-btn">
                       {{ emoteUploading[pack.id] ? '上传中…' : '选择图片并添加' }}
                       <input
@@ -727,6 +727,7 @@ watch(
   </Teleport>
 
   <GroupEditorModal :open="groupEditorOpen" :group="editingGroup" @close="groupEditorOpen = false" @saved="onGroupSaved" />
+  <ImageEditor :file="emoteEditorFile" :uploading="emoteEditorPack ? !!emoteUploading[emoteEditorPack.id] : false" @confirm="confirmEmote" @cancel="emoteEditorFile = null; emoteEditorPack = null" />
 </template>
 
 <style scoped>

@@ -2,7 +2,6 @@ import { ref } from 'vue'
 import { api, ApiRequestError } from '../api'
 import type { MediaAttachment } from '../api/types'
 import { fileUploadError } from '../utils/validate'
-import { isGif, processImage, type ImageOutputMode } from '../utils/imageProcessing'
 import { useAuth } from './useAuth'
 import { useStorageUsage } from './useStorageUsage'
 
@@ -24,42 +23,24 @@ export function useImageAttachments() {
   const items = ref<MediaAttachment[]>([])
   const uploading = ref(false)
   const error = ref('')
-  const mode = ref<ImageOutputMode>('webp')
-
-  async function addFiles(files: Iterable<File>) {
+  async function addProcessed(blob: Blob) {
     const token = auth.token.value
     if (!token) return
-    for (const file of files) {
-      const gif = await isGif(file)
-      if (!file.type.startsWith('image/') && !gif) {
-        error.value = '仅支持图片文件'
-        continue
-      }
-      let processed
-      try {
-        processed = await processImage(file, { mode: mode.value })
-      } catch {
-        error.value = '无法处理这张图片'
-        continue
-      }
-      const preflight = fileUploadError(processed.blob, usage.value)
-      if (preflight) {
-        error.value = preflight
-        continue
-      }
-      error.value = ''
-      uploading.value = true
-      try {
-        const result = await api.uploadMedia(token, processed.blob)
-        items.value.push({ id: result.id, url: result.url, mime: result.mime })
-        noteUploaded(result.size)
-        if (processed.isGif) error.value = 'GIF 为保留动画不压缩，已按原图上传'
-        else if (processed.webpFallback) error.value = '此浏览器不能编码 WebP，已改用 PNG 上传'
-      } catch (err) {
-        error.value = err instanceof ApiRequestError ? (UPLOAD_ERROR_MESSAGES[err.code] ?? '上传失败，请稍后重试') : '上传失败，请稍后重试'
-      } finally {
-        uploading.value = false
-      }
+    const preflight = fileUploadError(blob, usage.value)
+    if (preflight) {
+      error.value = preflight
+      return
+    }
+    error.value = ''
+    uploading.value = true
+    try {
+      const result = await api.uploadMedia(token, blob)
+      items.value.push({ id: result.id, url: result.url, mime: result.mime })
+      noteUploaded(result.size)
+    } catch (err) {
+      error.value = err instanceof ApiRequestError ? (UPLOAD_ERROR_MESSAGES[err.code] ?? '上传失败，请稍后重试') : '上传失败，请稍后重试'
+    } finally {
+      uploading.value = false
     }
   }
 
@@ -72,5 +53,5 @@ export function useImageAttachments() {
     error.value = ''
   }
 
-  return { items, uploading, error, mode, addFiles, remove, reset }
+  return { items, uploading, error, addProcessed, remove, reset }
 }

@@ -85,7 +85,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
             <ul v-else class="directory-modal__list">
               <li v-for="entry in entries" :key="entry.id" class="directory-entry">
-                <img v-if="entry.cover" class="directory-entry__cover" :src="entry.cover" :alt="entry.name" />
+                <img v-if="entry.avatar" class="directory-entry__cover" :src="entry.avatar" :alt="entry.name" />
                 <div v-else class="directory-entry__cover directory-entry__cover--placeholder">{{ entry.name.slice(0, 1) }}</div>
                 <div class="directory-entry__body">
                   <span class="directory-entry__name">{{ entry.name }}</span>

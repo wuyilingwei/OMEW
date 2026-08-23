@@ -42,3 +42,131 @@ img {
   max-width: 100%;
   display: block;
 }
+
+/* Native app scrolling surfaces. Keep this list explicit so the custom
+   vendored WinScrollViewer (which owns its horizontal and vertical rails) is
+   never restyled by the native scrollbar rules. */
+:where(
+  .left-column,
+  .right-column,
+  .node-rail,
+  .emote-picker,
+  .image-editor,
+  .auth-modal__scroll,
+  .compose-modal__scroll,
+  .group-modal__form,
+  .chat-pane__messages,
+  .post-modal__scroll,
+  .personal-modal__scroll,
+  .directory-modal__scroll,
+  .admin-modal__scroll
+) {
+  --scrollbar-thumb-current: rgb(var(--scrollbar-thumb) / 0.64);
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb-current) var(--scrollbar-track);
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+
+:where(
+  .left-column,
+  .right-column,
+  .node-rail,
+  .emote-picker,
+  .image-editor,
+  .auth-modal__scroll,
+  .compose-modal__scroll,
+  .group-modal__form,
+  .chat-pane__messages,
+  .post-modal__scroll,
+  .personal-modal__scroll,
+  .directory-modal__scroll,
+  .admin-modal__scroll
+):not(.win-scroll-viewer)::-webkit-scrollbar {
+  width: 0.65rem;
+  height: 0.65rem;
+}
+
+:where(
+  .left-column,
+  .right-column,
+  .node-rail,
+  .emote-picker,
+  .image-editor,
+  .auth-modal__scroll,
+  .compose-modal__scroll,
+  .group-modal__form,
+  .chat-pane__messages,
+  .post-modal__scroll,
+  .personal-modal__scroll,
+  .directory-modal__scroll,
+  .admin-modal__scroll
+):not(.win-scroll-viewer)::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+:where(
+  .left-column,
+  .right-column,
+  .node-rail,
+  .emote-picker,
+  .image-editor,
+  .auth-modal__scroll,
+  .compose-modal__scroll,
+  .group-modal__form,
+  .chat-pane__messages,
+  .post-modal__scroll,
+  .personal-modal__scroll,
+  .directory-modal__scroll,
+  .admin-modal__scroll
+):not(.win-scroll-viewer)::-webkit-scrollbar-thumb {
+  min-height: 2rem;
+  border: 0.2rem solid transparent;
+  border-radius: 999px;
+  background: var(--scrollbar-thumb-current);
+  background-clip: content-box;
+}
+
+:where(
+  .left-column,
+  .right-column,
+  .node-rail,
+  .emote-picker,
+  .image-editor,
+  .auth-modal__scroll,
+  .compose-modal__scroll,
+  .group-modal__form,
+  .chat-pane__messages,
+  .post-modal__scroll,
+  .personal-modal__scroll,
+  .directory-modal__scroll,
+  .admin-modal__scroll
+):not(.win-scroll-viewer)::-webkit-scrollbar-thumb:hover {
+  --scrollbar-thumb-current: rgb(var(--scrollbar-thumb-hover) / 0.82);
+}
+
+:where(
+  .left-column,
+  .right-column,
+  .node-rail,
+  .emote-picker,
+  .image-editor,
+  .auth-modal__scroll,
+  .compose-modal__scroll,
+  .group-modal__form,
+  .chat-pane__messages,
+  .post-modal__scroll,
+  .personal-modal__scroll,
+  .directory-modal__scroll,
+  .admin-modal__scroll
+):not(.win-scroll-viewer)::-webkit-scrollbar-thumb:active {
+  --scrollbar-thumb-current: rgb(var(--scrollbar-thumb-active) / 0.9);
+}
+
+/* The node rail becomes a horizontal touch rail on narrow screens; do not
+   reserve a vertical gutter in that layout. */
+@media (max-width: 768px) {
+  .node-rail {
+    scrollbar-gutter: auto;
+  }
+}

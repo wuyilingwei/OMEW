@@ -331,7 +331,9 @@ export function useSectionRoom() {
 
   function createPost(title: string, text: string, cover?: string, media?: MediaAttachment[]) {
     const auth = useAuth()
-    if (!transport || !auth.user.value) return false
+    // `connected` prevents a target-section switch from briefly reusing the
+    // previous room's live socket while its replacement is being established.
+    if (!transport || !connected.value || !auth.user.value) return false
     const clientId = crypto.randomUUID()
     const trimmedTitle = title.trim()
     const trimmedText = text.trim()

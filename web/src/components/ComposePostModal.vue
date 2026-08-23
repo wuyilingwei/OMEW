@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useAuth } from '../composables/useAuth'
 import { useImageAttachments } from '../composables/useImageAttachments'
+import { useSection } from '../composables/useSection'
 import { useSectionRoom } from '../composables/useSectionRoom'
+import { resolveSectionTarget } from '../utils/contentMetadata'
+import { filterImageFiles } from '../utils/imageProcessing'
 import { requiredError, requiredMaxLengthError } from '../utils/validate'
-import { WinButton, WinInfoBar, WinToggleSwitch } from '../vendor/winui'
+import { WinButton, WinDropDownButton, WinInfoBar } from '../vendor/winui'
 import CoverUploader from './CoverUploader.vue'
+import ImageEditor from './ImageEditor.vue'
 import AppIcon from './icons/AppIcon.vue'
 
 const props = defineProps<{ open: boolean }>()
@@ -13,11 +17,16 @@ const emit = defineEmits<{ close: [] }>()
 
 const auth = useAuth()
 const { createPost } = useSectionRoom()
+const { sectionRooms, selectedSection, selectSection } = useSection()
 const attachments = useImageAttachments()
 
 const form = reactive({ title: '', text: '', cover: '' })
+const targetSectionId = ref('')
+const targetSection = computed(() => resolveSectionTarget(sectionRooms.value, targetSectionId.value, selectedSection.value?.id ?? ''))
 const composeError = ref('')
 const imageInput = ref<HTMLInputElement | null>(null)
+const imageQueue = ref<File[]>([])
+const editingImage = ref<File | null>(null)
 
 const isDirty = computed(
   () =>
@@ -41,13 +50,17 @@ function requestClose() {
   emit('close')
 }
 
-function submitPost() {
+async function submitPost() {
   const titleError = requiredMaxLengthError(form.title, 64, '标题')
   const textError = requiredError(form.text, '正文')
   if (titleError || textError) {
     composeError.value = [titleError, textError].filter(Boolean).join('；')
     return
   }
+  // Let useSectionRoom's watcher close the previous section transport before
+  // attempting the create frame; otherwise a fast click could post to the
+  // previously selected room.
+  await nextTick()
   const media = attachments.items.value.length ? [...attachments.items.value] : undefined
   const ok = createPost(form.title, form.text, form.cover, media)
   if (!ok) {
@@ -58,31 +71,60 @@ function submitPost() {
   emit('close')
 }
 
+const sectionFlyout = computed(() => ({
+  Items: sectionRooms.value.map((room) => ({ Text: room.name, Value: room.id })),
+}))
+
+function onSelectSection(item: { Value: string }) {
+  const room = sectionRooms.value.find((candidate) => candidate.id === item.Value)
+  if (!room) return
+  targetSectionId.value = room.id
+  // The section singleton owns the post-room transport. Selecting here keeps
+  // the draft local to this modal while the room connection is switched.
+  selectSection(room)
+}
+
 function pickImages() {
   imageInput.value?.click()
 }
 
 function onImageInputChange(event: Event) {
   const input = event.target as HTMLInputElement
-  if (input.files?.length) void attachments.addFiles(input.files)
+  if (input.files?.length) queueImages(input.files)
   input.value = ''
 }
 
 function onTextPaste(event: ClipboardEvent) {
   const files = [...(event.clipboardData?.items ?? [])]
-    .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+    .filter((item) => item.kind === 'file')
     .map((item) => item.getAsFile())
     .filter((file): file is File => file != null)
   if (files.length) {
     event.preventDefault()
-    void attachments.addFiles(files)
+    queueImages(files)
   }
 }
 
 function onDrop(event: DragEvent) {
   event.preventDefault()
-  const files = [...(event.dataTransfer?.files ?? [])].filter((file) => file.type.startsWith('image/'))
-  if (files.length) void attachments.addFiles(files)
+  const files = [...(event.dataTransfer?.files ?? [])]
+  if (files.length) queueImages(files)
+}
+
+async function queueImages(files: Iterable<File>) {
+  const { accepted, rejected } = await filterImageFiles(files)
+  if (rejected) attachments.error.value = '仅支持图片文件'
+  imageQueue.value.push(...accepted)
+  if (!editingImage.value) editingImage.value = imageQueue.value.shift() ?? null
+}
+
+async function confirmImage(blob: Blob) {
+  await attachments.addProcessed(blob)
+  editingImage.value = imageQueue.value.shift() ?? null
+}
+
+function cancelImage() {
+  editingImage.value = imageQueue.value.shift() ?? null
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -92,7 +134,10 @@ function onKeydown(event: KeyboardEvent) {
 watch(
   () => props.open,
   (open) => {
-    if (open) composeError.value = ''
+    if (open) {
+      composeError.value = ''
+      targetSectionId.value = selectedSection.value?.id ?? ''
+    }
   },
 )
 
@@ -118,13 +163,23 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               <textarea v-model="form.text" rows="6" placeholder="正文" @paste="onTextPaste"></textarea>
             </div>
             <div class="field">
+              <span class="field__label">发布到话题组</span>
+              <WinDropDownButton
+                class="compose-modal__section-picker"
+                :Flyout="sectionFlyout"
+                :IsEnabled="sectionRooms.length > 0"
+                @Select="onSelectSection"
+              >
+                <span>{{ targetSection?.name ?? '选择话题组' }}</span>
+              </WinDropDownButton>
+            </div>
+            <div class="field">
               <span class="field__label">封面（可选）</span>
               <CoverUploader v-if="auth.token.value" v-model="form.cover" :token="auth.token.value" />
             </div>
             <div class="field">
               <span class="field__label">配图（可选）</span>
               <input ref="imageInput" class="compose-modal__image-input" type="file" accept="image/*" multiple @change="onImageInputChange" />
-              <WinToggleSwitch :model-value="attachments.mode.value === 'original'" OnContent="保留原图" OffContent="默认压缩为 WebP" @update:model-value="attachments.mode.value = $event ? 'original' : 'webp'" />
               <div class="compose-modal__images">
                 <div v-for="item in attachments.items.value" :key="item.id" class="compose-modal__image">
                   <img :src="item.url" alt="" />
@@ -151,6 +206,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
       </div>
     </Transition>
   </Teleport>
+  <ImageEditor :file="editingImage" :uploading="attachments.uploading.value" @confirm="confirmImage" @cancel="cancelImage" />
 </template>
 
 <style scoped>
@@ -248,6 +304,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   justify-content: flex-end;
   gap: 0.5rem;
   padding: 0 1.1rem 1.1rem;
+}
+
+.compose-modal__section-picker {
+  align-self: flex-start;
+  max-width: 100%;
 }
 
 .compose-modal__image-input {

@@ -277,9 +277,15 @@ export function useChatRoom() {
   function sendText(text: string, media?: MediaAttachment[]) {
     const trimmed = text.trim()
     if ((!trimmed && !media?.length) || !transport) return
+    if (trimmed) sendEntry(trimmed)
+    for (const attachment of media ?? []) sendEntry('', [attachment])
+  }
+
+  function sendEntry(text: string, media?: MediaAttachment[]) {
+    if (!transport) return
     const clientId = crypto.randomUUID()
-    pending.value.push({ clientId, text: trimmed, media, ts: Date.now(), status: 'sending' })
-    const body: Record<string, unknown> = { text: trimmed }
+    pending.value.push({ clientId, text, media, ts: Date.now(), status: 'sending' })
+    const body: Record<string, unknown> = { text }
     if (media?.length) body.media = media
     const ok = transport.createItem(clientId, 'post', body)
     if (!ok) {
