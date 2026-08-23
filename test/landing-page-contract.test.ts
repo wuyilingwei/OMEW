@@ -102,4 +102,35 @@ describe('OMEW landing page contract', () => {
     expect(landingWorld).toMatch(/landing-touch-drift/)
     expect(landingWorld).toMatch(/pointer:\s*coarse/)
   })
+
+  it('renders atmosphere as the front-most veil over the visual scene', () => {
+    const layerKeys = [...landingWorld.matchAll(/key:\s*'([^']+)'/g)].map((match) => match[1])
+    expect(layerKeys).toContain('atmosphere')
+    const atmosphereIndex = layerKeys.indexOf('atmosphere')
+    for (const subject of ['sky', 'city', 'clouds', 'foreground']) {
+      expect(atmosphereIndex).toBeGreaterThan(layerKeys.indexOf(subject))
+    }
+  })
+
+  it('gives the far and near halos visibly different depth or placement parameters', () => {
+    const far = landingWorld.match(/key:\s*'glow-far'[^\n]*/)?.[0] ?? ''
+    const near = landingWorld.match(/key:\s*'glow-near'[^\n]*/)?.[0] ?? ''
+    expect(far).not.toBe('')
+    expect(near).not.toBe('')
+    expect(far).not.toBe(near)
+    expect(far).toMatch(/depthX|depthY|scale|idleFromX|idleFromY|idleToX|idleToY/)
+    expect(near).toMatch(/depthX|depthY|scale|idleFromX|idleFromY|idleToX|idleToY/)
+  })
+
+  it('keeps the hero copy explicit about OMEW identity and architecture', () => {
+    const hero = landing.slice(0, landing.indexOf('<section class="landing-page__features"'))
+    expect(hero).toContain('OMEW')
+    expect(hero).toMatch(/Open Member of Excellent World/i)
+    expect(hero).toMatch(/MEW.*(?:停止运营|停运)|(?:停止运营|停运).*MEW/)
+    expect(hero).toMatch(/(?:完全重写|重写).*继承者|继承者.*(?:完全重写|重写)/)
+    expect(hero).toMatch(/高性能/)
+    expect(hero).toMatch(/轻架构/)
+    expect(hero).toMatch(/去中心化/)
+    expect(hero).toMatch(/多服务商互联/)
+  })
 })
