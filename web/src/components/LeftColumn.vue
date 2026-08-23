@@ -50,11 +50,11 @@ function closeCompose() {
         <WinButton
           v-for="(room, index) in sectionRooms"
           :key="room.id"
-          Style="DefaultButtonStyle"
+          :Style="selectedSection?.id === room.id ? 'AccentButtonStyle' : 'DefaultButtonStyle'"
           class="left-column__section-button"
-          :class="{ 'is-selected': selectedSection?.id === room.id }"
           role="tab"
           :aria-selected="selectedSection?.id === room.id"
+          :tabindex="selectedSection?.id === room.id ? 0 : -1"
           :aria-label="`切换到话题组 ${room.name}`"
           @click="selectSection(room)"
           @keydown="onSectionKeydown($event, index)"
@@ -140,16 +140,6 @@ function closeCompose() {
   max-width: 12rem;
   font-size: 0.82rem;
   border-radius: 999px;
-}
-
-.left-column__section-button.is-selected {
-  --ButtonBackground: var(--accent-base);
-  --ButtonBackgroundPointerOver: var(--accent-hover);
-  --ButtonBackgroundPressed: var(--accent-pressed);
-  --ButtonForeground: var(--accent-text);
-  --ButtonBorderBrush: var(--accent-base);
-  --ButtonBorderBrushTop: var(--accent-base);
-  --ButtonBorderBrushBottom: var(--accent-base);
 }
 
 .left-column__section-label {

@@ -7,11 +7,13 @@ describe('topic group button layout contract', () => {
     expect(leftColumnSource).toContain('role="tablist"')
     expect(leftColumnSource).toContain('role="tab"')
     expect(leftColumnSource).toContain('overflow-x: auto')
+    expect(leftColumnSource).toContain(":Style=\"selectedSection?.id === room.id ? 'AccentButtonStyle' : 'DefaultButtonStyle'\"")
     expect(leftColumnSource).not.toContain('WinDropDownButton')
   })
 
   it('exposes selected state and keyboard navigation without mixing topic labels', () => {
     expect(leftColumnSource).toContain(':aria-selected="selectedSection?.id === room.id"')
+    expect(leftColumnSource).toContain(':tabindex="selectedSection?.id === room.id ? 0 : -1"')
     expect(leftColumnSource).toContain("event.key === 'ArrowRight'")
     expect(leftColumnSource).toContain("event.key === 'Home'")
     expect(leftColumnSource).toContain("querySelectorAll<HTMLElement>('[role=\"tab\"]')")
