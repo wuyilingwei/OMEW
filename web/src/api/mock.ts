@@ -8,6 +8,7 @@ import type { RoomSocketHandlers, RoomTransport } from './roomSocket'
 import type {
   AdminInstanceConfig,
   AdminUsersPage,
+  AvatarUploadResult,
   AuthResponse,
   AuthUser,
   BanEntry,
@@ -120,6 +121,7 @@ const users: MockUser[] = [
     actor: actorFor('admin'),
     username: 'admin',
     display_name: 'admin',
+    avatar: null,
     password: 'admin123',
     is_admin: true,
     server_role: 'owner',
@@ -135,6 +137,7 @@ const users: MockUser[] = [
     actor: actorFor('mod2'),
     username: 'mod2',
     display_name: 'mod2',
+    avatar: null,
     password: 'mod2pass1',
     is_admin: true,
     server_role: 'admin',
@@ -464,6 +467,7 @@ function seedDemoStronghold(): void {
       actor: actorFor('admin'),
       username: 'admin',
       display_name: 'admin',
+      avatar: null,
       role: 'owner',
       deny_discussion: false,
       deny_idea: false,
@@ -476,6 +480,7 @@ function seedDemoStronghold(): void {
       actor: actorFor('rin'),
       username: 'Rin',
       display_name: 'Rin',
+      avatar: null,
       role: 'mod',
       deny_discussion: false,
       deny_idea: false,
@@ -488,6 +493,7 @@ function seedDemoStronghold(): void {
       actor: actorFor('aki'),
       username: 'Aki',
       display_name: 'Aki',
+      avatar: null,
       role: 'member',
       deny_discussion: false,
       deny_idea: false,
@@ -556,6 +562,7 @@ function requireManager(token: string, nodeId: string): { user: MockUser; member
         actor: user.actor,
         username: user.username,
         display_name: user.display_name,
+        avatar: user.avatar,
         role: 'owner',
         deny_discussion: false,
         deny_idea: false,
@@ -770,6 +777,7 @@ export const mockApi = {
       actor: actorFor(payload.username),
       username: payload.username,
       display_name: payload.username,
+      avatar: null,
       password: payload.password,
       is_admin: false,
       server_role: 'user',
@@ -1022,6 +1030,7 @@ export const mockApi = {
         actor: user.actor,
         username: user.username,
         display_name: user.display_name,
+        avatar: user.avatar,
         role: 'owner',
         deny_discussion: false,
         deny_idea: false,
@@ -1079,6 +1088,7 @@ export const mockApi = {
       actor: user.actor,
       username: user.username,
       display_name: user.display_name,
+      avatar: user.avatar,
       role: 'member',
       deny_discussion: false,
       deny_idea: false,
@@ -1263,6 +1273,7 @@ export const mockApi = {
           actor: ban.actor,
           username: ban.actor,
           display_name: ban.actor,
+          avatar: null,
           role: 'member' as const,
           deny_discussion: true,
           deny_idea: true,
@@ -1375,6 +1386,7 @@ export const mockApi = {
           actor: member.actor,
           username: member.username,
           display_name: member.display_name,
+          avatar: member.avatar,
           is_guest: member.is_guest,
           home_domain: member.home_domain,
         })
@@ -1448,6 +1460,27 @@ export const mockApi = {
     return delay(result, 60)
   },
 
+  async uploadAvatar(token: string, file: File | Blob, onProgress?: (percent: number) => void): Promise<AvatarUploadResult> {
+    const user = requireUser(token)
+    const result = await mockApi.uploadMedia(token, file, onProgress)
+    user.avatar = result.url
+    for (const members of strongholdMembers.values()) {
+      const member = members.find((entry) => entry.actor === user.actor)
+      if (member) member.avatar = result.url
+    }
+    return { ...result, avatar: result.url }
+  },
+
+  async clearAvatar(token: string): Promise<{ avatar: null }> {
+    const user = requireUser(token)
+    user.avatar = null
+    for (const members of strongholdMembers.values()) {
+      const member = members.find((entry) => entry.actor === user.actor)
+      if (member) member.avatar = null
+    }
+    return delay({ avatar: null }, 120)
+  },
+
   async getStorageUsage(token: string): Promise<StorageUsage> {
     requireUser(token)
     return delay({ used: storageUsage.used, quota: config.user_storage_quota_bytes, max_file: config.max_file_bytes })
@@ -1503,6 +1536,7 @@ export const mockApi = {
           actor: application.actor,
           username: application.actor,
           display_name: application.actor,
+          avatar: users.find((user) => user.actor === application.actor)?.avatar ?? null,
           role: 'owner',
           deny_discussion: false,
           deny_idea: false,

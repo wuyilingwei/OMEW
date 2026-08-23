@@ -38,6 +38,7 @@ export interface AuthUser {
   username: string
   // renameable; `username` (and the actor derived from it) is not
   display_name: string
+  avatar: string | null
   is_admin: boolean
   server_role: ServerRole
   email: string | null
@@ -129,6 +130,7 @@ export interface StrongholdMember {
   actor: string
   username: string
   display_name: string
+  avatar: string | null
   role: StrongholdRole
   deny_discussion: boolean
   deny_idea: boolean
@@ -198,6 +200,7 @@ export interface PublicUser {
   actor: string
   username: string
   display_name: string
+  avatar: string | null
   is_guest: boolean
   home_domain?: string
 }
@@ -384,6 +387,10 @@ export interface MediaUploadResult {
   url: string
   size: number
   mime: string
+}
+
+export interface AvatarUploadResult extends MediaUploadResult {
+  avatar: string
 }
 
 export interface StorageUsage {

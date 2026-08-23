@@ -3,6 +3,7 @@ import { ApiRequestError } from './errors'
 import type {
   AdminInstanceConfig,
   AdminUsersPage,
+  AvatarUploadResult,
   AuthResponse,
   BanEntry,
   ChangePasswordPayload,
@@ -87,6 +88,7 @@ function booleansToDeny(patch: MemberPatch): number | undefined {
 interface WireMemberEntry {
   actor: string
   display_name: string
+  avatar: string | null
   role: StrongholdMember['role']
   deny: number
   joined_at: number
@@ -102,6 +104,7 @@ function toStrongholdMember(entry: WireMemberEntry): StrongholdMember {
     actor: entry.actor,
     username: actorLocalpart(entry.actor),
     display_name: entry.display_name,
+    avatar: entry.avatar,
     role: entry.role,
     ...denyToBooleans(entry.deny),
     joined_at: new Date(entry.joined_at).toISOString(),
@@ -146,6 +149,41 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiRequestError(code, res.status)
   }
   return body as T
+}
+
+function uploadBlob<T extends MediaUploadResult>(
+  path: string,
+  token: string,
+  file: File | Blob,
+  onProgress?: (percent: number) => void,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', `${API_BASE}${path}`)
+    xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
+    xhr.upload.onprogress = (event) => {
+      if (onProgress && event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100))
+    }
+    xhr.onload = () => {
+      let body: { error?: string | { code?: string } } & Partial<T> = {}
+      try {
+        body = JSON.parse(xhr.responseText || '{}')
+      } catch {
+        // non-JSON body treated as UNKNOWN_ERROR below
+      }
+      const errVal = body.error
+      if (xhr.status < 200 || xhr.status >= 300 || errVal) {
+        const code = typeof errVal === 'string' ? errVal : (errVal?.code ?? 'UNKNOWN_ERROR')
+        if (xhr.status === 401) onUnauthorized?.()
+        reject(new ApiRequestError(code, xhr.status))
+        return
+      }
+      resolve(body as T)
+    }
+    xhr.onerror = () => reject(new ApiRequestError('NETWORK_ERROR', 0))
+    xhr.send(file)
+  })
 }
 
 function authHeaders(token: string): HeadersInit {
@@ -515,7 +553,7 @@ export const realApi = {
   getGroupsForMembers: (token: string | null, localparts: string[]) => fetchGroupsForLocalparts(token, localparts),
 
   getUser: (token: string, actor: string) =>
-    request<{ actor: string; display_name: string; is_guest: boolean; home_domain?: string }>(
+    request<{ actor: string; display_name: string; avatar: string | null; is_guest: boolean; home_domain?: string }>(
       `/api/users/${encodeURIComponent(actor)}`,
       { headers: authHeaders(token) },
     ).then(
@@ -523,6 +561,7 @@ export const realApi = {
         actor: u.actor,
         username: actorLocalpart(u.actor),
         display_name: u.display_name,
+        avatar: u.avatar,
         is_guest: u.is_guest,
         home_domain: u.home_domain,
       }),
@@ -556,33 +595,13 @@ export const realApi = {
   // upload progress is observable.
 
   uploadMedia: (token: string, file: File | Blob, onProgress?: (percent: number) => void) =>
-    new Promise<MediaUploadResult>((resolve, reject) => {
-      const xhr = new XMLHttpRequest()
-      xhr.open('POST', `${API_BASE}/api/media`)
-      xhr.setRequestHeader('Authorization', `Bearer ${token}`)
-      xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
-      xhr.upload.onprogress = (event) => {
-        if (onProgress && event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100))
-      }
-      xhr.onload = () => {
-        let body: { error?: string | { code?: string } } & Partial<MediaUploadResult> = {}
-        try {
-          body = JSON.parse(xhr.responseText || '{}')
-        } catch {
-          // non-JSON body treated as UNKNOWN_ERROR below
-        }
-        const errVal = body.error
-        if (xhr.status < 200 || xhr.status >= 300 || errVal) {
-          const code = typeof errVal === 'string' ? errVal : (errVal?.code ?? 'UNKNOWN_ERROR')
-          if (xhr.status === 401) onUnauthorized?.()
-          reject(new ApiRequestError(code, xhr.status))
-          return
-        }
-        resolve(body as MediaUploadResult)
-      }
-      xhr.onerror = () => reject(new ApiRequestError('NETWORK_ERROR', 0))
-      xhr.send(file)
-    }),
+    uploadBlob<MediaUploadResult>('/api/media', token, file, onProgress),
+
+  uploadAvatar: (token: string, file: File | Blob, onProgress?: (percent: number) => void) =>
+    uploadBlob<AvatarUploadResult>('/api/me/avatar', token, file, onProgress),
+
+  clearAvatar: (token: string) =>
+    request<{ avatar: null }>('/api/me/avatar', { method: 'DELETE', headers: authHeaders(token) }),
 
   getStorageUsage: (token: string) => request<StorageUsage>('/api/me/storage', { headers: authHeaders(token) }),
 

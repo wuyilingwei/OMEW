@@ -14,6 +14,7 @@ export interface MessageVM {
   seq: number | null
   actor: string
   displayName: string
+  avatarUrl?: string | null
   content: string
   media?: MediaAttachment[]
   timestamp: string
@@ -81,7 +82,7 @@ function onTouchStart(event: TouchEvent) {
       'message-row--grouped': grouped,
     }"
   >
-    <AvatarBadge v-if="!grouped" class="message-row__avatar" :seed="message.displayName" :size="36" />
+    <AvatarBadge v-if="!grouped" class="message-row__avatar" :seed="message.displayName" :size="36" :avatar-url="message.avatarUrl ?? undefined" />
     <div v-else class="message-row__avatar-spacer" aria-hidden="true"></div>
     <div
       class="message-bubble"

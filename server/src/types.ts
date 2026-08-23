@@ -135,6 +135,7 @@ export interface InstanceConfig {
 export interface PublicUser {
   username: string;
   display_name: string;
+  avatar: string | null;
   actor: string;
   server_role: ServerRole;
   is_admin: boolean;

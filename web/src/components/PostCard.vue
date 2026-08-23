@@ -17,6 +17,7 @@ const { isReadOnly } = useStronghold()
 const auth = useAuth()
 
 const authorName = () => members.value.find((m) => m.actor === props.post.actor)?.display_name ?? actorLocalpart(props.post.actor)
+const authorAvatar = () => members.value.find((m) => m.actor === props.post.actor)?.avatar ?? undefined
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
@@ -42,7 +43,7 @@ function formatTime(ts: number): string {
       </div>
       <div class="post-card__meta">
         <span class="post-card__author-group">
-          <AvatarBadge :seed="authorName()" :size="24" />
+          <AvatarBadge :seed="authorName()" :size="24" :avatar-url="authorAvatar()" />
           <span class="post-card__author">{{ authorName() }}</span>
         </span>
         <span class="post-card__time">

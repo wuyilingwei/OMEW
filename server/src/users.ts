@@ -54,6 +54,7 @@ export function toPublicUser(
   row: {
     localpart: string;
     display_name?: string | null;
+    avatar?: string | null;
     server_role: ServerRole;
     email: string | null;
     email_verified: number;
@@ -66,6 +67,7 @@ export function toPublicUser(
     // rows predating the display-name column, and the registration path (which
     // writes the localpart as the initial display name), both fall back to it.
     display_name: row.display_name || row.localpart,
+    avatar: row.avatar ?? null,
     actor,
     server_role: row.server_role,
     is_admin: row.server_role === "owner" || row.server_role === "admin",

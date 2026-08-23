@@ -48,6 +48,10 @@ function displayName(actor: string): string {
   return members.value.find((m) => m.actor === actor)?.display_name ?? actorLocalpart(actor)
 }
 
+function avatarUrl(actor: string): string | undefined {
+  return members.value.find((m) => m.actor === actor)?.avatar ?? undefined
+}
+
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
@@ -281,7 +285,7 @@ const replyCanRetract = computed(() => (activeReply.value ? canRetract(activeRep
               >
                 <h1 class="post-modal__title">{{ thread.post.title }}</h1>
                 <div class="post-modal__author-row">
-                  <AvatarBadge :seed="displayName(thread.post.actor)" :size="36" />
+                  <AvatarBadge :seed="displayName(thread.post.actor)" :size="36" :avatar-url="avatarUrl(thread.post.actor)" />
                   <div class="post-modal__author-meta">
                     <span class="post-modal__author-name">{{ displayName(thread.post.actor) }}</span>
                     <span class="post-modal__time">{{ formatTime(thread.post.created_at) }}</span>
@@ -340,7 +344,7 @@ const replyCanRetract = computed(() => (activeReply.value ? canRetract(activeRep
                     @touchend="clearReplyPressTimer"
                     @touchcancel="clearReplyPressTimer"
                   >
-                    <AvatarBadge :seed="displayName(reply.actor)" :size="28" />
+                    <AvatarBadge :seed="displayName(reply.actor)" :size="28" :avatar-url="avatarUrl(reply.actor)" />
                     <div class="post-modal__reply-body">
                       <div class="post-modal__reply-meta">
                         <span class="post-modal__reply-author">{{ displayName(reply.actor) }}</span>
