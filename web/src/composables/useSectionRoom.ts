@@ -28,9 +28,7 @@ const threadHasMore = ref(false)
 let openPostSeq: number | null = null
 
 let transport: RoomTransport | null = null
-// roomKey identifies the WS (node + room); loadKey additionally carries the
-// topic filter, since changing the filter re-fetches the list but must not
-// tear down a perfectly good socket.
+// roomKey identifies the WS and loadKey suppresses duplicate loads.
 let roomKey = ''
 let loadKey = ''
 
@@ -46,7 +44,6 @@ interface PendingCreate {
   text: string
   cover?: string
   media?: MediaAttachment[]
-  topics?: string[]
   parentSeq?: number
 }
 const pendingCreates = new Map<string, PendingCreate>()
@@ -68,9 +65,9 @@ function bumpPost(update: { post_seq: number; last_reply_seq: number; reply_coun
   }
 }
 
-async function connectRoom(nodeId: string, room: RoomSummary, topic: string | null) {
+async function connectRoom(nodeId: string, room: RoomSummary) {
   const wsKey = `${nodeId}/${room.id}`
-  const key = `${wsKey}/${topic ?? ''}`
+  const key = wsKey
   if (key === loadKey) return
   loadKey = key
   const wsNeedsReconnect = wsKey !== roomKey
@@ -124,16 +121,11 @@ async function connectRoom(nodeId: string, room: RoomSummary, topic: string | nu
             cover: pending.cover ?? null,
             preview: pending.text.slice(0, 80),
             media: pending.media,
-            topics: pending.topics,
             last_reply_seq: ack.seq,
             reply_count: 0,
             bumped_at: ts,
           }
-          // a filtered list must not gain a post that the filter excludes -
-          // it would vanish again on the next fetch.
-          const { topicFilter } = useSection()
-          const matchesFilter = !topicFilter.value || (pending.topics?.includes(topicFilter.value) ?? false)
-          if (matchesFilter && !posts.value.some((p) => p.post_seq === ack.seq)) posts.value.unshift(entry)
+          if (!posts.value.some((p) => p.post_seq === ack.seq)) posts.value.unshift(entry)
           if (thread.value && thread.value.post.post_seq === ack.seq && pending.media?.length) {
             thread.value = { ...thread.value, post: { ...thread.value.post, media: pending.media } }
           }
@@ -277,7 +269,6 @@ function currentBody(targetSeq: number): ItemBody | null {
     if (post.title) body.title = post.title
     if (post.cover) body.cover = post.cover
     if (post.media?.length) body.media = post.media
-    if (post.topics?.length) body.topics = post.topics
     return body
   }
   const reply = thread.value?.replies.find((r) => r.seq === targetSeq)
@@ -293,7 +284,7 @@ function currentMine(targetSeq: number): string[] {
 
 async function loadMorePosts(reset = false) {
   const { selectedNodeId } = useStronghold()
-  const { selectedSection, topicFilter } = useSection()
+  const { selectedSection } = useSection()
   const auth = useAuth()
   const room = selectedSection.value
   if (!selectedNodeId.value || !room) return
@@ -306,7 +297,6 @@ async function loadMorePosts(reset = false) {
       room.id,
       reset ? null : postsCursor.value,
       POSTS_PAGE_SIZE,
-      topicFilter.value,
     )
     posts.value = reset ? page.posts : [...posts.value, ...page.posts]
     postsCursor.value = page.next_cursor
@@ -320,13 +310,13 @@ async function loadMorePosts(reset = false) {
 
 export function useSectionRoom() {
   const { selectedNodeId } = useStronghold()
-  const { selectedSection, topicFilter } = useSection()
+  const { selectedSection } = useSection()
   const postRoom = selectedSection
 
   watch(
-    [selectedNodeId, selectedSection, topicFilter],
-    ([nodeId, room, topic]) => {
-      if (nodeId && room) void connectRoom(nodeId, room, topic)
+    [selectedNodeId, selectedSection],
+    ([nodeId, room]) => {
+      if (nodeId && room) void connectRoom(nodeId, room)
       else {
         transport?.close()
         transport = null
@@ -339,18 +329,16 @@ export function useSectionRoom() {
     { immediate: true },
   )
 
-  function createPost(title: string, text: string, cover?: string, media?: MediaAttachment[], topics?: string[]) {
+  function createPost(title: string, text: string, cover?: string, media?: MediaAttachment[]) {
     const auth = useAuth()
     if (!transport || !auth.user.value) return false
     const clientId = crypto.randomUUID()
     const trimmedTitle = title.trim()
     const trimmedText = text.trim()
     const trimmedCover = cover?.trim() || undefined
-    const trimmedTopics = topics?.length ? topics.slice(0, 5) : undefined
     const body: Record<string, unknown> = { title: trimmedTitle, text: trimmedText }
     if (trimmedCover) body.cover = trimmedCover
     if (media?.length) body.media = media
-    if (trimmedTopics) body.topics = trimmedTopics
     const ok = transport.createItem(clientId, 'post', body)
     if (ok) {
       pendingCreates.set(clientId, {
@@ -360,7 +348,6 @@ export function useSectionRoom() {
         text: trimmedText,
         cover: trimmedCover,
         media,
-        topics: trimmedTopics,
       })
     }
     return ok
@@ -446,7 +433,7 @@ export function useSectionRoom() {
     try {
       const trimmed = text.trim()
       // full-body edit (server replaces wholesale, doesn't merge) - carry the
-      // post's title/cover/media/topics (or the reply's media) along so they
+      // post's title/cover/media (or the reply's media) along so they
       // don't get silently dropped; preview is left out, the server recomputes it.
       const body: ItemBody = { ...original, text: trimmed }
       await api.editItem(auth.token.value, nodeId, room.id, seq, body)

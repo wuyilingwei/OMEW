@@ -3,25 +3,19 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useAuth } from '../composables/useAuth'
 import { useImageAttachments } from '../composables/useImageAttachments'
 import { useSectionRoom } from '../composables/useSectionRoom'
-import { useTopics } from '../composables/useTopics'
 import { requiredError, requiredMaxLengthError } from '../utils/validate'
 import { WinButton, WinInfoBar, WinToggleSwitch } from '../vendor/winui'
 import CoverUploader from './CoverUploader.vue'
 import AppIcon from './icons/AppIcon.vue'
-import TopicChips from './TopicChips.vue'
-
-const TOPIC_LIMIT = 5
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 
 const auth = useAuth()
 const { createPost } = useSectionRoom()
-const { topics } = useTopics()
 const attachments = useImageAttachments()
 
 const form = reactive({ title: '', text: '', cover: '' })
-const selectedTopics = ref<string[]>([])
 const composeError = ref('')
 const imageInput = ref<HTMLInputElement | null>(null)
 
@@ -30,21 +24,13 @@ const isDirty = computed(
     form.title.trim() !== '' ||
     form.text.trim() !== '' ||
     form.cover !== '' ||
-    attachments.items.value.length > 0 ||
-    selectedTopics.value.length > 0,
+    attachments.items.value.length > 0,
 )
-
-function toggleTopic(id: string) {
-  const idx = selectedTopics.value.indexOf(id)
-  if (idx >= 0) selectedTopics.value.splice(idx, 1)
-  else if (selectedTopics.value.length < TOPIC_LIMIT) selectedTopics.value.push(id)
-}
 
 function resetForm() {
   form.title = ''
   form.text = ''
   form.cover = ''
-  selectedTopics.value = []
   composeError.value = ''
   attachments.reset()
 }
@@ -63,8 +49,7 @@ function submitPost() {
     return
   }
   const media = attachments.items.value.length ? [...attachments.items.value] : undefined
-  const topicIds = selectedTopics.value.length ? [...selectedTopics.value] : undefined
-  const ok = createPost(form.title, form.text, form.cover, media, topicIds)
+  const ok = createPost(form.title, form.text, form.cover, media)
   if (!ok) {
     composeError.value = '发送失败，连接尚未就绪，请稍后再试'
     return
@@ -152,11 +137,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                 </WinButton>
               </div>
               <p v-if="attachments.error.value" class="field__error">{{ attachments.error.value }}</p>
-            </div>
-            <div v-if="topics.length" class="field">
-              <span class="field__label">标签（最多 5 个，可选）</span>
-              <TopicChips :topics="topics" selectable :selected="selectedTopics" :max="TOPIC_LIMIT" @toggle="toggleTopic" />
-              <p v-if="selectedTopics.length >= TOPIC_LIMIT" class="field__hint">已达上限，取消一个再选新的</p>
             </div>
             <WinInfoBar v-if="composeError" :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Error">
               {{ composeError }}

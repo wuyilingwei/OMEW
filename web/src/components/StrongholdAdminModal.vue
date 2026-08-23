@@ -16,7 +16,6 @@ import StrongholdAvatarUploader from './StrongholdAvatarUploader.vue'
 import EmptyState from './EmptyState.vue'
 import MemberInfoCard from './MemberInfoCard.vue'
 import RoomManager from './SectionManager.vue'
-import TopicManager from './TopicManager.vue'
 
 // stronghold-scoped management only (members / blacklist / stronghold
 // settings) - server-level administration (policy, server members, invite
@@ -41,7 +40,7 @@ const VISIBILITY_OPTIONS = [
   { Text: '私密', Value: 'private' },
 ]
 
-type PanelTab = 'members' | 'banned' | 'channels' | 'sections' | 'topics' | 'settings'
+type PanelTab = 'members' | 'banned' | 'channels' | 'sections' | 'settings'
 
 const panelTab = ref<PanelTab>(props.initialTab)
 // m0-protocol §7.10: a server owner/admin manages every stronghold with
@@ -56,7 +55,6 @@ const panelTabOptions = computed(() => {
     opts.push({ Text: '黑名单', value: 'banned' })
     opts.push({ Text: '话题', value: 'channels' })
     opts.push({ Text: '话题组', value: 'sections' })
-    opts.push({ Text: '标签', value: 'topics' })
     opts.push({ Text: '设置', value: 'settings' })
   }
   return opts
@@ -354,10 +352,6 @@ watch(
 
             <div v-else-if="panelTab === 'sections'" class="admin-modal__body">
               <RoomManager type="section" />
-            </div>
-
-            <div v-else-if="panelTab === 'topics'" class="admin-modal__body">
-              <TopicManager />
             </div>
 
             <div v-else class="admin-modal__body">
