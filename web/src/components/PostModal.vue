@@ -7,6 +7,7 @@ import { useContextMenuGesture } from '../composables/useContextMenuGesture'
 import { useItemPermissions } from '../composables/useItemPermissions'
 import { usePostModal } from '../composables/usePostModal'
 import { useSectionRoom } from '../composables/useSectionRoom'
+import { useStronghold } from '../composables/useStronghold'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
 import { actorLocalpart } from '../utils/actor'
 import { WinButton } from '../vendor/winui'
@@ -17,6 +18,7 @@ import ReactionChips from './ReactionChips.vue'
 
 const auth = useAuth()
 const { openAuthModal } = useAuthModal()
+const { isReadOnly } = useStronghold()
 const { openPostSeq, close } = usePostModal()
 const {
   thread,
@@ -38,6 +40,7 @@ const replyDraft = ref('')
 const replyError = ref('')
 const editingSeq = ref<number | null>(null)
 const editingText = ref('')
+const canParticipate = computed(() => auth.isAuthenticated.value && !isReadOnly.value)
 
 function displayName(actor: string): string {
   return members.value.find((m) => m.actor === actor)?.display_name ?? actorLocalpart(actor)
@@ -109,7 +112,7 @@ async function onRetract(seq: number) {
 const postMenuRef = ref<InstanceType<typeof ItemContextMenu> | null>(null)
 const postGesture = useContextMenuGesture(
   (x, y) => postMenuRef.value?.openAt(x, y),
-  () => !!thread.value && (auth.isAuthenticated.value || canEdit(thread.value.post.actor, thread.value.post.created_at) || canRetract(thread.value.post.actor, thread.value.post.created_at)),
+  () => !!thread.value && (canParticipate.value || canEdit(thread.value.post.actor, thread.value.post.created_at) || canRetract(thread.value.post.actor, thread.value.post.created_at)),
 )
 
 // guards mirror MessageBubble's: the in-place edit textarea keeps its own
@@ -150,7 +153,7 @@ async function openReplyMenu(reply: PostReply, x: number, y: number) {
 // reply list is inline markup rather than a MessageBubble-style component,
 // so it predates and duplicates that composable instead of using it.
 function replyCanOpenMenu(reply: PostReply): boolean {
-  return auth.isAuthenticated.value || canEdit(reply.actor, reply.ts) || canRetract(reply.actor, reply.ts)
+  return canParticipate.value || canEdit(reply.actor, reply.ts) || canRetract(reply.actor, reply.ts)
 }
 
 function hasTextSelection(): boolean {
@@ -256,12 +259,12 @@ const replyCanRetract = computed(() => (activeReply.value ? canRetract(activeRep
                 </template>
                 <ReactionChips
                   :reactions="thread.post.reactions"
-                  :can-toggle="auth.isAuthenticated.value"
+                  :can-toggle="canParticipate"
                   @toggle="toggleReaction(thread.post.post_seq, $event)"
                 />
                 <ItemContextMenu
                   ref="postMenuRef"
-                  :can-react="auth.isAuthenticated.value"
+                  :can-react="canParticipate"
                   :can-edit="canEdit(thread.post.actor, thread.post.created_at)"
                   :can-retract="canRetract(thread.post.actor, thread.post.created_at)"
                   :mine="thread.post.reactions?.mine"
@@ -304,7 +307,7 @@ const replyCanRetract = computed(() => (activeReply.value ? canRetract(activeRep
                       </template>
                       <ReactionChips
                         :reactions="reply.reactions"
-                        :can-toggle="auth.isAuthenticated.value"
+                        :can-toggle="canParticipate"
                         @toggle="onReplyToggleReaction(reply, $event)"
                       />
                     </div>
@@ -312,7 +315,7 @@ const replyCanRetract = computed(() => (activeReply.value ? canRetract(activeRep
                 </ul>
                 <ItemContextMenu
                   ref="replyMenuRef"
-                  :can-react="auth.isAuthenticated.value"
+                  :can-react="canParticipate"
                   :can-edit="replyCanEdit"
                   :can-retract="replyCanRetract"
                   :mine="activeReply?.reactions?.mine"
@@ -326,14 +329,17 @@ const replyCanRetract = computed(() => (activeReply.value ? canRetract(activeRep
                   </WinButton>
                 </div>
 
-                <div v-if="auth.isAuthenticated.value" class="post-modal__reply-form">
+                <div v-if="canParticipate" class="post-modal__reply-form">
                   <textarea v-model="replyDraft" rows="2" placeholder="写评论…"></textarea>
                   <p v-if="replyError" class="field__error">{{ replyError }}</p>
                   <WinButton Style="AccentButtonStyle" class="post-modal__reply-submit" @click="submitReply">回复</WinButton>
                 </div>
-                <div v-else class="post-modal__reply-form post-modal__reply-form--guest">
+                <div v-else-if="!auth.isAuthenticated.value" class="post-modal__reply-form post-modal__reply-form--guest">
                   <p class="field__hint">登录后参与评论</p>
                   <WinButton Style="AccentButtonStyle" @click="openAuthModal">登录 / 注册</WinButton>
+                </div>
+                <div v-else class="post-modal__reply-form post-modal__reply-form--guest">
+                  <p class="field__hint">加入据点后参与评论</p>
                 </div>
               </div>
             </div>

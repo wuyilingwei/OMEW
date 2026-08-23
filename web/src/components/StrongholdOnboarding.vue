@@ -1,16 +1,26 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { EMPTY_STATE } from '../assets/mew'
+import { WinButton } from '../vendor/winui'
 import CreateStrongholdCard from './CreateStrongholdCard.vue'
+import DirectoryModal from './DirectoryModal.vue'
+
+const showDirectory = ref(false)
 </script>
 
 <template>
   <div class="onboarding">
     <div class="onboarding-card">
       <img class="onboarding-card__image" :src="EMPTY_STATE.onboarding" alt="" />
-      <h1 class="onboarding-card__title">还没有据点</h1>
-      <p class="onboarding-card__hint">创建一个据点，开始聊天和发帖——你会成为它的第一位领主。</p>
+      <h1 class="onboarding-card__title">选择你的第一个据点</h1>
+      <p class="onboarding-card__hint">加入现有的公开据点，立刻开始聊天和发帖。</p>
+      <WinButton Style="AccentButtonStyle" class="onboarding-card__join" @click="showDirectory = true">
+        发现并加入据点
+      </WinButton>
+      <div class="onboarding-card__divider" role="separator"><span>或者创建新据点</span></div>
       <CreateStrongholdCard />
     </div>
+    <DirectoryModal :open="showDirectory" @close="showDirectory = false" />
   </div>
 </template>
 
@@ -60,5 +70,29 @@ import CreateStrongholdCard from './CreateStrongholdCard.vue'
   font-size: 0.85rem;
   line-height: 1.5;
   color: var(--text-secondary);
+}
+
+.onboarding-card__join {
+  width: 100%;
+}
+
+.onboarding-card__divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: var(--text-tertiary);
+  font-size: 0.78rem;
+}
+
+.onboarding-card__divider::before,
+.onboarding-card__divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--stroke-divider);
+}
+
+.onboarding-card__divider span {
+  white-space: nowrap;
 }
 </style>

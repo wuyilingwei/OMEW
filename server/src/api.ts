@@ -964,10 +964,12 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     return json({ codes: results });
   }
 
-  // ---- server-level role appointment (m0-protocol §7.10, server_owner only) -------
+  // ---- server-level role appointment (m0-protocol §7.10) --------------------------
+  // Listing accounts is available to server_admin so they can assign existing
+  // server-level user groups. Changing server_role remains server_owner-only.
 
   if (method === "GET" && path === "/api/admin/users") {
-    const gate = await requireServerRole(request, env, "owner");
+    const gate = await requireServerRole(request, env, "admin");
     if (gate instanceof Response) return gate;
     const after = url.searchParams.get("after");
     const { results } = await env.DB.prepare(
@@ -1831,15 +1833,19 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const session = await requireSession(request, env);
     if (session instanceof Response) return apiError(401, "AUTH_REQUIRED");
     const actor = session.actor;
-    const { results } = await env.DB.prepare("SELECT stronghold_id FROM stronghold_member_index WHERE actor = ?")
-      .bind(actor)
-      .all<{ stronghold_id: string }>();
+    const isServerAdmin = session.server_role === "owner" || session.server_role === "admin";
+    const { results } = isServerAdmin
+      ? await env.DB.prepare("SELECT DISTINCT stronghold_id FROM stronghold_slug_index ORDER BY stronghold_id")
+        .all<{ stronghold_id: string }>()
+      : await env.DB.prepare("SELECT DISTINCT stronghold_id FROM stronghold_member_index WHERE actor = ? ORDER BY stronghold_id")
+        .bind(actor)
+        .all<{ stronghold_id: string }>();
     const nodes = await Promise.all(
-      results.map(async (row) => {
-        const stub = env.STRONGHOLD_DO.getByName(row.stronghold_id);
+      [...new Set(results.map((row) => row.stronghold_id))].map(async (strongholdId) => {
+        const stub = env.STRONGHOLD_DO.getByName(strongholdId);
         const [config, rooms] = await Promise.all([stub.getConfig(), stub.listRooms()]);
         if (!config) return null;
-        const eff = await effectiveRole(env, row.stronghold_id, session.server_role, actor);
+        const eff = await effectiveRole(env, strongholdId, session.server_role, actor);
         if (!eff) return null;
         const visibleRooms = rooms.filter((room) => canAccessRestrictedRoom(eff.role, room));
         return {
@@ -2278,10 +2284,24 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     let requester: string | null = null;
     let role: Role | null = null;
     if (!(session instanceof Response)) {
+      const member = await strongholdStub.getMember(session.actor);
       const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
-      if (!eff) return errorResponse(403, "OMEW_BANNED", "not a member or banned");
-      requester = session.actor;
-      role = eff.role;
+      if (eff) {
+        requester = session.actor;
+        role = eff.role;
+      } else if (member) {
+        // A banned member is not an anonymous visitor and must not regain
+        // read access by falling through to the public guest path.
+        return errorResponse(403, "OMEW_BANNED", "not a member or banned");
+      } else {
+        // Authenticated accounts without a membership get the same public
+        // read-only preview as an unauthenticated guest. Keep requester null
+        // so private/member-only content cannot be selected by RoomDO.
+        const policy = await getInstanceConfig(env);
+        if (!(policy.allow_guest_browsing && config.visibility === "public")) {
+          return errorResponse(403, "OMEW_BANNED", "not a member or banned");
+        }
+      }
     } else {
       const policy = await getInstanceConfig(env);
       if (!(policy.allow_guest_browsing && config.visibility === "public")) {
@@ -3106,15 +3126,10 @@ async function requireRole(request: Request, env: Env, strongholdId: string, rol
 }
 
 // ---- guest read gate (task 034 / m0-protocol §8.2) -------------------------------
-// A public stronghold MAY serve unauthenticated reads; this instance's
-// allow_guest_browsing toggle decides whether it actually does. An authenticated
-// request keeps the existing membership gate untouched (works the same on a
-// private stronghold as before - guest fallback only ever applies when no actor
-// could be resolved from the request, and only to GET/read routes). No
-// distinction is made between a missing Authorization header and an invalid one -
-// both already collapse to "no session" here, same as every other route in this
-// file. A server_owner/server_admin actor always resolves to "member" (§7.10),
-// even without a real membership row.
+// A public stronghold MAY serve guest reads when allow_guest_browsing is on.
+// Authenticated non-members use that same read-only gate; banned members remain
+// blocked, and private/write routes keep their membership requirements. A
+// server_owner/server_admin still resolves to "member" through the §7.10 overlay.
 async function resolveGuestOrMember(
   request: Request,
   env: Env,
@@ -3132,8 +3147,17 @@ async function resolveGuestOrMember(
   if (!(session instanceof Response)) {
     const member = await stub.getMember(session.actor);
     const eff = await effectiveRole(env, strongholdId, session.server_role, session.actor);
-    if (!eff) return apiError(403, "FORBIDDEN");
-    return { kind: "member", actor: session.actor, member, role: eff.role, config };
+    if (eff) return { kind: "member", actor: session.actor, member, role: eff.role, config };
+    if (member) return apiError(403, "FORBIDDEN");
+
+    // A registered account may browse public strongholds before joining one.
+    // Treat it exactly like a guest for read routes, while all write and WS
+    // token routes continue to use effectiveRole and still reject it.
+    const policy = await getInstanceConfig(env);
+    if (policy.allow_guest_browsing && config.visibility === "public") {
+      return { kind: "guest", config };
+    }
+    return apiError(403, "FORBIDDEN");
   }
 
   const policy = await getInstanceConfig(env);

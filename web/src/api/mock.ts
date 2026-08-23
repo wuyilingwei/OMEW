@@ -546,6 +546,26 @@ function findMember(nodeId: string, actor: string): StrongholdMember | undefined
 function requireManager(token: string, nodeId: string): { user: MockUser; member: StrongholdMember } {
   const user = requireUser(token)
   const member = strongholdMembers.get(nodeId)?.find((candidate) => candidate.actor === user.actor)
+  // Keep the mock aligned with the real API's server-role overlay: a server
+  // owner/admin is owner-equivalent in every stronghold, even if it has a
+  // lower ordinary membership record there.
+  if (user.is_admin) {
+    return {
+      user,
+      member: {
+        actor: user.actor,
+        username: user.username,
+        display_name: user.display_name,
+        role: 'owner',
+        deny_discussion: false,
+        deny_idea: false,
+        deny_comment: false,
+        joined_at: '',
+        is_guest: false,
+        groups: [],
+      },
+    }
+  }
   if (!member || (member.role !== 'owner' && member.role !== 'mod')) throw new ApiRequestError('FORBIDDEN', 403)
   return { user, member }
 }
@@ -947,7 +967,9 @@ export const mockApi = {
 
   async listMyStrongholds(token: string): Promise<StrongholdSummary[]> {
     const user = requireUser(token)
-    const mine = [...strongholds.values()].filter((s) => strongholdMembers.get(s.id)?.some((m) => m.actor === user.actor))
+    const mine = user.is_admin
+      ? [...strongholds.values()]
+      : [...strongholds.values()].filter((s) => strongholdMembers.get(s.id)?.some((m) => m.actor === user.actor))
     return delay(mine.map(toStrongholdSummary))
   },
 
@@ -1165,13 +1187,18 @@ export const mockApi = {
   },
 
   async retractItem(token: string, nodeId: string, resId: string, seq: number): Promise<EditRetractResult> {
-    const user = requireUser(token)
+    const { user, member: manager } = requireManager(token, nodeId)
     const room = requireRoom(nodeId, resId)
     const item = room.items.find((i) => i.seq === seq)
     if (!item) throw new ApiRequestError('OMEW_TARGET_NOT_FOUND', 404)
-    const manager = findMember(nodeId, user.actor)
     const isModerator = manager?.role === 'owner' || manager?.role === 'mod'
     if (item.actor !== user.actor && !isModerator) throw new ApiRequestError('OMEW_FORBIDDEN', 403)
+    // Match RoomDO's local-mod boundary: a mod cannot retract an actual
+    // stronghold owner's item, while the server-role overlay is effective
+    // owner and may do so.
+    if (item.actor !== user.actor && manager.role === 'mod' && findMember(nodeId, item.actor)?.role === 'owner') {
+      throw new ApiRequestError('OMEW_FORBIDDEN', 403)
+    }
     room.tombstoned.add(seq)
     return delay({ seq, target_seq: seq })
   },
@@ -1225,7 +1252,10 @@ export const mockApi = {
   },
 
   async getStrongholdMembers(token: string, nodeId: string, tab: MemberTab): Promise<MemberPage> {
-    requireUser(token)
+    const user = requireUser(token)
+    // The real endpoint permits a member at any local role or the server-role
+    // owner/admin overlay, but not an unrelated authenticated account.
+    if (!user.is_admin && !findMember(nodeId, user.actor)) throw new ApiRequestError('FORBIDDEN', 403)
     if (tab === 'banned') {
       const banned = strongholdBans.get(nodeId) ?? []
       return delay({
@@ -1315,10 +1345,14 @@ export const mockApi = {
   },
 
   async transferOwnership(token: string, nodeId: string, toActor: string): Promise<void> {
-    const { user } = requireManager(token, nodeId)
+    const user = requireUser(token)
     const members = strongholdMembers.get(nodeId) ?? []
-    const currentOwner = members.find((m) => m.actor === user.actor && m.role === 'owner')
-    if (!currentOwner) throw new ApiRequestError('FORBIDDEN', 403)
+    const currentOwner = members.find((m) => m.role === 'owner')
+    const isRealOwner = currentOwner?.actor === user.actor
+    // The real server permits the unique server owner (but never a server
+    // admin) to make this transfer without being a stronghold member.
+    if (!isRealOwner && user.server_role !== 'owner') throw new ApiRequestError('FORBIDDEN', 403)
+    if (!currentOwner) throw new ApiRequestError('NOT_FOUND', 404)
     const target = members.find((m) => m.actor === toActor)
     if (!target) throw new ApiRequestError('NOT_FOUND', 404)
     currentOwner.role = 'member'
@@ -1571,10 +1605,12 @@ export const mockApi = {
     return delay(result, 60)
   },
 
-  // ---- server-level role appointment (task 035/039, server_owner only) --------
+  // ---- server-level role appointment -------------------------------------------
+  // Server admins may list users to assign existing server groups; only the
+  // server owner may change a user's server_role.
 
   async getAdminUsers(token: string, after?: string): Promise<AdminUsersPage> {
-    requireOwner(token)
+    requireAdmin(token)
     const sorted = [...users].sort((a, b) => a.username.localeCompare(b.username))
     const startIndex = after ? sorted.findIndex((u) => u.username === after) + 1 : 0
     const page = sorted.slice(startIndex, startIndex + 50)

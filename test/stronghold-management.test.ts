@@ -51,14 +51,14 @@ describe("GET/PATCH /api/stronghold/:id/config", () => {
     });
   });
 
-  it("rejects a non-member with FORBIDDEN", async () => {
+  it("lets a non-member preview public config", async () => {
     const owner = "@cfgowner2:local";
     const id = await freshStronghold(owner);
     const outsider = await sessionToken("@outsider1:local");
 
     const res = await apiRequest(`/api/stronghold/${id}/config`, { headers: { Authorization: `Bearer ${outsider}` } });
-    expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: "FORBIDDEN" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id, visibility: "public" });
   });
 
   it("lets mod patch non-visibility fields but not visibility", async () => {
