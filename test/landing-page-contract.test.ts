@@ -95,14 +95,15 @@ describe('OMEW landing page contract', () => {
     expect(assetNotice).toContain('官方客户端与站点资源')
   })
 
-  it('reconstructs the seven-depth dream scene with pointer smoothing and passive touch drift', () => {
+  it('reconstructs the eight-depth dream scene with pointer smoothing and passive touch drift', () => {
     expect(landingWorld).toMatch(/v-for="\(layer, index\) in layers"/)
     expect(landingWorld).toContain("key: 'sky'")
     expect(landingWorld).toContain("key: 'atmosphere'")
     expect(landingWorld).toContain("key: 'glow-far'")
     expect(landingWorld).toContain("key: 'glow-near'")
     expect(landingWorld).toContain("key: 'city'")
-    expect(landingWorld).toContain("key: 'clouds'")
+    expect(landingWorld).toContain("key: 'clouds-far'")
+    expect(landingWorld).toContain("key: 'clouds-near'")
     expect(landingWorld).toContain("key: 'foreground'")
     expect(landingWorld).toMatch(/window\.addEventListener\(['"]pointermove['"]/)
     expect(landingWorld).toMatch(/requestAnimationFrame\(animateTowardPointer\)/)
@@ -117,9 +118,28 @@ describe('OMEW landing page contract', () => {
     const layerKeys = [...landingWorld.matchAll(/key:\s*'([^']+)'/g)].map((match) => match[1])
     expect(layerKeys).toContain('atmosphere')
     const atmosphereIndex = layerKeys.indexOf('atmosphere')
-    for (const subject of ['sky', 'city', 'clouds', 'foreground']) {
+    for (const subject of ['sky', 'clouds-far', 'city', 'clouds-near', 'foreground']) {
       expect(atmosphereIndex).toBeGreaterThan(layerKeys.indexOf(subject))
     }
+  })
+
+  it('restores separate far-cloud and near-cloud planes while keeping a front mist veil', () => {
+    expect(landingWorld).toMatch(/key:\s*'clouds-far',\s*src:\s*HOME_WORLD_LAYERS\.atmosphere/)
+    expect(landingWorld).toMatch(/key:\s*'clouds-near',\s*src:\s*HOME_WORLD_LAYERS\.clouds/)
+    expect(landingWorld).toMatch(/clouds-far \.landing-world__art\s*\{[^}]*opacity:\s*0\.66/)
+    expect(landingWorld).toMatch(/clouds-near \.landing-world__art\s*\{[^}]*opacity:\s*0\.86/)
+    expect(landingWorld).toMatch(/atmosphere \.landing-world__art\s*\{[^}]*opacity:\s*0\.32/)
+  })
+
+  it('pulls the city and foreground planes back without flattening their depth order', () => {
+    const scaleOf = (key: string) => Number(landingWorld.match(new RegExp(`key: '${key}'[^\\n]*scale: ([0-9.]+)`))?.[1])
+    const depthOf = (key: string) => Number(landingWorld.match(new RegExp(`key: '${key}'[^\\n]*depthX: ([0-9.]+)`))?.[1])
+    expect(scaleOf('city')).toBeLessThanOrEqual(0.98)
+    expect(scaleOf('foreground')).toBeLessThanOrEqual(1.02)
+    expect(scaleOf('atmosphere')).toBeLessThanOrEqual(1.04)
+    expect(depthOf('clouds-far')).toBeLessThan(depthOf('city'))
+    expect(depthOf('city')).toBeLessThan(depthOf('clouds-near'))
+    expect(depthOf('clouds-near')).toBeLessThan(depthOf('foreground'))
   })
 
   it('gives the far and near halos visibly different depth or placement parameters', () => {

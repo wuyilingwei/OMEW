@@ -16,13 +16,14 @@ type WorldLayer = {
 
 const world = ref<HTMLElement | null>(null)
 const layers: WorldLayer[] = [
-  { key: 'sky', src: HOME_WORLD, depthX: 2, depthY: 1.5, scale: 1.04, idleFromX: '-1px', idleFromY: '0px', idleToX: '1px', idleToY: '-1px' },
+  { key: 'sky', src: HOME_WORLD, depthX: 1.5, depthY: 1, scale: 1.01, idleFromX: '-1px', idleFromY: '0px', idleToX: '1px', idleToY: '-1px' },
+  { key: 'clouds-far', src: HOME_WORLD_LAYERS.atmosphere, depthX: 4, depthY: 2.5, scale: 0.96, idleFromX: '-2px', idleFromY: '1px', idleToX: '2px', idleToY: '-1px' },
   { key: 'glow-far', src: HOME_WORLD_LAYERS.glowFar, depthX: 5, depthY: 3, scale: 1, idleFromX: '-3px', idleFromY: '2px', idleToX: '3px', idleToY: '-2px' },
   { key: 'glow-near', src: HOME_WORLD_LAYERS.glowNear, depthX: 5, depthY: 3, scale: 1, idleFromX: '-3px', idleFromY: '2px', idleToX: '3px', idleToY: '-2px' },
-  { key: 'city', src: HOME_WORLD_LAYERS.city, depthX: 13, depthY: 8, scale: 1.07, idleFromX: '-5px', idleFromY: '3px', idleToX: '5px', idleToY: '-3px' },
-  { key: 'clouds', src: HOME_WORLD_LAYERS.clouds, depthX: 18, depthY: 12, scale: 1.09, idleFromX: '7px', idleFromY: '-4px', idleToX: '-7px', idleToY: '4px' },
-  { key: 'foreground', src: HOME_WORLD_LAYERS.foreground, depthX: 26, depthY: 18, scale: 1.12, idleFromX: '-9px', idleFromY: '6px', idleToX: '9px', idleToY: '-6px' },
-  { key: 'atmosphere', src: HOME_WORLD_LAYERS.atmosphere, depthX: 32, depthY: 23, scale: 1.16, idleFromX: '-11px', idleFromY: '7px', idleToX: '11px', idleToY: '-7px' },
+  { key: 'city', src: HOME_WORLD_LAYERS.city, depthX: 8, depthY: 5, scale: 0.98, idleFromX: '-4px', idleFromY: '2px', idleToX: '4px', idleToY: '-2px' },
+  { key: 'clouds-near', src: HOME_WORLD_LAYERS.clouds, depthX: 12, depthY: 7, scale: 1, idleFromX: '5px', idleFromY: '-3px', idleToX: '-5px', idleToY: '3px' },
+  { key: 'foreground', src: HOME_WORLD_LAYERS.foreground, depthX: 17, depthY: 11, scale: 1.02, idleFromX: '-6px', idleFromY: '4px', idleToX: '6px', idleToY: '-4px' },
+  { key: 'atmosphere', src: HOME_WORLD_LAYERS.atmosphere, depthX: 21, depthY: 14, scale: 1.04, idleFromX: '-7px', idleFromY: '4px', idleToX: '7px', idleToY: '-4px' },
 ]
 
 let layerElements: HTMLElement[] = []
@@ -177,6 +178,18 @@ onBeforeUnmount(() => {
   object-fit: cover;
   object-position: center;
   -webkit-user-drag: none;
+}
+
+.landing-world__layer--clouds-far .landing-world__art {
+  opacity: 0.66;
+}
+
+.landing-world__layer--clouds-near .landing-world__art {
+  opacity: 0.86;
+}
+
+.landing-world__layer--atmosphere .landing-world__art {
+  opacity: 0.32;
 }
 
 .landing-world__layer--glow-far,
