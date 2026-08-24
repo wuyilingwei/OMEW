@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useAuth } from '../composables/useAuth'
 import { useImageAttachments } from '../composables/useImageAttachments'
 import { useSection } from '../composables/useSection'
@@ -11,6 +11,8 @@ import { WinButton, WinDropDownButton, WinInfoBar } from '../vendor/winui'
 import CoverUploader from './CoverUploader.vue'
 import ImageEditor from './ImageEditor.vue'
 import AppIcon from './icons/AppIcon.vue'
+
+const MarkdownContent = defineAsyncComponent(() => import('./MarkdownContent.vue'))
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -25,8 +27,11 @@ const targetSectionId = ref('')
 const targetSection = computed(() => resolveSectionTarget(sectionRooms.value, targetSectionId.value, selectedSection.value?.id ?? ''))
 const composeError = ref('')
 const imageInput = ref<HTMLInputElement | null>(null)
+const textInput = ref<HTMLTextAreaElement | null>(null)
 const imageQueue = ref<File[]>([])
 const editingImage = ref<File | null>(null)
+const editorMode = ref<'edit' | 'preview'>('edit')
+const canPublish = computed(() => !attachments.uploading.value && !editingImage.value && imageQueue.value.length === 0)
 
 const isDirty = computed(
   () =>
@@ -41,6 +46,7 @@ function resetForm() {
   form.text = ''
   form.cover = ''
   composeError.value = ''
+  editorMode.value = 'edit'
   attachments.reset()
 }
 
@@ -51,6 +57,10 @@ function requestClose() {
 }
 
 async function submitPost() {
+  if (!canPublish.value) {
+    composeError.value = '图片仍在处理中，请完成插入后再发布'
+    return
+  }
   const titleError = requiredMaxLengthError(form.title, 64, '标题')
   const textError = requiredError(form.text, '正文')
   if (titleError || textError) {
@@ -119,8 +129,30 @@ async function queueImages(files: Iterable<File>) {
 }
 
 async function confirmImage(blob: Blob) {
-  await attachments.addProcessed(blob)
+  const uploaded = await attachments.addProcessed(blob)
+  if (uploaded) insertAtCursor(`![图片](${uploaded.url})`)
   editingImage.value = imageQueue.value.shift() ?? null
+}
+
+function insertAtCursor(markdown: string) {
+  const input = textInput.value
+  const start = input?.selectionStart ?? form.text.length
+  const end = input?.selectionEnd ?? form.text.length
+  const prefix = form.text.slice(0, start)
+  const suffix = form.text.slice(end)
+  const spacing = prefix && !prefix.endsWith('\n') ? '\n\n' : ''
+  form.text = `${prefix}${spacing}${markdown}${suffix}`
+  void nextTick(() => {
+    textInput.value?.focus()
+    const position = prefix.length + spacing.length + markdown.length
+    textInput.value?.setSelectionRange(position, position)
+  })
+}
+
+function removeInsertedImage(id: string, url: string) {
+  attachments.remove(id)
+  const escapedUrl = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  form.text = form.text.replace(new RegExp(`!\\[[^\\]]*\\]\\(\\s*${escapedUrl}(?:\\s+[^)]*)?\\)`, 'g'), '')
 }
 
 function cancelImage() {
@@ -160,7 +192,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               <input v-model="form.title" type="text" maxlength="64" placeholder="标题（≤64 字）" />
             </div>
             <div class="field">
-              <textarea v-model="form.text" class="field__textarea--fixed" rows="6" placeholder="正文" @paste="onTextPaste"></textarea>
+              <div class="compose-modal__editor-tabs" role="tablist" aria-label="正文模式">
+                <button type="button" role="tab" :aria-selected="editorMode === 'edit'" class="compose-modal__editor-tab" :class="{ selected: editorMode === 'edit' }" @click="editorMode = 'edit'">编辑</button>
+                <button type="button" role="tab" :aria-selected="editorMode === 'preview'" class="compose-modal__editor-tab" :class="{ selected: editorMode === 'preview' }" @click="editorMode = 'preview'">预览</button>
+              </div>
+              <textarea v-if="editorMode === 'edit'" ref="textInput" v-model="form.text" class="field__textarea--fixed" rows="8" placeholder="正文（支持 Markdown）" aria-label="正文（支持 Markdown）" @paste="onTextPaste"></textarea>
+              <div v-else class="compose-modal__preview" aria-live="polite"><MarkdownContent :text="form.text" /></div>
             </div>
             <div class="field">
               <span class="field__label">发布到话题组</span>
@@ -178,17 +215,17 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               <CoverUploader v-if="auth.token.value" v-model="form.cover" :token="auth.token.value" crop-label="帖子封面 16:9" :crop-ratio="16 / 9" />
             </div>
             <div class="field">
-              <span class="field__label">配图（可选）</span>
+              <span class="field__label">插入图片（可选）</span>
               <input ref="imageInput" class="compose-modal__image-input" type="file" accept="image/*" multiple @change="onImageInputChange" />
               <div class="compose-modal__images">
                 <div v-for="item in attachments.items.value" :key="item.id" class="compose-modal__image">
-                  <img :src="item.url" alt="" />
-                  <button type="button" class="compose-modal__image-remove" title="移除" @click="attachments.remove(item.id)">
+                  <img :src="item.url" alt="已上传图片" />
+                  <button type="button" class="compose-modal__image-remove" title="移除图片及其 Markdown 引用" @click="removeInsertedImage(item.id, item.url)">
                     <AppIcon name="close" :size="10" />
                   </button>
                 </div>
                 <WinButton Style="DefaultButtonStyle" :IsEnabled="!attachments.uploading.value" @click="pickImages">
-                  {{ attachments.uploading.value ? '上传中…' : '添加图片' }}
+                  {{ attachments.uploading.value ? '上传中…' : '上传并插入 Markdown 图片' }}
                 </WinButton>
               </div>
               <p v-if="attachments.error.value" class="field__error">{{ attachments.error.value }}</p>
@@ -200,7 +237,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
           <div class="compose-modal__actions">
             <WinButton Style="SubtleButtonStyle" @click="requestClose">取消</WinButton>
-            <WinButton Style="AccentButtonStyle" @click="submitPost">发布</WinButton>
+            <WinButton Style="AccentButtonStyle" :IsEnabled="canPublish" @click="submitPost">发布</WinButton>
           </div>
         </div>
       </div>
@@ -316,6 +353,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   overflow: hidden;
   clip: rect(0 0 0 0);
 }
+
+.compose-modal__editor-tabs { display: flex; gap: 0.25rem; margin-bottom: 0.4rem; }
+.compose-modal__editor-tab { border: 0; border-radius: var(--radius-xs); padding: 0.3rem 0.55rem; color: var(--text-secondary); background: transparent; }
+.compose-modal__editor-tab.selected { color: var(--text-primary); background: var(--card-bg-secondary); }
+.compose-modal__editor-tab:focus-visible { outline: 2px solid rgb(var(--colors-primary)); outline-offset: 2px; }
+.compose-modal__preview { min-height: 12rem; padding: 0.65rem 0.75rem; border: 1px solid var(--card-stroke); border-radius: var(--radius-sm); background: var(--input-bg, var(--card-bg)); }
 
 .compose-modal__images {
   display: flex;

@@ -23,22 +23,25 @@ export function useImageAttachments() {
   const items = ref<MediaAttachment[]>([])
   const uploading = ref(false)
   const error = ref('')
-  async function addProcessed(blob: Blob) {
+  async function addProcessed(blob: Blob): Promise<MediaAttachment | null> {
     const token = auth.token.value
-    if (!token) return
+    if (!token) return null
     const preflight = fileUploadError(blob, usage.value)
     if (preflight) {
       error.value = preflight
-      return
+      return null
     }
     error.value = ''
     uploading.value = true
     try {
       const result = await api.uploadMedia(token, blob)
-      items.value.push({ id: result.id, url: result.url, mime: result.mime })
+      const item = { id: result.id, url: result.url, mime: result.mime }
+      items.value.push(item)
       noteUploaded(result.size)
+      return item
     } catch (err) {
       error.value = err instanceof ApiRequestError ? (UPLOAD_ERROR_MESSAGES[err.code] ?? '上传失败，请稍后重试') : '上传失败，请稍后重试'
+      return null
     } finally {
       uploading.value = false
     }

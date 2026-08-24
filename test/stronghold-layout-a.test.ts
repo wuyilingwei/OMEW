@@ -23,6 +23,14 @@ describe('layout A stronghold card contract', () => {
     expect(leftColumnSource).toContain('const { posts, postsLoading, hasMorePosts, loadMorePosts, postRoom, toggleReaction } = useSectionRoom()')
   })
 
+  it('shares one compact toolbar between the scrollable topic group controls and post action', () => {
+    expect(leftColumnSource).toContain('class="left-column__toolbar"')
+    expect(leftColumnSource).toContain('class="left-column__toolbar-action"')
+    expect(leftColumnSource).toContain('flex: 1 1 auto;')
+    expect(leftColumnSource).toContain('overflow-x: auto;')
+    expect(leftColumnSource.indexOf('class="left-column__section-nav"')).toBeLessThan(leftColumnSource.indexOf('class="left-column__toolbar-action"'))
+  })
+
   it('keeps post actions in the left column and leaves the right action area available', () => {
     expect(leftColumnSource).toContain('class="left-column__compose-btn"')
     expect(leftColumnSource).toContain('登录后发帖')

@@ -65,50 +65,52 @@ function onSectionKeydown(event: KeyboardEvent, index: number) {
     </div>
 
     <div class="left-column__header">
-      <div class="left-column__header-row">
-        <WinButton
-          v-if="postRoom && canParticipate"
-          Style="AccentButtonStyle"
-          class="left-column__compose-btn"
-          @click="openCompose"
-        >
-          发帖
-        </WinButton>
-        <WinButton v-else-if="postRoom && !auth.isAuthenticated.value" Style="DefaultButtonStyle" class="left-column__compose-btn" @click="openAuthModal">
-          登录后发帖
-        </WinButton>
-        <span v-else-if="postRoom" class="left-column__preview-hint">加入后发帖</span>
-      </div>
-      <div class="left-column__section-nav" role="tablist" aria-label="帖子话题组">
-        <WinButton
-          v-for="(room, index) in sectionRooms"
-          :key="room.id"
-          :Style="selectedSection?.id === room.id ? 'AccentButtonStyle' : 'DefaultButtonStyle'"
-          class="left-column__section-button"
-          role="tab"
-          :aria-selected="selectedSection?.id === room.id"
-          :tabindex="selectedSection?.id === room.id ? 0 : -1"
-          :aria-label="`切换到话题组 ${room.name}`"
-          :title="room.name"
-          @click="selectSection(room)"
-          @keydown="onSectionKeydown($event, index)"
-        >
-          <span class="left-column__section-hash" aria-hidden="true">#</span>
-          <span class="left-column__section-label">{{ room.name }}</span>
-        </WinButton>
-        <WinButton
-          v-if="!sectionRooms.length"
-          Style="DefaultButtonStyle"
-          class="left-column__section-button left-column__section-placeholder"
-          role="tab"
-          :aria-selected="false"
-          :tabindex="-1"
-          :IsEnabled="false"
-          aria-label="暂无可用话题组"
-        >
-          <span class="left-column__section-hash" aria-hidden="true">#</span>
-          <span class="left-column__section-label">帖子</span>
-        </WinButton>
+      <div class="left-column__toolbar">
+        <div class="left-column__section-nav" role="tablist" aria-label="帖子话题组">
+          <WinButton
+            v-for="(room, index) in sectionRooms"
+            :key="room.id"
+            :Style="selectedSection?.id === room.id ? 'AccentButtonStyle' : 'DefaultButtonStyle'"
+            class="left-column__section-button"
+            role="tab"
+            :aria-selected="selectedSection?.id === room.id"
+            :tabindex="selectedSection?.id === room.id ? 0 : -1"
+            :aria-label="`切换到话题组 ${room.name}`"
+            :title="room.name"
+            @click="selectSection(room)"
+            @keydown="onSectionKeydown($event, index)"
+          >
+            <span class="left-column__section-hash" aria-hidden="true">#</span>
+            <span class="left-column__section-label">{{ room.name }}</span>
+          </WinButton>
+          <WinButton
+            v-if="!sectionRooms.length"
+            Style="DefaultButtonStyle"
+            class="left-column__section-button left-column__section-placeholder"
+            role="tab"
+            :aria-selected="false"
+            :tabindex="-1"
+            :IsEnabled="false"
+            aria-label="暂无可用话题组"
+          >
+            <span class="left-column__section-hash" aria-hidden="true">#</span>
+            <span class="left-column__section-label">帖子</span>
+          </WinButton>
+        </div>
+        <div class="left-column__toolbar-action">
+          <WinButton
+            v-if="postRoom && canParticipate"
+            Style="AccentButtonStyle"
+            class="left-column__compose-btn"
+            @click="openCompose"
+          >
+            发帖
+          </WinButton>
+          <WinButton v-else-if="postRoom && !auth.isAuthenticated.value" Style="DefaultButtonStyle" class="left-column__compose-btn" @click="openAuthModal">
+            登录后发帖
+          </WinButton>
+          <span v-else-if="postRoom" class="left-column__preview-hint">加入后发帖</span>
+        </div>
       </div>
     </div>
 
@@ -147,10 +149,7 @@ function onSectionKeydown(event: KeyboardEvent, index: number) {
 
 .left-column__header {
   flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-  padding: 0.75rem 1rem;
+  padding: 0.55rem 0.75rem;
   color: var(--text-primary);
   background: var(--app-bg);
   border-bottom: 1px solid var(--stroke-divider);
@@ -211,15 +210,22 @@ function onSectionKeydown(event: KeyboardEvent, index: number) {
   color: var(--text-secondary);
 }
 
-.left-column__header-row {
+.left-column__toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
+  min-width: 0;
+  gap: 0.45rem;
   min-height: 2rem;
 }
 
+.left-column__toolbar-action {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+}
+
 .left-column__compose-btn {
+  white-space: nowrap;
   font-size: 0.78rem;
 }
 
@@ -231,14 +237,13 @@ function onSectionKeydown(event: KeyboardEvent, index: number) {
 
 .left-column__section-nav {
   display: flex;
-  flex: 0 0 auto;
-  width: 100%;
+  flex: 1 1 auto;
   min-width: 0;
   gap: 0.35rem;
   overflow-x: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--ctrl-border) transparent;
-  padding: 0.1rem 0 0.2rem;
+  padding: 0.1rem 0;
 }
 
 .left-column__section-button {
@@ -301,6 +306,19 @@ function onSectionKeydown(event: KeyboardEvent, index: number) {
     width: 100%;
     min-height: 0;
     border-right: none;
+  }
+
+  .left-column__header {
+    padding-inline: 0.6rem;
+  }
+
+  .left-column__toolbar {
+    gap: 0.35rem;
+  }
+
+  .left-column__section-button {
+    max-width: 9rem;
+    padding-inline: 0.55rem;
   }
 }
 </style>
