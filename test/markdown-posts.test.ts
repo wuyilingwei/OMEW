@@ -3,6 +3,7 @@ import composePostSource from '../web/src/components/ComposePostModal.vue?raw'
 import postModalSource from '../web/src/components/PostModal.vue?raw'
 import { renderMarkdown } from '../web/src/utils/markdown'
 import { markdownEmbedsImageUrl, markdownPreview as clientPreview } from '../web/src/utils/markdownPreview'
+import { trustLocalMediaUrl } from '../web/src/utils/trustedLocalMedia'
 import { markdownPreview as serverPreview } from '../server/src/markdown-preview'
 
 describe('post Markdown rendering', () => {
@@ -23,6 +24,13 @@ describe('post Markdown rendering', () => {
     expect(html).not.toContain('href="/not-media"')
     const moreUnsafe = renderMarkdown('[protocol relative](//bad.example) [file](file:///tmp/x) [vb](vbscript:msgbox(1))')
     expect(moreUnsafe).not.toContain('href=')
+    expect(renderMarkdown('![blob](blob:https://example.com/untrusted)')).not.toContain('<img')
+  })
+
+  it('renders only mock-upload object URLs registered by the internal uploader', () => {
+    const url = 'blob:http://127.0.0.1:5173/mock-upload'
+    trustLocalMediaUrl(url)
+    expect(renderMarkdown(`![mock upload](${url})`)).toContain(`src="${url}"`)
   })
 
   it('hardens external links and shares the renderer between preview and published posts', () => {

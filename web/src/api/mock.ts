@@ -3,6 +3,7 @@
 // data path in practice since USE_MOCK is false by default.
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/browser'
 import { isReservedUsername } from '../utils/reservedUsernames'
+import { trustLocalMediaUrl } from '../utils/trustedLocalMedia'
 import { ApiRequestError } from './errors'
 import type { RoomSocketHandlers, RoomTransport } from './roomSocket'
 import type {
@@ -1676,7 +1677,9 @@ export const mockApi = {
     if (storageUsage.used + file.size > config.user_storage_quota_bytes) throw new ApiRequestError('QUOTA_EXCEEDED', 413)
     onProgress?.(100)
     const id = `mock-upload-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
-    const result: MediaUploadResult = { id, url: URL.createObjectURL(file), size: file.size, mime: file.type }
+    const url = URL.createObjectURL(file)
+    trustLocalMediaUrl(url)
+    const result: MediaUploadResult = { id, url, size: file.size, mime: file.type }
     mediaStore.set(id, result)
     storageUsage.used += file.size
     return delay(result, 60)

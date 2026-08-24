@@ -1,4 +1,5 @@
 import MarkdownIt from 'markdown-it'
+import { isTrustedLocalMediaUrl } from './trustedLocalMedia'
 
 const renderer = new MarkdownIt({ html: false, linkify: true, breaks: true })
 
@@ -6,6 +7,9 @@ const renderer = new MarkdownIt({ html: false, linkify: true, breaks: true })
 // its accepted set further so uploaded images remain on the existing media API.
 renderer.validateLink = (url: string) => {
   if (/^\/media(?:\/|$)/.test(url)) return true
+  // The dev-only mock API uses browser-owned object URLs for uploaded images.
+  // Only URLs created and registered by that internal uploader are accepted.
+  if (isTrustedLocalMediaUrl(url)) return true
   try {
     const parsed = new URL(url)
     return parsed.protocol === 'https:' || parsed.protocol === 'http:' || parsed.protocol === 'mailto:'
