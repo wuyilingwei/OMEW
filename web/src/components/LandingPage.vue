@@ -3,6 +3,7 @@ import { computed, watch } from 'vue'
 import { useStronghold } from '../composables/useStronghold'
 import { WinButton } from '../vendor/winui'
 import AppIcon from './icons/AppIcon.vue'
+import LandingUpdates from './LandingUpdates.vue'
 import LandingWorld from './LandingWorld.vue'
 
 const props = defineProps<{ authenticated: boolean; guestBrowsingAllowed: boolean }>()
@@ -141,6 +142,8 @@ watch(
         </li>
       </ul>
     </section>
+
+    <LandingUpdates />
   </main>
 </template>
 
@@ -537,6 +540,7 @@ h1 {
   }
 
   .landing-page__directory-list { grid-template-columns: 1fr; }
+
 }
 
 @media (max-width: 390px) {
