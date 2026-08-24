@@ -18,4 +18,14 @@ describe('asset-license donation boundary', () => {
     expect(terms).toContain('never qualify as purely voluntary donations')
     expect(readme).toContain('众筹不属于纯捐助')
   })
+
+  it('permits only non-intrusive advertising that recovers necessary service costs', () => {
+    expect(terms).toContain('广告收入仅可用于且不得超过部署的实际、合理的必要服务成本')
+    expect(terms).toContain('不得遮挡内容、弹窗或全屏插页')
+    expect(terms).toContain('也不得以浏览、点击或关闭广告作为访问或继续使用部署的条件')
+    expect(terms).toContain('used only to cover, and does not exceed')
+    expect(terms).toContain('do not obscure content or use pop-ups or full-screen interstitials')
+    expect(terms).toContain('does not satisfy Section 3.2')
+    expect(readme).toContain('非侵入式广告仅可覆盖必要服务成本')
+  })
 })

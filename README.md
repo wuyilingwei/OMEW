@@ -17,6 +17,6 @@ M0(协议规范)草案完成,M1(单实例核心)开发中。
 
 OMEW **软件代码**采用 [AGPL-3.0-only](LICENSE)，包括商业使用在内均依照 AGPL 执行。
 
-OMEW Logo、favicon 与 Mew 官方美术不属于 AGPL，仅依照[《OMEW 资产使用条款》](ASSET-LICENSE.md)授权用于非商业部署。仅接受无对价的纯自愿捐助不视为商业使用；捐助最多可获捐助头衔或经本人同意展示身份，众筹不属于纯捐助。带有其他收入或商业行为的部署必须移除或替换全部 Logo 与 Mew 官方美术资产。
+OMEW Logo、favicon 与 Mew 官方美术不属于 AGPL，仅依照[《OMEW 资产使用条款》](ASSET-LICENSE.md)授权用于非商业部署。仅接受无对价的纯自愿捐助不视为商业使用；捐助最多可获捐助头衔或经本人同意展示身份，众筹不属于纯捐助。符合条款的非侵入式广告仅可覆盖必要服务成本。带有其他收入或商业行为的部署必须移除或替换全部 Logo 与 Mew 官方美术资产。
 
 `stamp-*` 第三方贴纸未获得仓库可转授的许可，不属于上述非商业授权；使用或分发前须自行取得许可或删除。详细来源与边界见 [Mew 资产 NOTICE](assets/mew/NOTICE.md)及 [Logo NOTICE](assets/logo/NOTICE.md)。

@@ -18,11 +18,13 @@ Mew 官方美术依据 Mew 原运营方北京时代传浮科技授予的非商�
 “非商业 OMEW 部署”是指部署者、运营者及其关联方均未因该部署直接或间接取得收入、对价或其他商业利益的部署。以下情形包括但不限于商业使用：
 
 - 收取访问费、会员费、订阅费、服务费或其他费用；
-- 广告、商业赞助、付费推广、品牌植入、引流或获客；
+- 不符合第 3.2 节的广告、商业赞助、付费推广、品牌植入、引流或获客；
 - 销售软件、托管服务、定制、技术支持或相关商品；
 - 将部署用于营利组织的内部经营或其他营利活动。
 
-## 3. 纯捐助例外
+## 3. 捐助与成本回收广告例外
+
+### 3.1 纯捐助
 
 仅接受纯自愿捐助不会单独使部署构成商业使用，但捐助必须同时满足：
 
@@ -32,7 +34,17 @@ Mew 官方美术依据 Mew 原运营方北京时代传浮科技授予的非商�
 
 捐助者鸣谢仅可包括捐助头衔，和/或展示其自行选择且明确同意公开的身份信息（例如昵称）。鸣谢不得附带链接、广告、推广文案或其他商业利益。
 
-鉴于 OMEW 的部署成本极低，众筹、以众筹名义收取的款项或其他以筹资为目的的募资，一律不属于本节的纯自愿捐助，即使未提供回报。会费、订阅、赞助、广告费、预售、众筹（无论是否有回报）或其他带有对价的付款，即使被称为“捐助”，仍属于商业使用。
+鉴于 OMEW 的部署成本极低，众筹、以众筹名义收取的款项或其他以筹资为目的的募资，一律不属于本节的纯自愿捐助，即使未提供回报。会费、订阅、赞助、广告费（符合第 3.2 节者除外）、预售、众筹（无论是否有回报）或其他带有对价的付款，即使被称为“捐助”，仍属于商业使用。
+
+### 3.2 非侵入式成本回收广告
+
+展示非侵入式广告不会单独使部署构成商业使用，但必须同时满足：
+
+- 广告收入仅可用于且不得超过部署的实际、合理的必要服务成本，包括托管、存储、带宽、域名及处理广告所必需的直接第三方费用；
+- 广告必须清晰标识，不得伪装成 OMEW 内容；不得遮挡内容、弹窗或全屏插页；
+- 广告不得自动播放声音或视频，不得中断、延迟或降低正常功能，也不得以浏览、点击或关闭广告作为访问或继续使用部署的条件。
+
+任何不符合本节条件的广告，以及广告收入超过必要服务成本的部分，均属于商业使用。
 
 ## 4. 商业部署必须移除受限资产
 
@@ -56,11 +68,19 @@ The OMEW software code is licensed under GNU AGPL v3.0. These separate terms app
 
 The Restricted Assets are the OMEW logo and favicon, and the Mew first-party artwork whose filenames do not begin with `stamp-`, including converted, modified, and derivative versions. They may be copied, modified, displayed, and distributed only as part of a non-commercial OMEW deployment that retains these terms and the related notices.
 
-A deployment is commercial if its deployer, operator, or an affiliate receives revenue, consideration, or another commercial benefit directly or indirectly in connection with it. This includes fees, subscriptions, advertising, commercial sponsorship, paid promotion, sales, hosting, customization, support, merchandise, lead generation, and use in a for-profit organization's internal operations.
+A deployment is commercial if its deployer, operator, or an affiliate receives revenue, consideration, or another commercial benefit directly or indirectly in connection with it. This includes fees, subscriptions, advertising that does not satisfy Section 3.2, commercial sponsorship, paid promotion, sales, hosting, customization, support, merchandise, lead generation, and use in a for-profit organization's internal operations.
 
 Purely voluntary donations are excepted only when they are not required, have no minimum amount, provide no features, content, priority, goods, services, promotion, or other consideration, and donors receive the same features, content, and services as non-donors. Donor recognition is limited to a donor title and/or identity information the donor chose and expressly consented to make public, such as a display name. Recognition may not include links, advertising, promotional copy, or another commercial benefit.
 
-Because OMEW deployment costs are extremely low, crowdfunding, money collected under the name of crowdfunding, and other fundraising intended to raise funds never qualify as purely voluntary donations, even when no reward is provided. Fees, subscriptions, sponsorship, advertising fees, pre-sales, crowdfunding (with or without a reward), or any other payment with consideration remain commercial even if called a donation.
+Because OMEW deployment costs are extremely low, crowdfunding, money collected under the name of crowdfunding, and other fundraising intended to raise funds never qualify as purely voluntary donations, even when no reward is provided. Fees, subscriptions, sponsorship, advertising fees other than advertising permitted by Section 3.2, pre-sales, crowdfunding (with or without a reward), or any other payment with consideration remain commercial even if called a donation.
+
+Non-intrusive advertising does not alone make a deployment commercial only when all of the following are true:
+
+- advertising revenue is used only to cover, and does not exceed, the deployment's actual, reasonable, necessary service costs, including hosting, storage, bandwidth, domains, and direct third-party costs necessary to serve advertising;
+- advertisements are clearly identified, are not presented as OMEW content, and do not obscure content or use pop-ups or full-screen interstitials;
+- advertisements do not automatically play audio or video, interrupt, delay, or degrade normal functionality, or make viewing, clicking, or closing an advertisement a condition of accessing or continuing to use the deployment.
+
+Any advertising that does not meet these conditions, and any advertising revenue beyond necessary service costs, is commercial use.
 
 Commercial deployments may continue to use the AGPL-licensed code, but must remove or replace every Restricted Asset from source files, builds, public pages, application icons, metadata, and promotional materials before beginning commercial activity. Commercial use of a Restricted Asset requires separate written permission from the applicable rights holder.
 
