@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useAuth } from '../composables/useAuth'
 import { useImageAttachments } from '../composables/useImageAttachments'
 import { useSection } from '../composables/useSection'
@@ -10,8 +10,9 @@ import { requiredError, requiredMaxLengthError } from '../utils/validate'
 import { WinButton, WinDropDownButton, WinInfoBar } from '../vendor/winui'
 import CoverUploader from './CoverUploader.vue'
 import ImageEditor from './ImageEditor.vue'
-import MarkdownContent from './MarkdownContent.vue'
 import AppIcon from './icons/AppIcon.vue'
+
+const MarkdownContent = defineAsyncComponent(() => import('./MarkdownContent.vue'))
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()

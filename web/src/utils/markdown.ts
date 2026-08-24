@@ -22,6 +22,14 @@ renderer.renderer.rules.link_open = (tokens, index, options, env, self) => {
   return defaultLinkOpen ? defaultLinkOpen(tokens, index, options, env, self) : self.renderToken(tokens, index, options)
 }
 
+const defaultImage = renderer.renderer.rules.image
+renderer.renderer.rules.image = (tokens, index, options, env, self) => {
+  const token = tokens[index]!
+  token.attrSet('loading', 'lazy')
+  token.attrSet('referrerpolicy', 'no-referrer')
+  return defaultImage ? defaultImage(tokens, index, options, env, self) : self.renderToken(tokens, index, options)
+}
+
 export function renderMarkdown(text: string): string {
   return renderer.render(text)
 }

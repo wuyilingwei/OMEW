@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import composePostSource from '../web/src/components/ComposePostModal.vue?raw'
 import postModalSource from '../web/src/components/PostModal.vue?raw'
 import { renderMarkdown } from '../web/src/utils/markdown'
-import { markdownPreview as clientPreview } from '../web/src/utils/markdownPreview'
+import { markdownEmbedsImageUrl, markdownPreview as clientPreview } from '../web/src/utils/markdownPreview'
 import { markdownPreview as serverPreview } from '../server/src/markdown-preview'
 
 describe('post Markdown rendering', () => {
@@ -10,7 +10,8 @@ describe('post Markdown rendering', () => {
     const html = renderMarkdown('# Title\n\n**bold** and ![photo](/media/file-1)')
     expect(html).toContain('<h1>Title</h1>')
     expect(html).toContain('<strong>bold</strong>')
-    expect(html).toContain('<img src="/media/file-1" alt="photo">')
+    expect(html).toContain('<img src="/media/file-1" alt="photo" loading="lazy" referrerpolicy="no-referrer">')
+    expect(markdownEmbedsImageUrl('![photo](/media/file-1 "title")', '/media/file-1')).toBe(true)
   })
 
   it('escapes raw HTML and refuses unsafe or non-media relative URLs', () => {
@@ -20,6 +21,8 @@ describe('post Markdown rendering', () => {
     expect(html).not.toContain('href="javascript:')
     expect(html).not.toContain('src="data:')
     expect(html).not.toContain('href="/not-media"')
+    const moreUnsafe = renderMarkdown('[protocol relative](//bad.example) [file](file:///tmp/x) [vb](vbscript:msgbox(1))')
+    expect(moreUnsafe).not.toContain('href=')
   })
 
   it('hardens external links and shares the renderer between preview and published posts', () => {

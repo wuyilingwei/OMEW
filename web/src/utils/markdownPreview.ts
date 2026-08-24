@@ -12,3 +12,8 @@ export function markdownPreview(text: string, limit = 80): string {
     .trim()
     .slice(0, limit)
 }
+
+export function markdownEmbedsImageUrl(text: string, url: string): boolean {
+  const escapedUrl = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`!\\[[^\\]]*\\]\\(\\s*${escapedUrl}(?:\\s+[^)]*)?\\)`).test(text)
+}

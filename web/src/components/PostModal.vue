@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { PostReply } from '../api/types'
 import { useAuth } from '../composables/useAuth'
 import { useAuthModal } from '../composables/useAuthModal'
@@ -10,13 +10,15 @@ import { useSectionRoom } from '../composables/useSectionRoom'
 import { useStronghold } from '../composables/useStronghold'
 import { useStrongholdMembers } from '../composables/useStrongholdMembers'
 import { actorLocalpart } from '../utils/actor'
+import { markdownEmbedsImageUrl } from '../utils/markdownPreview'
 import { WinButton } from '../vendor/winui'
 import AvatarBadge from './AvatarBadge.vue'
 import AppIcon from './icons/AppIcon.vue'
 import ItemContextMenu from './ItemContextMenu.vue'
 import MediaGrid from './MediaGrid.vue'
-import MarkdownContent from './MarkdownContent.vue'
 import ReactionChips from './ReactionChips.vue'
+
+const MarkdownContent = defineAsyncComponent(() => import('./MarkdownContent.vue'))
 
 const auth = useAuth()
 const { openAuthModal } = useAuthModal()
@@ -265,7 +267,7 @@ const replyCanRetract = computed(() => (activeReply.value ? canRetract(activeRep
 const visiblePostMedia = computed(() => {
   const post = thread.value?.post
   if (!post?.media?.length) return []
-  return post.media.filter((item) => !post.text.includes(`](${item.url})`))
+  return post.media.filter((item) => !markdownEmbedsImageUrl(post.text, item.url))
 })
 </script>
 
