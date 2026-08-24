@@ -149,11 +149,9 @@ onMounted(async () => {
   gap: 0.4rem;
   padding: 2rem 1.5rem 1.5rem;
   border-radius: var(--radius-md);
-  background: var(--flyout-bg, var(--layer-default));
+  background: var(--dialog-background);
   border: 1px solid var(--card-stroke);
   box-shadow: var(--shadow-dialog);
-  backdrop-filter: blur(32px) saturate(160%);
-  -webkit-backdrop-filter: blur(32px) saturate(160%);
 }
 
 .member-info-card--inline {

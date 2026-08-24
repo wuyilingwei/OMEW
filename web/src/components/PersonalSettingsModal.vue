@@ -715,11 +715,9 @@ watch(
   display: flex;
   flex-direction: column;
   border-radius: var(--radius-md);
-  background: var(--flyout-bg, var(--layer-default));
+  background: var(--dialog-background);
   border: 1px solid var(--card-stroke);
   box-shadow: var(--shadow-dialog);
-  backdrop-filter: blur(32px) saturate(160%);
-  -webkit-backdrop-filter: blur(32px) saturate(160%);
   overflow: hidden;
 }
 
