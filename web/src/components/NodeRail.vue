@@ -176,7 +176,7 @@ function onCreated() {
   gap: 1rem;
   padding: 1.5rem;
   border-radius: var(--radius-md);
-  background: var(--flyout-bg, var(--layer-default));
+  background: var(--dialog-background);
   border: 1px solid var(--card-stroke);
   box-shadow: var(--shadow-dialog);
 }

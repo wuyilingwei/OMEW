@@ -12,6 +12,10 @@ body {
   --radius-xs: 5px;
 }
 
+html:not([data-gif-playback="normal"]) img[data-gif-playback-state="loading"] {
+  visibility: hidden;
+}
+
 * {
   box-sizing: border-box;
   /* vendored theme.css sets a blanket user-select: none for its own app

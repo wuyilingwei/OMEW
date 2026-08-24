@@ -5,6 +5,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { api, ApiRequestError } from '../api'
 import type { Passkey } from '../api/types'
 import { useAuth } from '../composables/useAuth'
+import { useGifPlayback, type GifPlaybackMode } from '../composables/useGifPlayback'
 import { useTheme, type ThemeMode } from '../composables/useTheme'
 import { envelopeToCiphertextField, parseOwnershipEnvelope, resealOwnershipKey, unsealOwnershipKey } from '../crypto/ownershipKey'
 import { passwordError, requiredError, requiredMaxLengthError } from '../utils/validate'
@@ -22,6 +23,7 @@ const emit = defineEmits<{ close: [] }>()
 
 const auth = useAuth()
 const { mode, setMode } = useTheme()
+const { mode: gifPlaybackMode, setMode: setGifPlaybackMode } = useGifPlayback()
 
 function requestClose() {
   emit('close')
@@ -144,6 +146,16 @@ const MODE_OPTIONS: { Text: string; value: ThemeMode }[] = [
 const modeSelected = computed(() => MODE_OPTIONS.find((o) => o.value === mode.value))
 function onModeSelect(item: { value: ThemeMode }) {
   setMode(item.value)
+}
+
+const GIF_PLAYBACK_OPTIONS: { Text: string; value: GifPlaybackMode }[] = [
+  { Text: '禁用 GIF', value: 'disabled' },
+  { Text: '只播放一遍', value: 'once' },
+  { Text: '正常', value: 'normal' },
+]
+const gifPlaybackSelected = computed(() => GIF_PLAYBACK_OPTIONS.find((option) => option.value === gifPlaybackMode.value))
+function onGifPlaybackSelect(item: { value: GifPlaybackMode }) {
+  setGifPlaybackMode(item.value)
 }
 
 // ---- 安全 sub-tabs: 修改密码 / 通行密钥 / 两步验证 ----
@@ -650,8 +662,26 @@ watch(
 
             <div v-else class="personal-modal__body">
               <section class="settings-section">
-                <p class="settings-section__hint">选择跟随系统外观，或固定使用亮色 / 暗色。</p>
-                <WinSelectorBar :Items="MODE_OPTIONS" :SelectedItem="modeSelected" @update:SelectedItem="onModeSelect" />
+                <div class="appearance-setting">
+                  <h3 id="appearance-theme" class="appearance-setting__title">主题</h3>
+                  <p class="settings-section__hint">选择跟随系统外观，或固定使用亮色 / 暗色。</p>
+                  <WinSelectorBar
+                    aria-labelledby="appearance-theme"
+                    :Items="MODE_OPTIONS"
+                    :SelectedItem="modeSelected"
+                    @update:SelectedItem="onModeSelect"
+                  />
+                </div>
+                <div class="appearance-setting">
+                  <h3 id="appearance-gif" class="appearance-setting__title">GIF 动画</h3>
+                  <p class="settings-section__hint">禁用时仅显示第一帧；也可只播放一遍，或按图片原设定正常播放。</p>
+                  <WinSelectorBar
+                    aria-labelledby="appearance-gif"
+                    :Items="GIF_PLAYBACK_OPTIONS"
+                    :SelectedItem="gifPlaybackSelected"
+                    @update:SelectedItem="onGifPlaybackSelect"
+                  />
+                </div>
               </section>
             </div>
           </div>
@@ -685,11 +715,9 @@ watch(
   display: flex;
   flex-direction: column;
   border-radius: var(--radius-md);
-  background: var(--flyout-bg, var(--layer-default));
+  background: var(--dialog-background);
   border: 1px solid var(--card-stroke);
   box-shadow: var(--shadow-dialog);
-  backdrop-filter: blur(32px) saturate(160%);
-  -webkit-backdrop-filter: blur(32px) saturate(160%);
   overflow: hidden;
 }
 
@@ -784,6 +812,26 @@ watch(
   margin: 0;
   font-size: 0.82rem;
   color: var(--text-tertiary);
+}
+
+.appearance-setting {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--divider-stroke);
+}
+
+.appearance-setting:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.appearance-setting__title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 0.92rem;
+  font-weight: 600;
 }
 
 .profile-form,

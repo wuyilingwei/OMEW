@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GIF playback harness</title>
+    <style>
+      body { font-family: system-ui, sans-serif; padding: 24px; }
+      img { width: 96px; height: 96px; image-rendering: pixelated; border: 1px solid #888; }
+      button { margin: 12px 8px 0 0; }
+    </style>
+  </head>
+  <body>
+    <img id="sample" alt="GIF playback sample" />
+    <div>
+      <button id="disabled" type="button">禁用 GIF</button>
+      <button id="once" type="button">只播放一遍</button>
+      <button id="normal" type="button">正常</button>
+    </div>
+    <output id="mode">normal</output>
+    <script type="module">
+      import { installGifPlaybackPolicy, useGifPlayback } from '../web/src/composables/useGifPlayback.ts'
+
+      const ascii = (text) => Array.from(new TextEncoder().encode(text))
+      const bytes = new Uint8Array([
+        ...ascii('GIF89a'), 1, 0, 1, 0, 0x80, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff,
+        0x21, 0xff, 11, ...ascii('NETSCAPE2.0'), 3, 1, 0, 0, 0,
+        0x21, 0xf9, 4, 0, 50, 0, 0, 0,
+        0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x44, 1, 0,
+        0x21, 0xf9, 4, 0, 50, 0, 0, 0,
+        0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x4c, 1, 0,
+        0x3b,
+      ])
+      const sampleUrl = URL.createObjectURL(new Blob([bytes], { type: 'image/gif' }))
+      const { mode, setMode } = useGifPlayback()
+      const output = document.querySelector('#mode')
+
+      for (const nextMode of ['disabled', 'once', 'normal']) {
+        document.querySelector(`#${nextMode}`).addEventListener('click', () => setMode(nextMode))
+      }
+      installGifPlaybackPolicy()
+      document.querySelector('#sample').src = sampleUrl
+      setInterval(() => { output.value = mode.value }, 25)
+    </script>
+  </body>
+</html>
