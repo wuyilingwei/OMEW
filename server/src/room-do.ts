@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { verifyToken } from "./auth";
+import { markdownPreview } from "./markdown-preview";
 import { featurePaused, type EditConfigSnapshot, type FeatureRestrictionSnapshot, type MemberRevokePayload } from "./stronghold-do";
 import {
   DENY_CHANNEL_SPEAK,
@@ -501,7 +502,7 @@ export class RoomDO extends DurableObject<Env> {
     // Section post: preview is derived server-side and folded into the stored
     // body (proposal S4.5) so list reads never need to recompute it.
     const finalBody: unknown = isSectionPost
-      ? { ...b, preview: (b.text as string).slice(0, PREVIEW_LEN) }
+      ? { ...b, preview: markdownPreview(b.text as string, PREVIEW_LEN) }
       : b;
     const bodyJson = JSON.stringify(finalBody);
     this.ctx.storage.sql.exec(
@@ -692,7 +693,7 @@ export class RoomDO extends DurableObject<Env> {
     const b = body as Record<string, unknown>;
     if ("topics" in b) return { ok: false, code: "OMEW_MALFORMED", message: "topics are no longer supported" };
     const finalBody: unknown = isSectionPost && typeof b.text === "string"
-      ? { ...b, preview: b.text.slice(0, PREVIEW_LEN) }
+      ? { ...b, preview: markdownPreview(b.text, PREVIEW_LEN) }
       : b;
 
     const editedAt = Date.now();

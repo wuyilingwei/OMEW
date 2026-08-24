@@ -98,6 +98,21 @@ describe("post preview derivation", () => {
     author.close();
     watcher.close();
   });
+
+  it("stores a plain-text Markdown preview on create", async () => {
+    const roomRef = "markdownpreview/sec/general";
+    const { ws } = await connectRoom(roomRef, "@markdownpreview:local", "owner");
+    const { ws: watcher } = await connectRoom(roomRef, "@markdownpreviewwatcher:local", "member");
+
+    ws.send(postCreateFrame("m1", "Title", "# Heading\n\n![cover](/media/a) **Bold** [link](https://example.com)"));
+    await nextMessage(ws);
+
+    const batch = await nextMessageOfType(watcher, "batch");
+    const items = batch.items as Array<Record<string, unknown>>;
+    expect((items[0]!.body as { preview: string }).preview).toBe("Heading cover Bold link");
+    ws.close();
+    watcher.close();
+  });
 });
 
 describe("replies: one level only", () => {

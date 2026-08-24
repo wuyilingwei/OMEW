@@ -15,6 +15,7 @@ import AvatarBadge from './AvatarBadge.vue'
 import AppIcon from './icons/AppIcon.vue'
 import ItemContextMenu from './ItemContextMenu.vue'
 import MediaGrid from './MediaGrid.vue'
+import MarkdownContent from './MarkdownContent.vue'
 import ReactionChips from './ReactionChips.vue'
 
 const auth = useAuth()
@@ -261,6 +262,11 @@ function onActiveReplyToggleReaction(name: string) {
 
 const replyCanEdit = computed(() => (activeReply.value ? canEdit(activeReply.value.actor, activeReply.value.ts) : false))
 const replyCanRetract = computed(() => (activeReply.value ? canRetract(activeReply.value.actor, activeReply.value.ts) : false))
+const visiblePostMedia = computed(() => {
+  const post = thread.value?.post
+  if (!post?.media?.length) return []
+  return post.media.filter((item) => !post.text.includes(`](${item.url})`))
+})
 </script>
 
 <template>
@@ -299,10 +305,8 @@ const replyCanRetract = computed(() => (activeReply.value ? canRetract(activeRep
                   </div>
                 </template>
                 <template v-else>
-                  <p v-for="(paragraph, index) in thread.post.text.split('\n\n')" :key="index" class="post-modal__paragraph">
-                    {{ paragraph }}
-                  </p>
-                  <MediaGrid v-if="thread.post.media?.length" :media="thread.post.media" />
+                  <MarkdownContent :text="thread.post.text" />
+                  <MediaGrid v-if="visiblePostMedia.length" :media="visiblePostMedia" />
                 </template>
                 <div class="post-modal__actions" role="group" aria-label="帖子操作">
                   <button type="button" class="post-modal__action" aria-label="转发" title="转发" @click="sharePost">

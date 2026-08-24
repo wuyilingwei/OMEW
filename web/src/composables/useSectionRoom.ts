@@ -4,6 +4,7 @@ import { createRoomTransport } from '../api/transport'
 import type { ItemBody, MediaAttachment, PostReply, PostSummary, PostThread, ReactionEntry, RoomSummary } from '../api/types'
 import type { RoomTransport } from '../api/roomSocket'
 import { canCommitPostPage } from '../utils/postLoad'
+import { markdownPreview } from '../utils/markdownPreview'
 import { applyReactionToggle, invertReactionOp } from '../utils/reactions'
 import { useAuth } from './useAuth'
 import { usePostModal } from './usePostModal'
@@ -124,7 +125,7 @@ async function connectRoom(nodeId: string, room: RoomSummary, readOnly: boolean)
             created_at: ts,
             title: pending.title ?? '',
             cover: pending.cover ?? null,
-            preview: pending.text.slice(0, 80),
+            preview: markdownPreview(pending.text, PREVIEW_LEN),
             media: pending.media,
             last_reply_seq: ack.seq,
             reply_count: 0,
@@ -180,7 +181,7 @@ function applyItemUpdate(targetSeq: number, body: ItemBody) {
     posts.value[postIdx] = {
       ...current,
       title: body.title ?? current.title,
-      preview: body.text != null ? body.text.slice(0, PREVIEW_LEN) : current.preview,
+      preview: body.text != null ? markdownPreview(body.text, PREVIEW_LEN) : current.preview,
     }
   }
   if (thread.value?.post.post_seq === targetSeq) {
