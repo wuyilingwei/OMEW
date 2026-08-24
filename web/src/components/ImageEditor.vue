@@ -460,7 +460,7 @@ async function confirm() {
   padding: 1.15rem;
   border: 1px solid var(--card-stroke);
   border-radius: var(--radius-md);
-  background: var(--flyout-bg, var(--layer-default));
+  background: var(--dialog-background);
   box-shadow: var(--shadow-dialog);
 }
 
