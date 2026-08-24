@@ -27,10 +27,12 @@ Mew 官方美术依据 Mew 原运营方北京时代传浮科技授予的非商�
 仅接受纯自愿捐助不会单独使部署构成商业使用，但捐助必须同时满足：
 
 - 不设最低金额，也不是访问或继续使用部署的条件；
-- 捐助者不因此获得功能、内容、优先权、商品、服务、宣传、身份权益或其他对价；
-- 未捐助者可以获得与捐助者相同的服务。
+- 捐助者不因此获得功能、内容、优先权、商品、服务、宣传或其他对价；
+- 未捐助者可以获得与捐助者相同的功能、内容和服务。
 
-会费、订阅、赞助、广告费、预售、众筹回报或其他带有对价的付款，即使被称为“捐助”，仍属于商业使用。
+捐助者鸣谢仅可包括捐助头衔，和/或展示其自行选择且明确同意公开的身份信息（例如昵称）。鸣谢不得附带链接、广告、推广文案或其他商业利益。
+
+鉴于 OMEW 的部署成本极低，众筹、以众筹名义收取的款项或其他以筹资为目的的募资，一律不属于本节的纯自愿捐助，即使未提供回报。会费、订阅、赞助、广告费、预售、众筹（无论是否有回报）或其他带有对价的付款，即使被称为“捐助”，仍属于商业使用。
 
 ## 4. 商业部署必须移除受限资产
 
@@ -56,7 +58,9 @@ The Restricted Assets are the OMEW logo and favicon, and the Mew first-party art
 
 A deployment is commercial if its deployer, operator, or an affiliate receives revenue, consideration, or another commercial benefit directly or indirectly in connection with it. This includes fees, subscriptions, advertising, commercial sponsorship, paid promotion, sales, hosting, customization, support, merchandise, lead generation, and use in a for-profit organization's internal operations.
 
-Purely voluntary donations are excepted only when they are not required, have no minimum amount, provide no features, content, priority, goods, services, promotion, status, or other consideration, and donors receive the same service as non-donors. A payment with consideration remains commercial even if it is called a donation.
+Purely voluntary donations are excepted only when they are not required, have no minimum amount, provide no features, content, priority, goods, services, promotion, or other consideration, and donors receive the same features, content, and services as non-donors. Donor recognition is limited to a donor title and/or identity information the donor chose and expressly consented to make public, such as a display name. Recognition may not include links, advertising, promotional copy, or another commercial benefit.
+
+Because OMEW deployment costs are extremely low, crowdfunding, money collected under the name of crowdfunding, and other fundraising intended to raise funds never qualify as purely voluntary donations, even when no reward is provided. Fees, subscriptions, sponsorship, advertising fees, pre-sales, crowdfunding (with or without a reward), or any other payment with consideration remain commercial even if called a donation.
 
 Commercial deployments may continue to use the AGPL-licensed code, but must remove or replace every Restricted Asset from source files, builds, public pages, application icons, metadata, and promotional materials before beginning commercial activity. Commercial use of a Restricted Asset requires separate written permission from the applicable rights holder.
 
