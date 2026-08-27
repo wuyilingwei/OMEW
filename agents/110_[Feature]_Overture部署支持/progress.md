@@ -9,3 +9,4 @@
 - 2026-08-27：新增直接执行 recipe 的 fresh、首次接管、后续覆盖与无账本拒绝测试，并用独立 Node 测试实际构建、解包及校验 Release artifact。
 - 2026-08-27：完整验证通过：OMEW 64 个测试文件共 439 项、类型检查、前端构建、Wrangler dry-run、实际 Overture package 校验。
 - 2026-08-27：首个 Release CI 暴露 Wrangler 已要求 Node.js 22 以上；发布工作流改用 Node.js 24 后重新运行。
+- 2026-08-27：发布工作流增加现有 tag 的手动重跑入口，用于修复 CI 后重新生成同一 Release 的安装资产而不改写标签。
