@@ -123,6 +123,10 @@ function onCreated() {
 .node-rail__item {
   width: 40px;
   height: 40px;
+  aspect-ratio: 1;
+  flex: 0 0 40px;
+  box-sizing: border-box;
+  padding: 0;
   border-radius: 50%;
   border: 2px solid transparent;
   background: var(--ctrl-fill-secondary);
@@ -131,6 +135,7 @@ function onCreated() {
   align-items: center;
   justify-content: center;
   font-size: 0.85rem;
+  overflow: hidden;
   transition: background var(--fast-duration) var(--fast-out-slow-in);
 }
 
@@ -146,6 +151,7 @@ function onCreated() {
 .node-rail__avatar {
   width: 100%;
   height: 100%;
+  display: block;
   border-radius: inherit;
   object-fit: cover;
 }
