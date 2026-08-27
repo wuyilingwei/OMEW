@@ -8,3 +8,4 @@
 - 2026-08-27：对抗性验收发现既有数据库不能按当前包盲目建立 baseline；改为接管 Wrangler `d1_migrations` 记录，仅补跑未执行迁移，无可验证记录时安全停止。
 - 2026-08-27：新增直接执行 recipe 的 fresh、首次接管、后续覆盖与无账本拒绝测试，并用独立 Node 测试实际构建、解包及校验 Release artifact。
 - 2026-08-27：完整验证通过：OMEW 64 个测试文件共 439 项、类型检查、前端构建、Wrangler dry-run、实际 Overture package 校验。
+- 2026-08-27：首个 Release CI 暴露 Wrangler 已要求 Node.js 22 以上；发布工作流改用 Node.js 24 后重新运行。
