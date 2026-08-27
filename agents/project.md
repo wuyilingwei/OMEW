@@ -1,0 +1,17 @@
+# OMEW 项目索引
+> 最后更新：2026-08-27
+
+## 项目目标
+OMEW 是运行在 Cloudflare Workers 上的社区/聊天应用，提供 Web 静态资源、API、D1 数据库、R2 媒体存储和 Durable Objects。
+
+## 技术栈
+TypeScript、Hono/Workers、Vue 3/Vite、Wrangler、Vitest。
+
+## 模块结构
+- `server/`：Worker API、D1 migrations、Durable Objects 与 Wrangler 配置。
+- `web/`：Vue 前端及 Vite 构建产物。
+- `test/`：契约与 Worker 测试。
+- `agents/`：任务审计记录。
+
+## 相关指令
+- [任务 110 审计](110_[Feature]_Overture部署支持/)

@@ -1,0 +1,25 @@
+name: Release Overture package
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run package:overture
+        env:
+          OMEW_TAG: ${{ github.event.release.tag_name }}
+          OMEW_BUILD_TIME: ${{ github.event.release.published_at }}
+      - run: gh release upload "${{ github.event.release.tag_name }}" dist-overture/overture.json dist-overture/overture.tar.gz dist-overture/overture.tar.gz.sha256 --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

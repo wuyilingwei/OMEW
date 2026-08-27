@@ -10,9 +10,11 @@
   "scripts": {
     "build": "npm run build --workspace web",
     "test": "vitest run",
+    "test:overture-package": "node test/overture-package.test.mjs",
     "test:watch": "vitest",
     "typecheck": "npm run typecheck --workspace server && npx vue-tsc --noEmit -p web/tsconfig.app.json",
-    "verify": "npm run types --workspace server && npm run typecheck && npm test && npm run build && npm run deploy:check --workspace server"
+    "package:overture": "node scripts/build-overture-package.mjs",
+    "verify": "npm run types --workspace server && npm run typecheck && npm test && npm run build && npm run deploy:check --workspace server && npm run test:overture-package"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.22.0",

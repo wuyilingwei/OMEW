@@ -17,9 +17,10 @@
       { "name": "STRONGHOLD_DO", "class_name": "StrongholdDO" }
     ]
   },
-  "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["RoomDO", "StrongholdDO"] }
-  ],
+  "exports": {
+    "RoomDO": { "type": "durable-object", "storage": "sqlite" },
+    "StrongholdDO": { "type": "durable-object", "storage": "sqlite" }
+  },
   "vars": {
     "INSTANCE_DOMAIN": "omew.wuyilingwei.com",
     // m0-protocol §7.9: instance policy as deployment env config - see
