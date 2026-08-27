@@ -13,19 +13,19 @@
 @property --flyout-bg {
   syntax: '<color>';
   inherits: true;
-  initial-value: rgba(252, 252, 252, 0.92);
+  initial-value: rgba(252, 252, 252, 0.96);
 }
 
 @property --AcrylicInAppFillColorDefaultBrush {
   syntax: '<color>';
   inherits: true;
-  initial-value: rgba(252, 252, 252, 0.92);
+  initial-value: rgba(252, 252, 252, 0.96);
 }
 
 @property --ToolTipBackgroundBrush {
   syntax: '<color>';
   inherits: true;
-  initial-value: rgba(252, 252, 252, 0.92);
+  initial-value: rgba(252, 252, 252, 0.96);
 }
 
 @property --card-bg {
@@ -321,7 +321,7 @@
   --TeachingTipAlternateCloseButtonBorderBrushPressed: var(--SubtleFillColorTertiaryBrush, var(--subtle-tertiary));
   --SolidBackgroundFillColorTertiaryBrush: #F9F9F9;
   --SurfaceStrokeColorDefaultBrush: rgba(117, 117, 117, 0.4);
-  --flyout-bg: rgba(252, 252, 252, 0.92);
+  --flyout-bg: rgba(252, 252, 252, 0.96);
   --flyout-border: rgba(0, 0, 0, 0.06);
   --flyout-backdrop: blur(30px) saturate(160%) brightness(1.02);
   --AcrylicInAppFillColorDefaultBrush: var(--flyout-bg);
@@ -460,7 +460,7 @@
     --dialog-button-bg: #202020;
     --TeachingTipBackgroundBrush: #282828;
     --SolidBackgroundFillColorTertiaryBrush: #282828;
-    --flyout-bg: rgba(44, 44, 44, 0.86);
+    --flyout-bg: rgba(44, 44, 44, 0.92);
     --flyout-border: rgba(255, 255, 255, 0.10);
     --flyout-backdrop: blur(44px) saturate(190%) brightness(1.22) contrast(1.05);
     --AcrylicInAppFillColorDefaultBrush: var(--flyout-bg);
@@ -677,7 +677,7 @@ html.theme-light {
   --dialog-overlay: rgba(0, 0, 0, 0.30);
   --dialog-divider: rgba(0, 0, 0, 0.06);
   --dialog-button-bg: #F3F3F3;
-  --flyout-bg: rgba(252, 252, 252, 0.92);
+  --flyout-bg: rgba(252, 252, 252, 0.96);
   --flyout-border: rgba(0, 0, 0, 0.06);
   --flyout-backdrop: blur(30px) saturate(160%) brightness(1.02);
   --AcrylicInAppFillColorDefaultBrush: var(--flyout-bg);
@@ -809,7 +809,7 @@ html.theme-light {
   --dialog-overlay: rgba(0, 0, 0, 0.30);
   --dialog-divider: rgba(0, 0, 0, 0.06);
   --dialog-button-bg: #F3F3F3;
-  --flyout-bg: rgba(252, 252, 252, 0.92);
+  --flyout-bg: rgba(252, 252, 252, 0.96);
   --flyout-border: rgba(0, 0, 0, 0.06);
   --AcrylicInAppFillColorDefaultBrush: var(--flyout-bg);
   --ToolTipBackgroundBrush: var(--AcrylicInAppFillColorDefaultBrush);
@@ -819,7 +819,7 @@ html.theme-dark {
   --app-bg: #202020;
   --layer-default: rgba(58, 58, 58, 0.30);
   --dialog-background: #2C2C2C;
-  --flyout-bg: rgba(44, 44, 44, 0.86);
+  --flyout-bg: rgba(44, 44, 44, 0.92);
   --flyout-border: rgba(255, 255, 255, 0.10);
   --flyout-backdrop: blur(44px) saturate(190%) brightness(1.22) contrast(1.05);
   --AcrylicInAppFillColorDefaultBrush: var(--flyout-bg);
@@ -956,7 +956,7 @@ html.theme-dark {
   --dialog-overlay: rgba(0, 0, 0, 0.30);
   --dialog-divider: rgba(0, 0, 0, 0.20);
   --dialog-button-bg: #202020;
-  --flyout-bg: rgba(44, 44, 44, 0.86);
+  --flyout-bg: rgba(44, 44, 44, 0.92);
   --flyout-border: rgba(255, 255, 255, 0.10);
   --AcrylicInAppFillColorDefaultBrush: var(--flyout-bg);
   --ToolTipBackgroundBrush: var(--AcrylicInAppFillColorDefaultBrush);
