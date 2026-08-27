@@ -10,3 +10,6 @@
 - 2026-08-27：完整验证通过：OMEW 64 个测试文件共 439 项、类型检查、前端构建、Wrangler dry-run、实际 Overture package 校验。
 - 2026-08-27：首个 Release CI 暴露 Wrangler 已要求 Node.js 22 以上；发布工作流改用 Node.js 24 后重新运行。
 - 2026-08-27：发布工作流增加现有 tag 的手动重跑入口，用于修复 CI 后重新生成同一 Release 的安装资产而不改写标签。
+- 2026-08-27：手动重跑 `v0.1.0` 发布打包成功，Release 已包含 manifest、安装包与 SHA-256 文件；下载后校验、解包及 Overture schema validation 通过。
+- 2026-08-27：生产 Overture 已从真实 Release 识别 OMEW 0.1.0，并进入条款与连接方式页面；未授权 Cloudflare 或创建实际实例资源。
+- 2026-08-27：合并工作树全量测试出现一项既有 WebSocket 时序波动；失败用例随后独立重跑 31/31 通过。UI 浏览器验收确认据点按钮桌面 40×40、窄屏 44×44、padding 0；弹出菜单暗色 alpha 0.92、亮色 alpha 0.96。
