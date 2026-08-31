@@ -9,3 +9,5 @@
 - [演示表达] -> 保留 1400 天、梦之地与仓促告别的情感核心 -> 对治理能力使用自治、权限边界与抗滥用表达，不针对具体个人。
 - [全量测试并发波动] -> 默认并发运行中 `stronghold-management` 的 3 项消息顺序断言先收到合法 batch，而非预期 ack/error -> 该文件隔离运行 31/31，通过单 Worker 全量复跑 67 文件 453/453，确认是既有异步顺序波动而非功能回归。
 - [浏览器验收] -> mock 领主可编辑并保存，服务器管理员只读；390px 下 body/dialog 均无横向溢出 -> 同时修复 WinUI 菜单大小写事件警告，新会话控制台无 warning/error。
+- [正式发布] -> `v1.0.0` 指向 `121f51c`，Release workflow `33376200641` 成功上传三个 Overture 附件，下载后 SHA-256 校验通过 -> GitHub Release 与安装清单均为正式的 1.0.0。
+- [既有生产实例密钥] -> 当前 `openmew-server` 只已有 `DEV_TOKEN_SECRET`，没有 `CF_ACCOUNT_ID` / `CF_API_TOKEN` -> 生产代码和 UI 已上线，但这个旧实例的在线政策保存会稳定提示不可用；Overture 新装会自动注入，旧实例需由运维单独补两项 Secret。
