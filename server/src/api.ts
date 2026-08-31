@@ -56,6 +56,159 @@ const TOTP_PENDING_TTL_S = 300; // m0-protocol §7.2a
 const WEBAUTHN_CHALLENGE_TTL_S = 300;
 const TOTP_MAX_ATTEMPTS = 8; // per-account, independent of how many pending tokens get minted
 const TOTP_LOCKOUT_S = 15 * 60;
+const ADMIN_CONFIG_ARRAY_MAX = 100;
+const ADMIN_CONFIG_DOMAIN_MAX = 253;
+const ADMIN_CONFIG_ACTOR_LOCALPART_MAX = 64;
+const ADMIN_CONFIG_ALLOWED_FIELDS = new Set([
+  "ALLOW_ROOT",
+  "ROOT_REQUIREMENTS",
+  "TRUSTED_IDENTITY_SERVERS",
+  "FEDERATION_PEERS",
+  "STRONGHOLD_CREATION",
+  "STRONGHOLD_CREATORS",
+  "ALLOW_GUEST_BROWSING",
+  "MAX_FILE_BYTES",
+  "USER_STORAGE_QUOTA_BYTES",
+] as const);
+type AdminConfigEnvField =
+  | "ALLOW_ROOT"
+  | "ROOT_REQUIREMENTS"
+  | "TRUSTED_IDENTITY_SERVERS"
+  | "FEDERATION_PEERS"
+  | "STRONGHOLD_CREATION"
+  | "STRONGHOLD_CREATORS"
+  | "ALLOW_GUEST_BROWSING"
+  | "MAX_FILE_BYTES"
+  | "USER_STORAGE_QUOTA_BYTES";
+const ADMIN_CONFIG_ALIASES: Record<string, AdminConfigEnvField> = {
+  allow_root: "ALLOW_ROOT",
+  root_requirements: "ROOT_REQUIREMENTS",
+  trusted_identity_servers: "TRUSTED_IDENTITY_SERVERS",
+  federation_peers: "FEDERATION_PEERS",
+  stronghold_creation_policy: "STRONGHOLD_CREATION",
+  stronghold_creators: "STRONGHOLD_CREATORS",
+  allow_guest_browsing: "ALLOW_GUEST_BROWSING",
+  max_file_bytes: "MAX_FILE_BYTES",
+  user_storage_quota_bytes: "USER_STORAGE_QUOTA_BYTES",
+};
+
+const ADMIN_CONFIG_FIELDS: Record<AdminConfigEnvField, keyof ReturnType<typeof getInstanceConfig>> = {
+  ALLOW_ROOT: "allow_root",
+  ROOT_REQUIREMENTS: "root_requirements",
+  TRUSTED_IDENTITY_SERVERS: "trusted_identity_servers",
+  FEDERATION_PEERS: "federation_peers",
+  STRONGHOLD_CREATION: "stronghold_creation_policy",
+  STRONGHOLD_CREATORS: "stronghold_creators",
+  ALLOW_GUEST_BROWSING: "allow_guest_browsing",
+  MAX_FILE_BYTES: "max_file_bytes",
+  USER_STORAGE_QUOTA_BYTES: "user_storage_quota_bytes",
+};
+
+function isConfigDomain(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0 || value.length > ADMIN_CONFIG_DOMAIN_MAX) return false;
+  if (value === "*") return true;
+  return /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(value);
+}
+
+function isConfigActor(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const match = /^@([a-z0-9._=-]{1,64}):(.+)$/.exec(value);
+  return !!match && match[1]!.length <= ADMIN_CONFIG_ACTOR_LOCALPART_MAX && isConfigDomain(match[2]);
+}
+
+function validateAdminConfigPatch(body: Record<string, unknown>, current: ReturnType<typeof getInstanceConfig>): Response | Record<AdminConfigEnvField, unknown> {
+  const keys = Object.keys(body);
+  if (keys.length === 0) {
+    return apiError(400, "CONFIG_INVALID");
+  }
+  const patch = {} as Record<AdminConfigEnvField, unknown>;
+  for (const inputKey of keys) {
+    const key = (ADMIN_CONFIG_ALLOWED_FIELDS.has(inputKey as AdminConfigEnvField) ? inputKey : ADMIN_CONFIG_ALIASES[inputKey]) as AdminConfigEnvField | undefined;
+    if (!key || key in patch) return apiError(400, "CONFIG_INVALID");
+    const value = body[inputKey];
+    if (key === "ALLOW_ROOT" || key === "ALLOW_GUEST_BROWSING") {
+      if (typeof value !== "boolean") return apiError(400, "CONFIG_INVALID");
+    } else if (key === "MAX_FILE_BYTES" || key === "USER_STORAGE_QUOTA_BYTES") {
+      if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) return apiError(400, "CONFIG_INVALID");
+    } else if (key === "STRONGHOLD_CREATION") {
+      if (value !== "open" && value !== "restricted" && value !== "application") return apiError(400, "CONFIG_INVALID");
+    } else if (key === "ROOT_REQUIREMENTS") {
+      if (!Array.isArray(value) || value.length > 3 || new Set(value).size !== value.length || value.some((entry) => entry !== "email" && entry !== "phone" && entry !== "code")) {
+        return apiError(400, "CONFIG_INVALID");
+      }
+    } else if (key === "TRUSTED_IDENTITY_SERVERS" || key === "FEDERATION_PEERS") {
+      if (!Array.isArray(value) || value.length > ADMIN_CONFIG_ARRAY_MAX || value.some((entry) => !isConfigDomain(entry))) {
+        return apiError(400, "CONFIG_INVALID");
+      }
+    } else if (key === "STRONGHOLD_CREATORS") {
+      if (!Array.isArray(value) || value.length > ADMIN_CONFIG_ARRAY_MAX || value.some((entry) => !isConfigActor(entry))) {
+        return apiError(400, "CONFIG_INVALID");
+      }
+    }
+    patch[key] = value;
+  }
+  const maxFile = (patch.MAX_FILE_BYTES ?? current.max_file_bytes) as number;
+  const quota = (patch.USER_STORAGE_QUOTA_BYTES ?? current.user_storage_quota_bytes) as number;
+  if (quota < maxFile) return apiError(400, "CONFIG_INVALID");
+  return patch;
+}
+
+function configValueToEnvText(field: AdminConfigEnvField, value: unknown): string {
+  if (typeof value === "boolean") return value ? "1" : "0";
+  if (Array.isArray(value)) return value.join(",");
+  return String(value);
+}
+
+async function updateWorkerInstanceConfig(env: Env, patch: Record<AdminConfigEnvField, unknown>): Promise<Response> {
+  if (!env.CF_API_TOKEN || !env.CF_ACCOUNT_ID || !env.CF_WORKER_NAME) return apiError(503, "CONFIG_UPSTREAM_UNAVAILABLE");
+  const endpoint = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(env.CF_ACCOUNT_ID)}/workers/scripts/${encodeURIComponent(env.CF_WORKER_NAME)}/settings`;
+  let settingsResponse: Response;
+  try {
+    settingsResponse = await fetch(endpoint, { headers: { Authorization: `Bearer ${env.CF_API_TOKEN}` } });
+  } catch {
+    return apiError(502, "CONFIG_UPSTREAM_UNAVAILABLE");
+  }
+  if (!settingsResponse.ok) return apiError(502, "CONFIG_UPSTREAM_ERROR");
+  let existingBindings: Array<{ name?: unknown }> = [];
+  try {
+    const payload = (await settingsResponse.json()) as { result?: { bindings?: unknown } | unknown[]; bindings?: unknown };
+    const result = payload.result;
+    const bindings = Array.isArray(result)
+      ? result
+      : result && typeof result === "object" && "bindings" in result
+        ? result.bindings
+        : payload.bindings;
+    if (Array.isArray(bindings)) existingBindings = bindings.filter((binding): binding is { name?: unknown } => typeof binding === "object" && binding !== null);
+  } catch {
+    return apiError(502, "CONFIG_UPSTREAM_ERROR");
+  }
+
+  const bindings: Array<Record<string, string>> = [];
+  const updated = new Set<AdminConfigEnvField>();
+  for (const binding of existingBindings) {
+    const name = typeof binding.name === "string" ? binding.name : "";
+    const field = ADMIN_CONFIG_ALLOWED_FIELDS.has(name as AdminConfigEnvField) ? name as AdminConfigEnvField : null;
+    if (field && field in patch) {
+      bindings.push({ name, type: "plain_text", text: configValueToEnvText(field, patch[field]) });
+      updated.add(field);
+    } else if (name) {
+      bindings.push({ name, type: "inherit", version_id: "latest" });
+    }
+  }
+  for (const field of Object.keys(patch) as AdminConfigEnvField[]) {
+    if (!updated.has(field)) bindings.push({ name: field, type: "plain_text", text: configValueToEnvText(field, patch[field]) });
+  }
+  const form = new FormData();
+  form.append("settings", JSON.stringify(bindings));
+  let updateResponse: Response;
+  try {
+    updateResponse = await fetch(endpoint, { method: "PATCH", headers: { Authorization: `Bearer ${env.CF_API_TOKEN}` }, body: form });
+  } catch {
+    return apiError(502, "CONFIG_UPSTREAM_UNAVAILABLE");
+  }
+  if (!updateResponse.ok) return apiError(502, "CONFIG_UPSTREAM_ERROR");
+  return json({ ...getInstanceConfig(env), ...Object.fromEntries(Object.entries(patch).map(([field, value]) => [ADMIN_CONFIG_FIELDS[field as AdminConfigEnvField], value])), source: "env-pending" });
+}
 
 // Claims a signed challenge/pending jti for one-time use. Expired rows are
 // reaped opportunistically before each insert so the replay table stays bounded.
@@ -1103,9 +1256,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   }
 
   // ---- instance admin --------------------------------------------------------------
-  // Policy fields (m0-protocol §7.9) are deployment env config as of task 035 -
-  // GET reflects the env-derived values read-only, PATCH always 409s. The
-  // instance_config D1 table/columns are left in place unread (archival).
+  // Policy fields are deployment env config. GET reflects the currently loaded
+  // env; owner PATCH updates the worker's deployment settings asynchronously.
 
   if (method === "GET" && path === "/api/admin/instance/config") {
     const gate = await requireServerRole(request, env, "admin");
@@ -1114,9 +1266,13 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   }
 
   if (method === "PATCH" && path === "/api/admin/instance/config") {
-    const gate = await requireServerRole(request, env, "admin");
+    const gate = await requireServerRole(request, env, "owner");
     if (gate instanceof Response) return gate;
-    return apiError(409, "POLICY_IS_ENV");
+    const body = await readJsonBody(request);
+    if (!body) return apiError(413, "PAYLOAD_INVALID");
+    const patch = validateAdminConfigPatch(body, getInstanceConfig(env));
+    if (patch instanceof Response) return patch;
+    return updateWorkerInstanceConfig(env, patch);
   }
 
   if (method === "POST" && path === "/api/admin/invite-codes") {
