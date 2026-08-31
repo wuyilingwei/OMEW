@@ -8,6 +8,13 @@ export interface HomeUpdate {
 
 export const HOME_UPDATES = [
   {
+    id: 'omew-1-0-0',
+    publishedAt: '2026-08-31',
+    category: '正式版本',
+    title: 'OMEW 1.0.0 正式发布',
+    summary: 'Mew 停止运营 1400 天后，OMEW 完成单实例社区闭环，并可通过 Overture 部署到自己的 Cloudflare 账户。',
+  },
+  {
     id: 'member-profiles-and-conversations',
     publishedAt: '2026-08-23',
     category: '社区体验',
