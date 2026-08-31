@@ -70,7 +70,7 @@ const ADMIN_CONFIG_ALLOWED_FIELDS = new Set([
   "MAX_FILE_BYTES",
   "USER_STORAGE_QUOTA_BYTES",
 ] as const);
-type AdminConfigEnvField =
+export type AdminConfigEnvField =
   | "ALLOW_ROOT"
   | "ROOT_REQUIREMENTS"
   | "TRUSTED_IDENTITY_SERVERS"
@@ -104,10 +104,11 @@ const ADMIN_CONFIG_FIELDS: Record<AdminConfigEnvField, keyof ReturnType<typeof g
   USER_STORAGE_QUOTA_BYTES: "user_storage_quota_bytes",
 };
 
-function isConfigDomain(value: unknown): value is string {
+function isConfigDomain(value: unknown, options: { wildcard?: boolean; requireDot?: boolean } = {}): value is string {
   if (typeof value !== "string" || value.length === 0 || value.length > ADMIN_CONFIG_DOMAIN_MAX) return false;
-  if (value === "*") return true;
-  return /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(value);
+  if (value === "*") return options.wildcard === true;
+  if (value !== value.toLowerCase() || (options.requireDot && !value.includes("."))) return false;
+  return /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(value);
 }
 
 function isConfigActor(value: unknown): value is string {
@@ -116,12 +117,12 @@ function isConfigActor(value: unknown): value is string {
   return !!match && match[1]!.length <= ADMIN_CONFIG_ACTOR_LOCALPART_MAX && isConfigDomain(match[2]);
 }
 
-function validateAdminConfigPatch(body: Record<string, unknown>, current: ReturnType<typeof getInstanceConfig>): Response | Record<AdminConfigEnvField, unknown> {
+export function validateAdminConfigPatch(body: Record<string, unknown>, current: ReturnType<typeof getInstanceConfig>): Response | Partial<Record<AdminConfigEnvField, unknown>> {
   const keys = Object.keys(body);
   if (keys.length === 0) {
     return apiError(400, "CONFIG_INVALID");
   }
-  const patch = {} as Record<AdminConfigEnvField, unknown>;
+  const patch: Partial<Record<AdminConfigEnvField, unknown>> = {};
   for (const inputKey of keys) {
     const key = (ADMIN_CONFIG_ALLOWED_FIELDS.has(inputKey as AdminConfigEnvField) ? inputKey : ADMIN_CONFIG_ALIASES[inputKey]) as AdminConfigEnvField | undefined;
     if (!key || key in patch) return apiError(400, "CONFIG_INVALID");
@@ -137,7 +138,10 @@ function validateAdminConfigPatch(body: Record<string, unknown>, current: Return
         return apiError(400, "CONFIG_INVALID");
       }
     } else if (key === "TRUSTED_IDENTITY_SERVERS" || key === "FEDERATION_PEERS") {
-      if (!Array.isArray(value) || value.length > ADMIN_CONFIG_ARRAY_MAX || value.some((entry) => !isConfigDomain(entry))) {
+      const domainOptions = key === "TRUSTED_IDENTITY_SERVERS"
+        ? { wildcard: true, requireDot: true }
+        : { requireDot: true };
+      if (!Array.isArray(value) || value.length > ADMIN_CONFIG_ARRAY_MAX || new Set(value).size !== value.length || value.some((entry) => !isConfigDomain(entry, domainOptions))) {
         return apiError(400, "CONFIG_INVALID");
       }
     } else if (key === "STRONGHOLD_CREATORS") {
@@ -159,54 +163,80 @@ function configValueToEnvText(field: AdminConfigEnvField, value: unknown): strin
   return String(value);
 }
 
-async function updateWorkerInstanceConfig(env: Env, patch: Record<AdminConfigEnvField, unknown>): Promise<Response> {
-  if (!env.CF_API_TOKEN || !env.CF_ACCOUNT_ID || !env.CF_WORKER_NAME) return apiError(503, "CONFIG_UPSTREAM_UNAVAILABLE");
-  const endpoint = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(env.CF_ACCOUNT_ID)}/workers/scripts/${encodeURIComponent(env.CF_WORKER_NAME)}/settings`;
-  let settingsResponse: Response;
-  try {
-    settingsResponse = await fetch(endpoint, { headers: { Authorization: `Bearer ${env.CF_API_TOKEN}` } });
-  } catch {
-    return apiError(502, "CONFIG_UPSTREAM_UNAVAILABLE");
-  }
-  if (!settingsResponse.ok) return apiError(502, "CONFIG_UPSTREAM_ERROR");
-  let existingBindings: Array<{ name?: unknown }> = [];
-  try {
-    const payload = (await settingsResponse.json()) as { result?: { bindings?: unknown } | unknown[]; bindings?: unknown };
-    const result = payload.result;
-    const bindings = Array.isArray(result)
-      ? result
-      : result && typeof result === "object" && "bindings" in result
-        ? result.bindings
-        : payload.bindings;
-    if (Array.isArray(bindings)) existingBindings = bindings.filter((binding): binding is { name?: unknown } => typeof binding === "object" && binding !== null);
-  } catch {
-    return apiError(502, "CONFIG_UPSTREAM_ERROR");
-  }
-
+export function buildAdminConfigBindings(
+  existingBindings: Array<{ name: string }>,
+  patch: Partial<Record<AdminConfigEnvField, unknown>>
+): Array<Record<string, string>> {
   const bindings: Array<Record<string, string>> = [];
   const updated = new Set<AdminConfigEnvField>();
   for (const binding of existingBindings) {
-    const name = typeof binding.name === "string" ? binding.name : "";
+    const name = binding.name;
     const field = ADMIN_CONFIG_ALLOWED_FIELDS.has(name as AdminConfigEnvField) ? name as AdminConfigEnvField : null;
     if (field && field in patch) {
       bindings.push({ name, type: "plain_text", text: configValueToEnvText(field, patch[field]) });
       updated.add(field);
-    } else if (name) {
+    } else {
       bindings.push({ name, type: "inherit", version_id: "latest" });
     }
   }
   for (const field of Object.keys(patch) as AdminConfigEnvField[]) {
     if (!updated.has(field)) bindings.push({ name: field, type: "plain_text", text: configValueToEnvText(field, patch[field]) });
   }
+  return bindings;
+}
+
+type AdminConfigFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
+export async function updateWorkerInstanceConfig(
+  env: Env,
+  patch: Partial<Record<AdminConfigEnvField, unknown>>,
+  fetcher: AdminConfigFetch = fetch
+): Promise<Response> {
+  if (!env.CF_API_TOKEN || !env.CF_ACCOUNT_ID || !env.CF_WORKER_NAME) return apiError(503, "CONFIG_UPSTREAM_UNAVAILABLE");
+  const endpoint = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(env.CF_ACCOUNT_ID)}/workers/scripts/${encodeURIComponent(env.CF_WORKER_NAME)}/settings`;
+  let settingsResponse: Response;
+  try {
+    settingsResponse = await fetcher(endpoint, {
+      headers: { Authorization: `Bearer ${env.CF_API_TOKEN}` },
+      signal: AbortSignal.timeout(5_000),
+    });
+  } catch {
+    return apiError(502, "CONFIG_UPSTREAM_UNAVAILABLE");
+  }
+  if (!settingsResponse.ok) return apiError(502, "CONFIG_UPSTREAM_ERROR");
+  let existingBindings: Array<{ name: string }>;
+  try {
+    const payload = (await settingsResponse.json()) as { success?: unknown; result?: { bindings?: unknown } };
+    const bindings = payload.result?.bindings;
+    if (payload.success !== true || !Array.isArray(bindings) || bindings.some((binding) => typeof binding !== "object" || binding === null || typeof (binding as { name?: unknown }).name !== "string")) {
+      return apiError(502, "CONFIG_UPSTREAM_ERROR");
+    }
+    existingBindings = bindings as Array<{ name: string }>;
+  } catch {
+    return apiError(502, "CONFIG_UPSTREAM_ERROR");
+  }
+
+  const bindings = buildAdminConfigBindings(existingBindings, patch);
   const form = new FormData();
-  form.append("settings", JSON.stringify(bindings));
+  form.append("settings", new Blob([JSON.stringify({ bindings })], { type: "application/json" }), "settings.json");
   let updateResponse: Response;
   try {
-    updateResponse = await fetch(endpoint, { method: "PATCH", headers: { Authorization: `Bearer ${env.CF_API_TOKEN}` }, body: form });
+    updateResponse = await fetcher(endpoint, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${env.CF_API_TOKEN}` },
+      body: form,
+      signal: AbortSignal.timeout(5_000),
+    });
   } catch {
     return apiError(502, "CONFIG_UPSTREAM_UNAVAILABLE");
   }
   if (!updateResponse.ok) return apiError(502, "CONFIG_UPSTREAM_ERROR");
+  try {
+    const payload = (await updateResponse.json()) as { success?: unknown };
+    if (payload.success !== true) return apiError(502, "CONFIG_UPSTREAM_ERROR");
+  } catch {
+    return apiError(502, "CONFIG_UPSTREAM_ERROR");
+  }
   return json({ ...getInstanceConfig(env), ...Object.fromEntries(Object.entries(patch).map(([field, value]) => [ADMIN_CONFIG_FIELDS[field as AdminConfigEnvField], value])), source: "env-pending" });
 }
 
@@ -422,7 +452,7 @@ function overlayRole(serverRole: ServerRole, member: MemberRow | null): Role | n
   return member.role;
 }
 
-// task 048 (m0-protocol §7.10a): overlayRole's group-aware counterpart - the
+// m0-protocol §7.10a: overlayRole's group-aware counterpart - the
 // one function every tier-gated route and the WS room-token mint call to get
 // a member's actual effective role/deny once their server groups are folded
 // in. Short-circuits the DO call entirely for the server_role owner/admin
@@ -469,7 +499,7 @@ async function requireDirectMessageMembership(
   return null;
 }
 
-// task 048 (m0-protocol §7.10a revocation propagation): a server group
+// m0-protocol §7.10a revocation propagation: a server group
 // definition or assignment change re-derives every affected local user's
 // effective role/deny in every stronghold they belong to. Fan-out is
 // fire-and-forget - a failed push to one stronghold never blocks the others
@@ -555,7 +585,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     });
   }
 
-  // Task 034: unauthenticated public-stronghold discovery. When the policy is
+  // Unauthenticated public-stronghold discovery. When the policy is
   // off the endpoint itself acts not-found rather than an empty list, matching
   // "you need to be logged in" 401s used elsewhere for a disabled read path -
   // there is no logged-in variant of this endpoint to fall back to either way.
@@ -1406,7 +1436,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     return json({ localpart: userRoleMatch.localpart, server_role: body.server_role });
   }
 
-  // ---- server-level user groups (task 048, m0-protocol §7.10a) --------------------
+  // ---- server-level user groups (m0-protocol §7.10a) --------------------
   // Server-wide (not per-stronghold) - only local users can be assigned. Any
   // definition or assignment change fans out a revocation to every stronghold
   // the affected user(s) belong to (see broadcastGroupRevoke below).
@@ -2120,7 +2150,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const room = await stub.createRoom(resId, type, name, ["text"], false);
     return json(toApiRoom(room), 201);
   }
-  // Task 034: the only other room listing under the /api/* flat-shape surface is
+  // The only other room listing under the /api/* flat-shape surface is
   // embedded per-actor in GET /api/me/strongholds (auth-only, "my strongholds") -
   // this is the by-id equivalent, open to a guest on a public stronghold.
   if (m && method === "GET") {
@@ -2623,7 +2653,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     const session = await requireSession(request, env);
     if (session instanceof Response) return session;
     const strongholdStub = env.STRONGHOLD_DO.getByName(m.id!);
-    // task 037: retract's moderator-override check (room-do.ts) needs the
+    // Retract's moderator-override check (room-do.ts) needs the
     // group-synthesized effective role, not just the raw member row.
     const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
     if (!eff) return apiError(403, "FORBIDDEN");
@@ -2757,7 +2787,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (session instanceof Response) return errorResponse(401, "OMEW_SESSION_INVALID", "auth required");
     const strongholdStub = env.STRONGHOLD_DO.getByName(m.id!);
     if (!await strongholdStub.getConfig()) return errorResponse(404, "OMEW_NOT_FOUND", "stronghold not found");
-    // task 037: role/deny baked into the token are the group-synthesized
+    // Role/deny baked into the token are the group-synthesized
     // effective values (permissions.ts) - RoomDO itself is unchanged, it just
     // reads whatever role/deny the token carries.
     const eff = await effectiveRole(env, m.id!, session.server_role, session.actor);
@@ -2820,7 +2850,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
   m = match("/stronghold/:id/rooms/:resId/history", path);
   if (m && method === "GET") {
-    // Task 034: this route predates the flat {error:CODE} /api/* surface and
+    // This route predates the flat {error:CODE} /api/* surface and
     // keeps its own nested {error:{code,message}} shape (see the note atop this
     // file), so it can't reuse resolveGuestOrMember/apiError - same guest gate,
     // shaped to match its existing error responses instead.
@@ -3501,7 +3531,7 @@ function toApiRoom(row: RoomRow, postCount?: number) {
 // PATCH /api/admin/strongholds/:id/slug format gate.
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
-// ---- server groups helpers (task 048, m0-protocol §7.10a) ------------------------
+// ---- server groups helpers (m0-protocol §7.10a) ------------------------
 
 interface ServerGroupRow {
   id: string;
@@ -3627,7 +3657,7 @@ async function actorProfiles(env: Env, actors: string[]): Promise<Map<string, Ac
   return result;
 }
 
-// task 048: group membership is no longer sourced here (server groups are
+// Group membership is no longer sourced here (server groups are
 // server-wide, not per-stronghold) - the web client fetches it separately
 // from GET /api/server-groups/members.
 function toMemberEntry(member: MemberRow, profile: ActorProfile | undefined) {
@@ -3676,7 +3706,7 @@ async function requireMembership(request: Request, env: Env, strongholdId: strin
 }
 
 // S9: read paths carry the same role check as write paths - GET endpoints MUST
-// also be clipped by role, not just POST/PATCH/DELETE. task 037: role here is
+// also be clipped by role, not just POST/PATCH/DELETE. Role here is
 // the group-synthesized effective role (effectiveRole), not the raw member row.
 async function requireRole(request: Request, env: Env, strongholdId: string, roles: Role[]): Promise<Response | { actor: string; role: Role }> {
   const session = await requireSession(request, env);
@@ -3687,7 +3717,7 @@ async function requireRole(request: Request, env: Env, strongholdId: string, rol
   return { actor: session.actor, role: eff.role };
 }
 
-// ---- guest read gate (task 034 / m0-protocol §8.2) -------------------------------
+// ---- guest read gate (m0-protocol §8.2) -------------------------------
 // A public stronghold MAY serve guest reads when allow_guest_browsing is on.
 // Authenticated non-members use that same read-only gate; banned members remain
 // blocked, and private/write routes keep their membership requirements. A

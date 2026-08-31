@@ -205,7 +205,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                 class="compose-modal__section-picker"
                 :Flyout="sectionFlyout"
                 :IsEnabled="sectionRooms.length > 0"
-                @Select="onSelectSection"
+                @select="onSelectSection"
               >
                 <span>{{ targetSection?.name ?? '选择话题组' }}</span>
               </WinDropDownButton>

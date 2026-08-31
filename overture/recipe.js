@@ -54,14 +54,14 @@ export async function deploy(ctx) {
   await ctx.step("worker", "running");
   const { versionId } = await ctx.worker.uploadVersion({ assets });
   await ctx.worker.switchTraffic(versionId);
-  await ctx.secrets.putHostValue("CF_ACCOUNT_ID");
-  await ctx.secrets.putHostValue("CF_API_TOKEN");
   await ctx.step("worker", "success");
 
   if (domain) await ctx.domains.attach(domain);
 
   await ctx.step("secrets", "running");
   if (ctx.ctx.mode === "fresh" || ctx.ctx.fullRebuild) await ctx.secrets.put("DEV_TOKEN_SECRET", await ctx.crypto.randomBase64(48));
+  await ctx.secrets.putHostValue("CF_ACCOUNT_ID");
+  await ctx.secrets.putHostValue("CF_API_TOKEN");
   await ctx.step("secrets", "success");
 
   const url = domain ? `https://${domain}` : "";

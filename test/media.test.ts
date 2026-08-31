@@ -8,8 +8,8 @@ import webpFixture from "./fixtures/tiny.webp.base64?raw";
 
 // Media upload pipeline: Worker-proxied streaming write into R2, with size/MIME/
 // quota enforced synchronously in the upload path (no presigned direct-to-R2
-// upload - see agents/017 task notes for the architecture call). max_file_bytes
-// / user_storage_quota_bytes are env config as of task 035 (server/src/config.ts).
+// upload. max_file_bytes and user_storage_quota_bytes come from deployment
+// bindings parsed by server/src/config.ts.
 
 const OWNERSHIP = { ownership_pubkey: "test-pubkey", ownership_ciphertext: "test-ciphertext-blob" };
 
@@ -387,7 +387,7 @@ describe("GET /api/me/storage", () => {
   });
 });
 
-describe("admin instance config: media limits are env, not runtime-writable", () => {
+describe("admin instance config: media limits", () => {
   it("GET reflects the env-derived max_file_bytes and user_storage_quota_bytes", async () => {
     const adminToken = await makeAdminToken();
     setMediaLimits({ max_file_bytes: 5_000_000, user_storage_quota_bytes: 100_000_000 });
@@ -399,14 +399,14 @@ describe("admin instance config: media limits are env, not runtime-writable", ()
     expect(fetched.source).toBe("env");
   });
 
-  it("PATCH 409s with POLICY_IS_ENV instead of writing the limits", async () => {
+  it("PATCH rejects a server admin because only the server owner may update deployment bindings", async () => {
     const adminToken = await makeAdminToken();
     const res = await apiRequest("/api/admin/instance/config", {
       method: "PATCH",
       headers: { Authorization: `Bearer ${adminToken}` },
       body: JSON.stringify({ max_file_bytes: 5_000_000 }),
     });
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ error: "POLICY_IS_ENV" });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "ADMIN_REQUIRED" });
   });
 });

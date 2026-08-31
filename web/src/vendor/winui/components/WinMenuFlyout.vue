@@ -17,8 +17,8 @@
         openDirection === 'up' ? 'from-bottom' : ''
       ]"
       :style="[posStyle, themeStyle]"
-      @pointerenter="emit('PointerEnter')"
-      @pointerleave="emit('PointerLeave')">
+      @pointerenter="emit('pointer-enter')"
+      @pointerleave="emit('pointer-leave')">
       <div :key="animationKey" class="win-menu-flyout-motion">
         <div class="win-menu-flyout-shadow" aria-hidden="true"></div>
         <div class="win-menu-flyout" @focusout="onFlyoutFocusOut">
@@ -32,10 +32,10 @@
             <MenuFlyoutItems
               :Items="Items"
               :IsClosing="isClosing"
-              @Select="onItemSelect"
-              @Dismiss="close"
-              @PointerEnter="emit('PointerEnter')"
-              @PointerLeave="emit('PointerLeave')" />
+              @select="onItemSelect"
+              @dismiss="close"
+              @pointer-enter="emit('pointer-enter')"
+              @pointer-leave="emit('pointer-leave')" />
             <slot></slot>
           </WinScrollViewer>
         </div>
@@ -61,7 +61,7 @@ const props = defineProps({
   OverlayInputPassThroughElement: Boolean
 });
 
-const emit = defineEmits(['Close', 'Select', 'PointerEnter', 'PointerLeave']);
+const emit = defineEmits(['close', 'select', 'pointer-enter', 'pointer-leave']);
 const providedTheme = inject('winuiTheme', ref(''));
 const visible = ref(false);
 const isClosing = ref(false);
@@ -109,7 +109,7 @@ const MenuFlyoutItems = defineComponent({
     IsSubmenu: Boolean,
     IsClosing: Boolean
   },
-  emits: ['Select', 'Dismiss', 'RequestClose', 'PointerEnter', 'PointerLeave'],
+  emits: ['select', 'dismiss', 'request-close', 'pointer-enter', 'pointer-leave'],
   setup(itemProps, { emit: itemEmit }) {
     const openIndex = ref(null);
     const submenuAnchor = ref(null);
@@ -166,7 +166,7 @@ const MenuFlyoutItems = defineComponent({
 
     const cancelCloseChain = () => {
       clearCloseSubmenuTimer();
-      itemEmit('PointerEnter');
+      itemEmit('pointer-enter');
     };
 
     const closeSubmenu = (restoreFocus = false) => {
@@ -214,7 +214,7 @@ const MenuFlyoutItems = defineComponent({
       if (isItemDisabled(item)) return;
       item?.Command?.Execute?.(item.CommandParameter);
       item?.Click?.(event, item);
-      itemEmit('Select', { item, index });
+      itemEmit('select', { item, index });
     };
 
     const focusItem = (index) => {
@@ -268,7 +268,7 @@ const MenuFlyoutItems = defineComponent({
         case 'ArrowLeft':
           if (itemProps.IsSubmenu) {
             event.preventDefault();
-            itemEmit('RequestClose');
+            itemEmit('request-close');
           }
           break;
         case 'Enter':
@@ -279,8 +279,8 @@ const MenuFlyoutItems = defineComponent({
           break;
         case 'Escape':
           event.preventDefault();
-          if (itemProps.IsSubmenu) itemEmit('RequestClose');
-          else itemEmit('Dismiss');
+          if (itemProps.IsSubmenu) itemEmit('request-close');
+          else itemEmit('dismiss');
           break;
         default:
           break;
@@ -518,11 +518,11 @@ const MenuFlyoutItems = defineComponent({
           onPointerenter: cancelCloseChain,
           onPointerleave: () => {
             queueCloseSubmenu();
-            itemEmit('PointerLeave');
+            itemEmit('pointer-leave');
           },
           onFocusout: () => {
             window.setTimeout(() => {
-              if (!document.activeElement?.closest?.('.win-menu-flyout-wrap')) itemEmit('Dismiss');
+              if (!document.activeElement?.closest?.('.win-menu-flyout-wrap')) itemEmit('dismiss');
             }, 0);
           }
         }, h('div', {
@@ -535,11 +535,11 @@ const MenuFlyoutItems = defineComponent({
             key: submenuAnimationKey.value,
             Items: openSubmenuItem.value.Items || [],
             IsSubmenu: true,
-            onSelect: (event) => itemEmit('Select', event),
-            onDismiss: () => itemEmit('Dismiss'),
+            onSelect: (event) => itemEmit('select', event),
+            onDismiss: () => itemEmit('dismiss'),
             onRequestClose: () => closeSubmenu(true),
             onPointerEnter: cancelCloseChain,
-            onPointerLeave: () => itemEmit('PointerLeave')
+            onPointerLeave: () => itemEmit('pointer-leave')
           }))
         ])))
         : null
@@ -554,7 +554,7 @@ const updateWindowHeight = () => {
 const close = () => {
   if (!props.Open || dismissRequested) return;
   dismissRequested = true;
-  emit('Close');
+  emit('close');
 };
 
 const closeOnDocumentPointerDown = (event) => {
@@ -637,7 +637,7 @@ const onItemSelect = ({ item, index }) => {
   if (isItemDisabled(item)) return;
   updateToggleItem(item);
   updateRadioGroup(item);
-  emit('Select', item, index);
+  emit('select', item, index);
   close();
 };
 

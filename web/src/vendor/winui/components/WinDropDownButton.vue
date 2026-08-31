@@ -21,8 +21,8 @@
       :AnchorRect="anchorRect"
       :Items="flyoutItems"
       :Placement="flyoutPlacement"
-      @Close="isOpen = false"
-      @Select="onSelect" />
+      @close="isOpen = false"
+      @select="onSelect" />
   </div>
 </template>
 <script setup>
@@ -49,7 +49,7 @@ const props = defineProps({
   VerticalAlignment: { type: String, default: '' }
 });
 
-const emit = defineEmits(['Click', 'Select']);
+const emit = defineEmits(['Click', 'select']);
 const attrs = useAttrs();
 const wrap = ref(null);
 const isOpen = ref(false);
@@ -137,7 +137,7 @@ const toggle = () => {
   anchorRect.value = { top: r.top, bottom: r.bottom, left: r.left, right: r.right, width: r.width, height: r.height };
   isOpen.value = true;
 };
-const onSelect = (item) => { emit('Select', item); isOpen.value = false; };
+const onSelect = (item) => { emit('select', item); isOpen.value = false; };
 </script>
 <style>
   .win-dd-chevron {

@@ -1,8 +1,16 @@
 # OpenMew (OMEW)
 
-开源、可自部署的兴趣社群平台:以「据点」组织实时聊天频道与帖子分区,支持多实例联邦。Cloudflare Workers 全栈,单人可运维。
+开源、可自部署的兴趣社群平台：以「据点」组织实时聊天频道与帖子分区。Cloudflare Workers 全栈，单人可运维；多实例联邦协议已经冻结，运行时仍在后续版本中实现。
 
-Open-source, self-hostable community platform: strongholds of realtime chat channels and post sections, with multi-instance federation. Full-stack on Cloudflare Workers, operable by one person.
+Open-source, self-hostable community platform built around strongholds, realtime chat channels, and post sections. It runs entirely on Cloudflare Workers; the federation protocol is specified while the cross-instance runtime remains planned work.
+
+## OMEW 1.0.0
+
+首个正式版本已经完成单实例社区闭环：公开首页与据点目录、账号与通行密钥、实时聊天、Markdown 帖子、图片与表情、成员资料、私信、权限组、封禁和临时功能限制。
+
+推荐通过 [Overture](https://github.com/wuyilingwei/overture) 安装：打开你部署的 Overture，并使用来源 `wuyilingwei/OMEW`。安装器会列出将创建的 Worker、D1、R2、Durable Objects 与所需权限，再把 OMEW 部署到你自己的 Cloudflare 账户。
+
+为了让服务器领主可以在 OMEW 内更新实例政策，Overture 会要求一个由部署者创建的长期 Cloudflare Account API Token，并作为 Worker Secret 保存。该令牌需要账户级 Workers Scripts 写权限，也能影响同账户中的其他 Worker，因此推荐为 OMEW 使用专用 Cloudflare 账户。
 
 ## 文档 / Docs
 
@@ -11,7 +19,7 @@ Open-source, self-hostable community platform: strongholds of realtime chat chan
 
 ## 状态 / Status
 
-M0(协议规范)草案完成,M1(单实例核心)开发中。
+1.0.0 单实例核心可用；M0 联邦协议草案完成，跨实例联邦、归档搜索与语音仍属于后续里程碑。
 
 ## License
 

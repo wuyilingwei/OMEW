@@ -20,17 +20,16 @@ import type {
 } from '../api/types'
 import { useAuth } from '../composables/useAuth'
 import { useStorageUsage } from '../composables/useStorageUsage'
-import { fileUploadError } from '../utils/validate'
-import { WinButton, WinComboBox, WinInfoBar, WinSelectorBar } from '../vendor/winui'
+import { actorListError, domainListError, fileUploadError, formatBytes, trustedServersError } from '../utils/validate'
+import { WinButton, WinComboBox, WinInfoBar, WinSelectorBar, WinToggleSwitch } from '../vendor/winui'
 import GroupEditorModal from './GroupEditorModal.vue'
 import ImageEditor from './ImageEditor.vue'
 
 // Server-level administration only (m0-protocol §7.9/§7.10/§7.10a) - instance
 // policy, server member appointment, server-level user groups, invite codes,
 // stronghold creation review, instance emote packs. Deliberately holds
-// nothing stronghold-scoped (task 039 split, StrongholdAdminModal is the
-// sibling). A PostModal-style floating window, not a full-screen shell swap
-// (task 048).
+// nothing stronghold-scoped. StrongholdAdminModal is the sibling. This is a
+// PostModal-style floating window, not a full-screen shell swap.
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 
@@ -38,6 +37,7 @@ const auth = useAuth()
 
 const ROOT_REQUIREMENT_LABEL: Record<RootRequirement, string> = { email: '邮箱', phone: '手机号', code: '邀请码' }
 const CREATION_POLICY_LABEL: Record<StrongholdCreationPolicy, string> = { open: '开放', restricted: '限制', application: '申请制' }
+const CREATION_POLICY_OPTIONS = (Object.entries(CREATION_POLICY_LABEL) as Array<[StrongholdCreationPolicy, string]>).map(([Value, Text]) => ({ Value, Text }))
 
 const TAB_OPTIONS: { Text: string; value: 'overview' | 'members' | 'bans' | 'groups' }[] = [
   { Text: '概览', value: 'overview' },
@@ -51,11 +51,41 @@ function onTabSelect(item: { value: 'overview' | 'members' | 'bans' | 'groups' }
   tab.value = item.value
 }
 
-// ---- instance policy (read-only, task 035: env-config) -----------------------
+// ---- instance policy ---------------------------------------------------------
 
 const policyLoading = ref(true)
 const policyError = ref('')
 const config = ref<AdminInstanceConfig | null>(null)
+const policySaving = ref(false)
+const policySaveError = ref('')
+const policySaveOk = ref('')
+const policyForm = reactive({
+  allowRoot: true,
+  rootRequirements: [] as RootRequirement[],
+  trustedServers: '*',
+  federationPeers: '',
+  strongholdCreation: 'open' as StrongholdCreationPolicy,
+  strongholdCreators: '',
+  allowGuestBrowsing: true,
+  maxFileBytes: 10_485_760,
+  storageQuotaBytes: 209_715_200,
+})
+
+function setPolicyForm(value: AdminInstanceConfig) {
+  policyForm.allowRoot = value.allow_root
+  policyForm.rootRequirements = [...value.root_requirements]
+  policyForm.trustedServers = value.trusted_identity_servers.join('\n')
+  policyForm.federationPeers = value.federation_peers.join('\n')
+  policyForm.strongholdCreation = value.stronghold_creation_policy
+  policyForm.strongholdCreators = value.stronghold_creators.join('\n')
+  policyForm.allowGuestBrowsing = value.allow_guest_browsing
+  policyForm.maxFileBytes = value.max_file_bytes
+  policyForm.storageQuotaBytes = value.user_storage_quota_bytes
+}
+
+function policyLines(value: string): string[] {
+  return [...new Set(value.split('\n').map((line) => line.trim()).filter(Boolean))]
+}
 
 async function loadConfig() {
   if (!auth.token.value) return
@@ -63,6 +93,7 @@ async function loadConfig() {
   policyError.value = ''
   try {
     config.value = await api.getAdminConfig(auth.token.value)
+    setPolicyForm(config.value)
   } catch {
     policyError.value = '无法加载实例政策'
   } finally {
@@ -70,7 +101,57 @@ async function loadConfig() {
   }
 }
 
-// ---- server member appointment + group assignment (task 035/039/048) --------
+async function savePolicy() {
+  if (!auth.token.value || !auth.isServerOwner.value || policySaving.value) return
+  policySaveError.value = ''
+  policySaveOk.value = ''
+  const validationError = trustedServersError(policyForm.trustedServers)
+    || domainListError(policyForm.federationPeers)
+    || actorListError(policyForm.strongholdCreators)
+  if (validationError) {
+    policySaveError.value = validationError
+    return
+  }
+  if (!Number.isSafeInteger(policyForm.maxFileBytes) || policyForm.maxFileBytes <= 0) {
+    policySaveError.value = '单文件大小上限必须是正整数'
+    return
+  }
+  if (!Number.isSafeInteger(policyForm.storageQuotaBytes) || policyForm.storageQuotaBytes < policyForm.maxFileBytes) {
+    policySaveError.value = '用户存储配额必须是不小于单文件上限的正整数'
+    return
+  }
+  policySaving.value = true
+  try {
+    const updated = await api.patchAdminConfig(auth.token.value, {
+      allow_root: policyForm.allowRoot,
+      root_requirements: [...policyForm.rootRequirements],
+      trusted_identity_servers: policyLines(policyForm.trustedServers),
+      federation_peers: policyLines(policyForm.federationPeers),
+      stronghold_creation_policy: policyForm.strongholdCreation,
+      stronghold_creators: policyLines(policyForm.strongholdCreators),
+      allow_guest_browsing: policyForm.allowGuestBrowsing,
+      max_file_bytes: policyForm.maxFileBytes,
+      user_storage_quota_bytes: policyForm.storageQuotaBytes,
+    })
+    config.value = updated
+    setPolicyForm(updated)
+    policySaveOk.value = '配置已提交到 Cloudflare，新的请求会在配置版本接管后使用这些设置。'
+  } catch (error) {
+    if (error instanceof ApiRequestError && error.code === 'CONFIG_UPSTREAM_UNAVAILABLE') {
+      policySaveError.value = '实例尚未配置环境管理密钥，或 Cloudflare 暂时不可达。请通过 Overture 重新部署或补齐 Worker Secret。'
+    } else if (error instanceof ApiRequestError && error.code === 'CONFIG_UPSTREAM_ERROR') {
+      policySaveError.value = 'Cloudflare 拒绝了配置更新，请确认应用令牌仍有 Workers Scripts 写权限。'
+    } else if (error instanceof ApiRequestError && error.code === 'CONFIG_INVALID') {
+      policySaveError.value = '配置内容不符合服务器约束，请检查域名、账号与容量设置。'
+    } else {
+      policySaveError.value = '保存失败，请稍后重试。'
+    }
+  } finally {
+    policySaving.value = false
+  }
+}
+
+// ---- server member appointment + group assignment ---------------------------
 // Every server admin can list accounts and maintain their server-level groups.
 // Server-role appointment remains an owner-only action below.
 
@@ -224,7 +305,7 @@ async function toggleUserGroup(localpart: string, group: ServerGroup, assign: bo
   }
 }
 
-// ---- server-level user groups (task 048) --------------------------------------
+// ---- server-level user groups ------------------------------------------------
 
 const groups = ref<ServerGroup[]>([])
 const groupsLoading = ref(false)
@@ -655,10 +736,73 @@ watch(
             <div v-else-if="tab === 'overview'" class="admin-modal__body">
               <section class="admin-card">
                 <h2 class="admin-card__title">实例政策</h2>
-                <WinInfoBar :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Informational">
-                  政策由服务器部署配置控制，如需修改请联系服务器运维人员。
-                </WinInfoBar>
-                <dl v-if="config" class="policy-summary">
+                <template v-if="auth.isServerOwner.value">
+                  <WinInfoBar :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Informational">
+                    保存会使用实例预存的 Cloudflare 应用令牌创建新的 Worker 配置版本；令牌不会发送到浏览器。
+                  </WinInfoBar>
+                  <form v-if="config" class="policy-form" @submit.prevent="savePolicy">
+                    <div class="policy-form__switches">
+                      <WinToggleSwitch v-model="policyForm.allowRoot">允许本实例注册账号</WinToggleSwitch>
+                      <WinToggleSwitch v-model="policyForm.allowGuestBrowsing">允许游客浏览公开据点</WinToggleSwitch>
+                    </div>
+
+                    <fieldset class="policy-form__fieldset">
+                      <legend class="field__label">注册门槛</legend>
+                      <label v-for="(label, requirement) in ROOT_REQUIREMENT_LABEL" :key="requirement" class="policy-form__check">
+                        <input v-model="policyForm.rootRequirements" type="checkbox" :value="requirement" />
+                        <span>{{ label }}</span>
+                      </label>
+                      <p v-if="policyForm.rootRequirements.includes('phone')" class="field__hint">当前版本尚未接入短信通道；启用手机号会暂停新账号注册。</p>
+                    </fieldset>
+
+                    <div class="field">
+                      <label class="field__label" for="policy-trusted-servers">信任身份服务器（每行一个域名，可用 *）</label>
+                      <textarea id="policy-trusted-servers" v-model="policyForm.trustedServers" rows="3" spellcheck="false"></textarea>
+                    </div>
+                    <div class="field">
+                      <label class="field__label" for="policy-federation-peers">联邦对等实例（每行一个域名）</label>
+                      <textarea id="policy-federation-peers" v-model="policyForm.federationPeers" rows="3" spellcheck="false"></textarea>
+                    </div>
+                    <div class="field">
+                      <span class="field__label">建据点策略</span>
+                      <WinComboBox
+                        :ItemsSource="CREATION_POLICY_OPTIONS"
+                        SelectedValuePath="Value"
+                        v-model:SelectedValue="policyForm.strongholdCreation"
+                      />
+                    </div>
+                    <div v-if="policyForm.strongholdCreation === 'restricted'" class="field">
+                      <label class="field__label" for="policy-stronghold-creators">允许建点的账号（每行一个完整 actor）</label>
+                      <textarea id="policy-stronghold-creators" v-model="policyForm.strongholdCreators" rows="3" spellcheck="false" placeholder="@name:example.com"></textarea>
+                    </div>
+                    <div class="policy-form__limits">
+                      <div class="field">
+                        <label class="field__label" for="policy-max-file">单文件大小上限（字节）</label>
+                        <input id="policy-max-file" v-model.number="policyForm.maxFileBytes" type="number" min="1" step="1" />
+                        <p class="field__hint">{{ formatBytes(policyForm.maxFileBytes) }}</p>
+                      </div>
+                      <div class="field">
+                        <label class="field__label" for="policy-storage-quota">每用户存储配额（字节）</label>
+                        <input id="policy-storage-quota" v-model.number="policyForm.storageQuotaBytes" type="number" min="1" step="1" />
+                        <p class="field__hint">{{ formatBytes(policyForm.storageQuotaBytes) }}</p>
+                      </div>
+                    </div>
+                    <p v-if="policySaveError" class="field__error">{{ policySaveError }}</p>
+                    <p v-if="policySaveOk" class="admin-modal__save-ok" role="status">{{ policySaveOk }}</p>
+                    <div class="policy-form__actions">
+                      <WinButton type="submit" Style="AccentButtonStyle" :IsEnabled="!policySaving">
+                        {{ policySaving ? '正在更新 Cloudflare…' : '保存并更新实例' }}
+                      </WinButton>
+                      <WinButton type="button" Style="SubtleButtonStyle" :IsEnabled="!policySaving" @click="config && setPolicyForm(config)">撤销未保存更改</WinButton>
+                    </div>
+                  </form>
+                </template>
+                <template v-else>
+                  <WinInfoBar :IsOpen="true" :IsClosable="false" :IsIconVisible="false" Severity="Informational">
+                    服务器管理员可以查看实例政策，只有服务器领主可以更新部署环境。
+                  </WinInfoBar>
+                </template>
+                <dl v-if="config && !auth.isServerOwner.value" class="policy-summary">
                   <dt>根节点（开放注册）</dt>
                   <dd>{{ config.allow_root ? '已开启' : '已关闭' }}</dd>
                   <dt>注册门槛</dt>
@@ -1104,6 +1248,55 @@ watch(
   margin: 0;
   color: var(--text-primary);
   word-break: break-word;
+}
+
+.policy-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.policy-form__switches,
+.policy-form__limits,
+.policy-form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem 1rem;
+}
+
+.policy-form__limits > .field {
+  flex: 1 1 220px;
+}
+
+.policy-form__fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.policy-form__check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.35rem 1rem 0 0;
+  color: var(--text-primary);
+  font-size: 0.8rem;
+}
+
+.policy-form textarea,
+.policy-form input[type='number'] {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--ctrl-border);
+  border-radius: var(--radius-xs);
+  background: var(--ctrl-fill-secondary);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.policy-form textarea {
+  resize: none;
 }
 
 .user-list {

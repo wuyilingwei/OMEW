@@ -15,3 +15,4 @@ TypeScript、Hono/Workers、Vue 3/Vite、Wrangler、Vitest。
 
 ## 相关指令
 - [任务 110 审计](110_[Feature]_Overture部署支持/)
+- [任务 112 发布](112_[Release]_OMEW1.0.0发布/)

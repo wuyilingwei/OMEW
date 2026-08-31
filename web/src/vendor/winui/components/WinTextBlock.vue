@@ -17,8 +17,8 @@
     :Items="contextMenuItems"
     :MinWidth="160"
     Placement="Right"
-    @Close="closeContextMenu"
-    @Select="onContextMenuSelect" />
+    @close="closeContextMenu"
+    @select="onContextMenuSelect" />
 </template>
 
 <script setup>

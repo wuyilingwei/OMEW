@@ -89,7 +89,7 @@ const manifest = {
   capabilities: ["d1", "r2", "secrets", "worker", "assets", "domains"],
   hostSecrets: [
     { name: "CF_ACCOUNT_ID", source: "accountId", requirement: "required", reason: { en: "Keep the instance connected to its own Cloudflare account for administration.", "zh-CN": "让实例持续连接到所属 Cloudflare 账户，用于实例管理。" } },
-    { name: "CF_API_TOKEN", source: "cfApiToken", requirement: "required", placeholder: { en: "cfat_…", "zh-CN": "cfat_…" }, permissions: [{ key: "workers_scripts", type: "edit" }], reason: { en: "Allow the instance to manage its own Worker with the account token you provide.", "zh-CN": "使用你提供的账户令牌管理实例自己的 Worker。" } },
+    { name: "CF_API_TOKEN", source: "cfApiToken", requirement: "required", placeholder: { en: "cfat_…", "zh-CN": "cfat_…" }, permissions: [{ key: "workers_scripts", type: "edit" }], reason: { en: "Allow the instance to update its own Worker settings. This account-scoped permission can modify other Workers, so a dedicated account is recommended.", "zh-CN": "允许实例更新自己的 Worker 设置。该账户级权限也能修改同账户的其他 Worker，建议使用专用账户。" } },
   ],
   steps: ["storage", "schema", "assets", "worker", "secrets"].map((id) => ({ id, label: { en: id, "zh-CN": id } })),
   done: { links: [{ label: { en: "Open OMEW", "zh-CN": "打开 OMEW" }, href: "${url}" }] },

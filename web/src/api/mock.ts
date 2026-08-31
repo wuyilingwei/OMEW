@@ -69,11 +69,9 @@ interface MockUser extends AuthUser {
   totp_enabled: boolean
 }
 
-// task 035: real instance policy is env-config, read-only through the API -
-// this fixed object stands in for that env snapshot. stronghold_creation_policy
-// is seeded 'application' (not 'open') specifically so the read-only admin
-// panel's pending-applications section has something to show during a mock
-// visual check.
+// This fixed object stands in for the deployment environment snapshot.
+// stronghold_creation_policy is seeded to application so the pending review
+// section has something to show during a mock visual check.
 const config: AdminInstanceConfig = {
   allow_root: true,
   root_requirements: ['email'],
@@ -93,7 +91,7 @@ const emotePacks: EmotePack[] = []
 const mediaStore = new Map<string, MediaUploadResult>()
 const storageUsage = { used: 0 }
 // seeded pending entry so the admin panel's applications review section
-// (still a live data operation under the read-only policy, task 039) has
+// (still a live data operation under the deployment policy) has
 // something to approve/reject during a mock visual check.
 const strongholdApplications: StrongholdApplication[] = [
   {
@@ -119,7 +117,7 @@ function localpartOf(actor: string): string {
 
 // seeded so the admin view has something to log into during dev/visual checks
 // - 'admin' is the server_owner (bootstrap account, m0-protocol §7.10), 'mod2'
-// is a plain server_admin so the owner-only appointment UI (task 039) has a
+// is a plain server_admin so the owner-only appointment UI has a
 // second row to demote during a visual check.
 const users: MockUser[] = [
   {
@@ -239,7 +237,7 @@ function requireAdmin(token: string): MockUser {
   return user
 }
 
-// server_owner-only gate (task 035/039), mirrors server's requireServerRole(min="owner").
+// Server-owner-only gate, mirroring requireServerRole(min="owner").
 function requireOwner(token: string): MockUser {
   const actor = sessions.get(token)
   if (!actor) throw new ApiRequestError('AUTH_REQUIRED', 401)
@@ -256,7 +254,7 @@ function requireUser(token: string): MockUser {
   return user
 }
 
-// task 034 guest read gate, mirrors server's resolveGuestOrMember: a token
+// Guest read gate, mirroring server's resolveGuestOrMember: a token
 // still requires a valid session, but no token at all falls through to a
 // guest read as long as the instance allows it and the stronghold is public.
 function requireUserOrGuest(token: string | null, nodeId: string): MockUser | null {
@@ -353,7 +351,7 @@ function touchMockActivity(actor: string): void {
 type MockFeatureRestriction = { paused: boolean; expires_at: number | null; mode: FeatureRestrictionMode }
 const featureRestrictions = new Map<string, Record<'chat' | 'posts', { owner: MockFeatureRestriction; server: MockFeatureRestriction }>>()
 
-// task 048: server-level user groups, and each local user's group membership
+// Server-level user groups, and each local user's group membership
 // as a set of group ids - mirrors the server's `server_groups` /
 // `user_server_groups` D1 tables closely enough for a dev/visual check.
 // Keyed by bare localpart (design point 1: only local users are assignable).
@@ -531,7 +529,7 @@ function seedDemoStronghold(): void {
     ]),
   })
 
-  // task 048: two demo server groups + one assignment, so the server admin
+  // Two demo server groups plus one assignment give the server admin
   // panel's groups tab and a member badge both have something to show
   // during a mock visual check.
   if (!serverGroups.length) {
@@ -1060,11 +1058,10 @@ export const mockApi = {
     return delay({ ...config })
   },
 
-  // task 035: policy is env-config now - PATCH always 409s, same as the real
-  // server (nothing in the UI calls this anymore; kept for contract fidelity).
-  async patchAdminConfig(token: string, _patch: Partial<AdminInstanceConfig>) {
-    requireAdmin(token)
-    throw new ApiRequestError('POLICY_IS_ENV', 409)
+  async patchAdminConfig(token: string, patch: Partial<AdminInstanceConfig>) {
+    requireOwner(token)
+    Object.assign(config, patch)
+    return delay({ ...config })
   },
 
   async listInviteCodes(token: string) {
@@ -1436,7 +1433,7 @@ export const mockApi = {
       tab === 'restricted'
         ? all.filter((member) => member.deny_discussion || member.deny_idea || member.deny_comment)
         : all
-    // groups are server-level (task 048) - recomputed at read time rather
+    // Groups are server-level and recomputed at read time rather
     // than mutated in place, since assignment now happens through a
     // separate D1-backed surface with no per-stronghold storage.
     return delay({
@@ -1625,7 +1622,7 @@ export const mockApi = {
     return delay(emotePacks.map((pack) => ({ ...pack, emotes: [...pack.emotes] })))
   },
 
-  // ---- instance emote pack administration (018 admin endpoints, task 039 UI) ---
+  // ---- instance emote pack administration ------------------------------------
 
   async createEmotePack(token: string, name: string): Promise<EmotePack> {
     requireAdmin(token)
@@ -1790,7 +1787,7 @@ export const mockApi = {
     return delay({ id: application.id, state: application.state })
   },
 
-  // ---- server-level user groups (task 048, server_role admin/owner gate) ------
+  // ---- server-level user groups (server_role admin/owner gate) ----------------
 
   async getServerGroups(token: string): Promise<ServerGroup[]> {
     requireAdmin(token)
@@ -1868,7 +1865,7 @@ export const mockApi = {
     return delay(undefined, 80)
   },
 
-  // guest-readable per instance policy (task 048 batch display endpoint) -
+  // Guest-readable per instance policy (batch display endpoint) -
   // keyed by localpart, every requested entry present even if empty.
   async getGroupsForMembers(token: string | null, localparts: string[]): Promise<Record<string, MemberGroupRef[]>> {
     if (!config.allow_guest_browsing) requireUser(token ?? '')

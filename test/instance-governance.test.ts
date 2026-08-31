@@ -3,10 +3,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { apiRequest, ensureMigrated, loginAs, registerUser } from "./helpers";
 
 // Instance governance (m0-protocol §7.9): stronghold_creation_policy's
-// open/restricted/application matrix, now driven by the STRONGHOLD_CREATION /
-// STRONGHOLD_CREATORS / FEDERATION_PEERS env vars (task 035) instead of the
-// instance_config D1 table. GET/PATCH /api/admin/instance/config's read-only-ness
-// is covered separately below.
+// open/restricted/application matrix is driven by deployment bindings rather
+// than the archival instance_config D1 table.
 
 const OWNERSHIP = { ownership_pubkey: "test-pubkey", ownership_ciphertext: "test-ciphertext-blob" };
 
@@ -28,6 +26,13 @@ async function freshUser(): Promise<{ actor: string; token: string; username: st
 async function makeAdmin(): Promise<{ actor: string; token: string }> {
   const user = await freshUser();
   await env.DB.prepare("UPDATE users SET server_role = 'admin' WHERE localpart = ?").bind(user.username).run();
+  const token = await loginAs(user.username);
+  return { actor: user.actor, token };
+}
+
+async function makeOwner(): Promise<{ actor: string; token: string }> {
+  const user = await freshUser();
+  await env.DB.prepare("UPDATE users SET server_role = 'owner' WHERE localpart = ?").bind(user.username).run();
   const token = await loginAs(user.username);
   return { actor: user.actor, token };
 }
@@ -188,7 +193,7 @@ describe("POST /api/strongholds: creation policy matrix", () => {
   });
 });
 
-describe("admin instance config: policy is env, not runtime-writable", () => {
+describe("admin instance config deployment bindings", () => {
   it("GET reflects the env-derived governance fields with source: env", async () => {
     setGovernanceEnv({
       federation_peers: ["peer.example", "other.peer.example"],
@@ -205,18 +210,32 @@ describe("admin instance config: policy is env, not runtime-writable", () => {
     expect(body.stronghold_creators).toEqual(["@alice:local"]);
   });
 
-  it("PATCH always 409s with POLICY_IS_ENV, regardless of body content", async () => {
+  it("PATCH is reserved for the server owner", async () => {
     const admin = await makeAdmin();
     const res = await apiRequest("/api/admin/instance/config", {
       method: "PATCH",
       headers: { Authorization: `Bearer ${admin.token}` },
       body: JSON.stringify({ stronghold_creation_policy: "open" }),
     });
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ error: "POLICY_IS_ENV" });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "ADMIN_REQUIRED" });
   });
 
-  it("PATCH still requires server-admin auth before the 409 (a plain user gets 403 first)", async () => {
+  it("returns a stable unavailable error when the owner has no pre-stored Cloudflare key", async () => {
+    const owner = await makeOwner();
+    env.CF_API_TOKEN = undefined;
+    env.CF_ACCOUNT_ID = undefined;
+    env.CF_WORKER_NAME = undefined;
+    const res = await apiRequest("/api/admin/instance/config", {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${owner.token}` },
+      body: JSON.stringify({ stronghold_creation_policy: "open" }),
+    });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: "CONFIG_UPSTREAM_UNAVAILABLE" });
+  });
+
+  it("PATCH rejects a plain user before reading deployment credentials", async () => {
     const user = await freshUser();
     const res = await apiRequest("/api/admin/instance/config", {
       method: "PATCH",

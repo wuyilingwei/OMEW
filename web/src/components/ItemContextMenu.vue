@@ -107,7 +107,7 @@ defineExpose({ openAt })
 </script>
 
 <template>
-  <WinMenuFlyout :Open="open" :AnchorRect="anchorRect" :Items="[]" Placement="Bottom" @Close="close">
+  <WinMenuFlyout :Open="open" :AnchorRect="anchorRect" :Items="[]" Placement="Bottom" @close="close">
     <div class="item-context-menu">
       <div v-if="canReact" class="item-context-menu__reactions" role="group" aria-label="添加反应">
         <button

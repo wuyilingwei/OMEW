@@ -20,7 +20,7 @@ function onSelect(item: { Value: string }) {
 </script>
 
 <template>
-  <WinDropDownButton class="channel-switcher" :Flyout="flyout" @Select="onSelect">
+  <WinDropDownButton class="channel-switcher" :Flyout="flyout" @select="onSelect">
     <span class="channel-switcher__label">{{ selectedChannel?.name ?? '无话题' }}</span>
   </WinDropDownButton>
 </template>

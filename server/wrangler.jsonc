@@ -23,6 +23,7 @@
   },
   "vars": {
     "INSTANCE_DOMAIN": "omew.wuyilingwei.com",
+    "CF_WORKER_NAME": "openmew-server",
     // m0-protocol §7.9: instance policy as deployment env config - see
     // server/src/config.ts for parsing and .dev.vars.example for local overrides.
     "ALLOW_ROOT": "1",

@@ -2,9 +2,8 @@ import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { apiRequest, connectRoom, connectTips, ensureMigrated, loginAs, nextMessage, postCreateFrame, registerUser, sessionToken } from "./helpers";
 
-// Task 034: unauthenticated guest reads on public strongholds, gated by the
-// allow_guest_browsing instance policy - env config as of task 035 (see
-// server/src/config.ts), no longer the instance_config D1 column - and the
+// Unauthenticated guest reads on public strongholds are gated by the
+// allow_guest_browsing deployment policy, no longer the archival D1 column. The
 // public directory endpoint the same policy gates. Write paths are untouched
 // and stay login-only regardless of the policy.
 
@@ -291,7 +290,7 @@ describe("GET /api/directory", () => {
   });
 });
 
-describe("admin instance config: allow_guest_browsing is env, not runtime-writable", () => {
+describe("admin instance config: allow_guest_browsing", () => {
   it("GET reflects the env value; it also appears in the public GET /api/instance/config subset", async () => {
     await env.DB.prepare("DELETE FROM users WHERE localpart = ?").bind("guestadmin1").run();
     const reg = await registerUser({
@@ -314,7 +313,7 @@ describe("admin instance config: allow_guest_browsing is env, not runtime-writab
     setGuestBrowsing(true);
   });
 
-  it("PATCH 409s with POLICY_IS_ENV instead of writing allow_guest_browsing", async () => {
+  it("PATCH rejects a server admin because only the server owner may update the deployment binding", async () => {
     await env.DB.prepare("DELETE FROM users WHERE localpart = ?").bind("guestadmin2").run();
     const reg = await registerUser({
       username: "guestadmin2",
@@ -330,7 +329,7 @@ describe("admin instance config: allow_guest_browsing is env, not runtime-writab
       headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify({ allow_guest_browsing: false }),
     });
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ error: "POLICY_IS_ENV" });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "ADMIN_REQUIRED" });
   });
 });

@@ -70,7 +70,7 @@ async function joinCurrentStronghold() {
   <aside class="right-column">
     <div class="right-column__topbar">
       <template v-if="auth.isAuthenticated.value">
-        <WinDropDownButton :Flyout="userMenu" @Select="onUserMenuSelect">
+        <WinDropDownButton :Flyout="userMenu" @select="onUserMenuSelect">
           <span class="right-column__user">
             <AvatarBadge :seed="auth.user.value?.username ?? ''" :size="24" :avatar-url="auth.user.value?.avatar ?? undefined" />
             <span class="right-column__username">{{ auth.user.value?.username }}</span>

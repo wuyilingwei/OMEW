@@ -1,5 +1,10 @@
 DEV_TOKEN_SECRET=change-me-to-a-random-value
 
+# Optional local self-management credentials. Overture supplies these as Worker
+# Secrets in production; never commit real values.
+# CF_ACCOUNT_ID=
+# CF_API_TOKEN=
+
 # Instance policy (m0-protocol §7.9) - deployed defaults live in wrangler.jsonc
 # `vars`; uncomment any of these here to override locally without touching that
 # file. Not secrets, just env config - parsing lives in server/src/config.ts.

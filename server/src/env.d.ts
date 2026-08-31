@@ -8,11 +8,12 @@ interface Env {
   DEV_TOKEN_SECRET: string;
   CF_API_TOKEN?: string;
   CF_ACCOUNT_ID?: string;
-  CF_WORKER_NAME?: string;
 }
 
 declare namespace Cloudflare {
   interface Env {
     DEV_TOKEN_SECRET: string;
+    CF_API_TOKEN?: string;
+    CF_ACCOUNT_ID?: string;
   }
 }
