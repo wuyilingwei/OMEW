@@ -57,7 +57,7 @@ await mkdir(output, { recursive: true });
 run("tar", ["czf", archive, "-C", packageRoot, "."]);
 const archiveBytes = await readFile(archive);
 const sha256 = createHash("sha256").update(archiveBytes).digest("hex");
-const version = process.env.OMEW_VERSION || (process.env.OMEW_TAG || "v0.1.0").replace(/^v/, "");
+const version = process.env.OMEW_VERSION || (process.env.OMEW_TAG || "v1.0.0").replace(/^v/, "");
 const tag = process.env.OMEW_TAG || `v${version}`;
 const buildTime = process.env.OMEW_BUILD_TIME || new Date().toISOString();
 const manifest = {
@@ -73,7 +73,7 @@ const manifest = {
   package: { artifact: "overture.tar.gz", sha256, bytes: archiveBytes.length },
   license: { id: "AGPL-3.0-or-later", text: await readFile(join(root, "LICENSE"), "utf8") },
   terms: { required: true, texts: { en: "Deploying OMEW creates and manages a Worker, D1 database, R2 bucket, and Durable Object namespaces in your Cloudflare account.", "zh-CN": "部署 OMEW 会在你的 Cloudflare 账户中创建并管理 Worker、D1 数据库、R2 存储桶和 Durable Object 命名空间。" } },
-  authModes: ["oauth", "auto"],
+  authModes: ["auto"],
   permissions: [
     { key: "scripts", requirement: "required", oauthScopes: ["workers-scripts.write"], label: { en: "Workers Scripts", "zh-CN": "Workers Scripts" }, scenario: { en: "Upload and activate OMEW", "zh-CN": "上传并启用 OMEW" }, scope: "account", level: "write" },
     { key: "d1", requirement: "required", oauthScopes: ["d1.write"], label: { en: "D1", "zh-CN": "D1 数据库" }, scenario: { en: "Create and initialize the database", "zh-CN": "创建并初始化数据库" }, scope: "account", level: "write" },
@@ -84,9 +84,13 @@ const manifest = {
     { id: "db", kind: "d1", binding: "DB", defaultName: "${worker}-db", required: true, match: { names: ["openmew"], patterns: ["^openmew-db$"] }, label: { en: "OMEW database", "zh-CN": "OMEW 数据库" } },
     { id: "media", kind: "r2", binding: "MEDIA", defaultName: "${worker}-media", required: true, match: { names: ["omew-media"], patterns: ["^openmew-media$"] }, label: { en: "Media storage", "zh-CN": "媒体存储" } },
   ],
-  worker: { defaultName: "openmew", module: "worker/index.js", assetsManifest: "assets-manifest.json", assetsDir: "assets", assetsRouting: { notFoundHandling: "single-page-application", runWorkerFirst: ["/api/*", "/federation/*", "/stronghold", "/stronghold/*", "/inbox", "/inbox/*", "/media/*"] }, compatibilityDate: "2026-08-21", compatibilityFlags: ["nodejs_compat"], durableObjects: [{ binding: "ROOM_DO", className: "RoomDO", storage: "sqlite" }, { binding: "STRONGHOLD_DO", className: "StrongholdDO", storage: "sqlite" }], vars: [{ name: "INSTANCE_DOMAIN", value: "${input:domain}" }, { name: "R2_BUCKET_NAME", value: "${resource:media}" }] },
+  worker: { defaultName: "openmew", module: "worker/index.js", assetsManifest: "assets-manifest.json", assetsDir: "assets", assetsRouting: { notFoundHandling: "single-page-application", runWorkerFirst: ["/api/*", "/federation/*", "/stronghold", "/stronghold/*", "/inbox", "/inbox/*", "/media/*"] }, compatibilityDate: "2026-08-21", compatibilityFlags: ["nodejs_compat"], durableObjects: [{ binding: "ROOM_DO", className: "RoomDO", storage: "sqlite" }, { binding: "STRONGHOLD_DO", className: "StrongholdDO", storage: "sqlite" }], vars: [{ name: "INSTANCE_DOMAIN", value: "${input:domain}" }, { name: "R2_BUCKET_NAME", value: "${resource:media}" }, { name: "CF_WORKER_NAME", value: "${worker}" }] },
   inputs: [{ id: "domain", kind: "domain", required: true, label: { en: "Instance domain", "zh-CN": "实例域名" }, help: { en: "The HTTPS hostname where OMEW will be served.", "zh-CN": "OMEW 对外提供服务的 HTTPS 域名。" } }],
   capabilities: ["d1", "r2", "secrets", "worker", "assets", "domains"],
+  hostSecrets: [
+    { name: "CF_ACCOUNT_ID", source: "accountId", requirement: "required", reason: { en: "Keep the instance connected to its own Cloudflare account for administration.", "zh-CN": "让实例持续连接到所属 Cloudflare 账户，用于实例管理。" } },
+    { name: "CF_API_TOKEN", source: "cfApiToken", requirement: "required", placeholder: { en: "cfat_…", "zh-CN": "cfat_…" }, permissions: [{ key: "workers_scripts", type: "edit" }], reason: { en: "Allow the instance to manage its own Worker with the account token you provide.", "zh-CN": "使用你提供的账户令牌管理实例自己的 Worker。" } },
+  ],
   steps: ["storage", "schema", "assets", "worker", "secrets"].map((id) => ({ id, label: { en: id, "zh-CN": id } })),
   done: { links: [{ label: { en: "Open OMEW", "zh-CN": "打开 OMEW" }, href: "${url}" }] },
 };

@@ -26,6 +26,16 @@ try {
   assert.deepEqual(readdirSync(output).sort(), ["overture.json", "overture.tar.gz", "overture.tar.gz.sha256"]);
   assert.equal(manifest.version, "9.8.7");
   assert.equal(manifest.tag, "v9.8.7");
+  assert.deepEqual(manifest.authModes, ["auto"]);
+  assert.deepEqual(manifest.worker.vars, [
+    { name: "INSTANCE_DOMAIN", value: "${input:domain}" },
+    { name: "R2_BUCKET_NAME", value: "${resource:media}" },
+    { name: "CF_WORKER_NAME", value: "${worker}" },
+  ]);
+  assert.deepEqual(manifest.hostSecrets, [
+    { name: "CF_ACCOUNT_ID", source: "accountId", requirement: "required", reason: manifest.hostSecrets[0].reason },
+    { name: "CF_API_TOKEN", source: "cfApiToken", requirement: "required", placeholder: manifest.hostSecrets[1].placeholder, permissions: [{ key: "workers_scripts", type: "edit" }], reason: manifest.hostSecrets[1].reason },
+  ]);
   assert.equal(manifest.package.sha256, digest);
   assert.equal(readFileSync(join(output, "overture.tar.gz.sha256"), "utf8").trim(), `${digest}  overture.tar.gz`);
   assert.deepEqual(manifest.worker.durableObjects, [

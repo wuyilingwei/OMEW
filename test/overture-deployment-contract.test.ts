@@ -19,6 +19,7 @@ function deploymentContext(options: {
   const overtureLedger = new Set(options.overtureLedger ?? []);
   const appliedSql: string[] = [];
   const putSecret = vi.fn();
+  const putHostValue = vi.fn();
   const query = vi.fn(async (_resource: string, sql: string, params?: unknown[]) => {
     if (sql.includes("sqlite_master")) {
       const rows: Array<{ name: string }> = [];
@@ -56,11 +57,11 @@ function deploymentContext(options: {
       switchTraffic: vi.fn(),
     },
     domains: { attach: vi.fn() },
-    secrets: { put: putSecret },
+    secrets: { put: putSecret, putHostValue },
     crypto: { randomBase64: vi.fn(async () => "random-secret") },
     result: vi.fn(),
   };
-  return { ctx, overtureLedger, appliedSql, putSecret };
+  return { ctx, overtureLedger, appliedSql, putSecret, putHostValue };
 }
 
 describe("Overture deployment recipe", () => {
@@ -70,6 +71,8 @@ describe("Overture deployment recipe", () => {
     expect(state.appliedSql).toEqual(migrationNames.map((name) => `-- migration:migrations/${name}`));
     expect([...state.overtureLedger]).toEqual(migrationNames);
     expect(state.putSecret).toHaveBeenCalledWith("DEV_TOKEN_SECRET", "random-secret");
+    expect(state.putHostValue).toHaveBeenNthCalledWith(1, "CF_ACCOUNT_ID");
+    expect(state.putHostValue).toHaveBeenNthCalledWith(2, "CF_API_TOKEN");
   });
 
   it("imports Wrangler history and applies only newer migrations on overwrite", async () => {
@@ -82,6 +85,7 @@ describe("Overture deployment recipe", () => {
     expect(state.appliedSql).toEqual(["-- migration:migrations/0003_new.sql"]);
     expect([...state.overtureLedger]).toEqual(migrationNames);
     expect(state.putSecret).not.toHaveBeenCalled();
+    expect(state.putHostValue).toHaveBeenCalledTimes(2);
   });
 
   it("uses its own ledger on later overwrites without replaying migrations", async () => {
@@ -89,6 +93,7 @@ describe("Overture deployment recipe", () => {
     await deploy(state.ctx);
     expect(state.appliedSql).toEqual([]);
     expect(state.putSecret).not.toHaveBeenCalled();
+    expect(state.putHostValue).toHaveBeenCalledTimes(2);
   });
 
   it("fails safely when an established database has no migration ledger", async () => {
