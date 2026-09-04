@@ -158,10 +158,10 @@ const manifest = {
   terms: { required: true, texts: buildTerms(assetLicense) },
   authModes: ["auto"],
   permissions: [
-    { key: "scripts", requirement: "required", oauthScopes: ["workers-scripts.write"], label: { en: "Workers Scripts", "zh-CN": "Workers Scripts" }, scenario: { en: "Upload and activate OMEW", "zh-CN": "上传并启用 OMEW" }, scope: "account", level: "write" },
-    { key: "d1", requirement: "required", oauthScopes: ["d1.write"], label: { en: "D1", "zh-CN": "D1 数据库" }, scenario: { en: "Create and initialize the database", "zh-CN": "创建并初始化数据库" }, scope: "account", level: "write" },
-    { key: "r2", requirement: "required", oauthScopes: ["workers-r2.write"], label: { en: "R2", "zh-CN": "R2 存储" }, scenario: { en: "Create media storage", "zh-CN": "创建媒体存储" }, scope: "account", level: "write" },
-    { key: "domains", requirement: "required", oauthScopes: ["workers-routes.write", "zone.read"], label: { en: "Custom domains", "zh-CN": "自定义域名" }, scenario: { en: "Attach the instance domain", "zh-CN": "绑定实例域名" }, scope: "zone", level: "write" },
+    { key: "scripts", requirement: "required", oauthScopes: ["workers-scripts.write", "workers-scripts.bind", "workers-scripts.read"], label: { en: "Workers Scripts", "zh-CN": "Workers Scripts" }, scenario: { en: "Inspect, upload, bind, and activate the OMEW Worker, assets, and Secrets", "zh-CN": "检查、上传、绑定并启用 OMEW Worker、静态资源与 Secrets" }, scope: "account", level: "write" },
+    { key: "d1", requirement: "required", oauthScopes: ["d1.write", "d1.read"], label: { en: "D1", "zh-CN": "D1 数据库" }, scenario: { en: "Find or create the database and apply its schema", "zh-CN": "查找或创建数据库并写入数据库结构" }, scope: "account", level: "write" },
+    { key: "r2", requirement: "required", oauthScopes: ["workers-r2.write", "workers-r2.read"], label: { en: "Workers R2 Storage", "zh-CN": "Workers R2 Storage" }, scenario: { en: "Find or create the media storage bucket", "zh-CN": "查找或创建媒体存储桶" }, scope: "account", level: "write" },
+    { key: "domains", requirement: "required", oauthScopes: ["workers-routes.read", "workers-routes.write", "zone.read"], label: { en: "Workers Routes", "zh-CN": "Workers Routes" }, scenario: { en: "Resolve the zone and attach the required instance domain", "zh-CN": "解析域名所在区域并绑定必需的实例域名" }, scope: "account", level: "write" },
   ],
   resources: [
     { id: "db", kind: "d1", binding: "DB", defaultName: "${worker}-db", required: true, match: { names: ["openmew"], patterns: ["^openmew-db$"] }, label: { en: "OMEW database", "zh-CN": "OMEW 数据库" } },
@@ -172,7 +172,23 @@ const manifest = {
   capabilities: ["d1", "r2", "secrets", "worker", "assets", "domains"],
   hostSecrets: [
     { name: "CF_ACCOUNT_ID", source: "accountId", requirement: "required", reason: { en: "Keep the instance connected to its own Cloudflare account for administration.", "zh-CN": "让实例持续连接到所属 Cloudflare 账户，用于实例管理。" } },
-    { name: "CF_API_TOKEN", source: "cfApiToken", requirement: "required", placeholder: { en: "cfat_…", "zh-CN": "cfat_…" }, permissions: [{ key: "workers_scripts", type: "edit" }], reason: { en: "Allow the instance to update its own Worker settings. This account-scoped permission can modify other Workers, so a dedicated account is recommended.", "zh-CN": "允许实例更新自己的 Worker 设置。该账户级权限也能修改同账户的其他 Worker，建议使用专用账户。" } },
+    {
+      name: "CF_API_TOKEN",
+      source: "cfApiToken",
+      requirement: "required",
+      placeholder: { en: "cfat_…", "zh-CN": "cfat_…" },
+      reason: {
+        en: "Overture uses this token to deploy the Worker, database, media storage, and domain, then stores it so OMEW can update its own Worker settings. These permissions are account- or zone-scoped, so a dedicated account is recommended.",
+        "zh-CN": "Overture 使用此令牌部署 Worker、数据库、媒体存储和域名，随后将其保存供 OMEW 更新自身 Worker 设置。这些权限作用于账户或区域，建议使用专用账户。",
+      },
+      permissions: [
+        { key: "workers_scripts", type: "edit", requirement: "required", scenario: { en: "Deploy the Worker, bindings, assets, and Secrets, and let OMEW update its own settings.", "zh-CN": "部署 Worker、bindings、静态资源与 Secrets，并允许 OMEW 更新自身设置。" } },
+        { key: "d1", type: "edit", requirement: "required", scenario: { en: "Find or create the OMEW database and apply its schema.", "zh-CN": "查找或创建 OMEW 数据库并写入数据库结构。" } },
+        { key: "workers_r2", type: "edit", requirement: "required", scenario: { en: "Find or create the OMEW media bucket.", "zh-CN": "查找或创建 OMEW 媒体存储桶。" } },
+        { key: "workers_routes", type: "edit", requirement: "required", scenario: { en: "Attach the required custom domain.", "zh-CN": "绑定必需的自定义域名。" } },
+        { key: "zone", type: "read", requirement: "required", scenario: { en: "Resolve the zone that contains the custom domain.", "zh-CN": "解析自定义域名所在的区域。" } },
+      ],
+    },
   ],
   steps: ["storage", "schema", "assets", "worker", "secrets"].map((id) => ({ id, label: { en: id, "zh-CN": id } })),
   done: { links: [{ label: { en: "Open OMEW", "zh-CN": "打开 OMEW" }, href: "${url}" }] },

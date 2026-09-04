@@ -65,7 +65,20 @@ try {
   ]);
   assert.deepEqual(manifest.hostSecrets, [
     { name: "CF_ACCOUNT_ID", source: "accountId", requirement: "required", reason: manifest.hostSecrets[0].reason },
-    { name: "CF_API_TOKEN", source: "cfApiToken", requirement: "required", placeholder: manifest.hostSecrets[1].placeholder, permissions: [{ key: "workers_scripts", type: "edit" }], reason: manifest.hostSecrets[1].reason },
+    {
+      name: "CF_API_TOKEN",
+      source: "cfApiToken",
+      requirement: "required",
+      placeholder: manifest.hostSecrets[1].placeholder,
+      reason: manifest.hostSecrets[1].reason,
+      permissions: [
+        { key: "workers_scripts", type: "edit", requirement: "required", scenario: manifest.hostSecrets[1].permissions[0].scenario },
+        { key: "d1", type: "edit", requirement: "required", scenario: manifest.hostSecrets[1].permissions[1].scenario },
+        { key: "workers_r2", type: "edit", requirement: "required", scenario: manifest.hostSecrets[1].permissions[2].scenario },
+        { key: "workers_routes", type: "edit", requirement: "required", scenario: manifest.hostSecrets[1].permissions[3].scenario },
+        { key: "zone", type: "read", requirement: "required", scenario: manifest.hostSecrets[1].permissions[4].scenario },
+      ],
+    },
   ]);
   assert.equal(manifest.package.sha256, digest);
   assert.equal(readFileSync(join(output, "overture.tar.gz.sha256"), "utf8").trim(), `${digest}  overture.tar.gz`);
@@ -74,7 +87,12 @@ try {
     { binding: "STRONGHOLD_DO", className: "StrongholdDO", storage: "sqlite" },
   ]);
   assert.equal(manifest.worker.assetsRouting.notFoundHandling, "single-page-application");
-  assert.deepEqual(manifest.permissions.find((entry) => entry.key === "domains")?.oauthScopes, ["workers-routes.write", "zone.read"]);
+  assert.deepEqual(manifest.permissions.map(({ key, oauthScopes, scope, requirement }) => ({ key, oauthScopes, scope, requirement })), [
+    { key: "scripts", oauthScopes: ["workers-scripts.write", "workers-scripts.bind", "workers-scripts.read"], scope: "account", requirement: "required" },
+    { key: "d1", oauthScopes: ["d1.write", "d1.read"], scope: "account", requirement: "required" },
+    { key: "r2", oauthScopes: ["workers-r2.write", "workers-r2.read"], scope: "account", requirement: "required" },
+    { key: "domains", oauthScopes: ["workers-routes.read", "workers-routes.write", "zone.read"], scope: "account", requirement: "required" },
+  ]);
   assert.match(archiveEntries, /^\.\/recipe\.js$/m);
   assert.match(archiveEntries, /^\.\/worker\/index\.js$/m);
   assert.match(archiveEntries, /^\.\/migrations\/index\.json$/m);
