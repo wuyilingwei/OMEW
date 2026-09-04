@@ -11,6 +11,7 @@ function queryResult(rows: Array<Record<string, unknown>> = []) {
 
 function deploymentContext(options: {
   mode: "fresh" | "overwrite";
+  domain?: string;
   overtureLedger?: string[];
   wranglerLedger?: string[] | null;
   established?: boolean;
@@ -44,7 +45,7 @@ function deploymentContext(options: {
     return queryResult();
   });
   const ctx = {
-    ctx: { workerName: "openmew", domain: "omew.example.test", mode: options.mode, fullRebuild: options.fullRebuild },
+    ctx: { workerName: "openmew", domain: options.domain ?? "omew.example.test", mode: options.mode, fullRebuild: options.fullRebuild },
     step: vi.fn(),
     d1: { provision: vi.fn(), query },
     r2: { provision: vi.fn() },
@@ -100,5 +101,15 @@ describe("Overture deployment recipe", () => {
     const state = deploymentContext({ mode: "overwrite", established: true, wranglerLedger: null });
     await expect(deploy(state.ctx)).rejects.toThrow("no verifiable migration history");
     expect(state.appliedSql).toEqual([]);
+  });
+
+  it("skips custom-domain access when the optional domain is empty", async () => {
+    const state = deploymentContext({ mode: "fresh", domain: "" });
+    await deploy(state.ctx);
+    expect(state.ctx.domains.attach).not.toHaveBeenCalled();
+    expect(state.ctx.result).toHaveBeenCalledWith({
+      url: "",
+      notes: ["Worker openmew deployed."],
+    });
   });
 });

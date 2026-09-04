@@ -70,9 +70,9 @@ ${nestMarkdown(assetTerms.zh)}
 
 ## 3. Cloudflare 资源、费用与账户权限风险
 
-- 部署器会在您选择的 Cloudflare 账户或区域中创建或管理 Worker、D1 数据库、R2 存储桶、Durable Object 命名空间、自定义域名或路由，并上传静态资源、迁移数据库和设置密钥。这些资源可能产生 Cloudflare 费用，费用由您承担。
+- 部署器会在您选择的 Cloudflare 账户中创建或管理 Worker、D1 数据库、R2 存储桶与 Durable Object 命名空间，并上传静态资源、迁移数据库和设置密钥。仅当您提供自定义域名时，部署器才会读取区域并创建或管理相应域名路由。这些资源可能产生 Cloudflare 费用，费用由您承担。
 - 部署需要账户级或区域级写入权限。为支持实例管理而保存的 Worker 设置权限属于账户级权限，技术上可能修改同一账户中的其他 Worker；建议使用专用 Cloudflare 账户、遵循最小权限原则，并在不再需要时撤销或轮换凭据。
-- 您应在确认前核对目标账户、区域、域名、资源名称、权限范围和计费设置，并自行负责实例的数据安全、访问控制、备份、维护和合规。
+- 您应在确认前核对目标账户、资源名称、权限范围和计费设置；使用自定义域名时还应核对目标区域与域名。您自行负责实例的数据安全、访问控制、备份、维护和合规。
 
 ## 4. 按现状提供与无担保
 
@@ -100,9 +100,9 @@ ${nestMarkdown(assetTerms.en)}
 
 ## 3. Cloudflare resources, charges, and account-permission risks
 
-- The deployer creates or manages a Worker, D1 database, R2 bucket, Durable Object namespaces, custom domain or routes in the Cloudflare account or zone you select, and uploads static assets, applies database migrations, and configures secrets. These resources may incur Cloudflare charges, which are your responsibility.
+- The deployer creates or manages a Worker, D1 database, R2 bucket, and Durable Object namespaces in the Cloudflare account you select, and uploads static assets, applies database migrations, and configures secrets. Only when you provide a custom domain does it read a zone and create or manage the corresponding domain route. These resources may incur Cloudflare charges, which are your responsibility.
 - Deployment requires account-level or zone-level write permissions. The Worker-settings permission retained for instance administration is account-scoped and can technically modify other Workers in the same account. Use a dedicated Cloudflare account, follow least-privilege practices, and revoke or rotate credentials when they are no longer needed.
-- Before accepting, verify the target account, zone, domain, resource names, permission scopes, and billing settings. You are responsible for instance data security, access controls, backups, maintenance, and compliance.
+- Before accepting, verify the target account, resource names, permission scopes, and billing settings; when using a custom domain, also verify the target zone and domain. You are responsible for instance data security, access controls, backups, maintenance, and compliance.
 
 ## 4. As-is provision and no warranty
 
@@ -161,14 +161,14 @@ const manifest = {
     { key: "scripts", requirement: "required", oauthScopes: ["workers-scripts.write", "workers-scripts.bind", "workers-scripts.read"], label: { en: "Workers Scripts", "zh-CN": "Workers Scripts" }, scenario: { en: "Inspect, upload, bind, and activate the OMEW Worker, assets, and Secrets", "zh-CN": "检查、上传、绑定并启用 OMEW Worker、静态资源与 Secrets" }, scope: "account", level: "write" },
     { key: "d1", requirement: "required", oauthScopes: ["d1.write", "d1.read"], label: { en: "D1", "zh-CN": "D1 数据库" }, scenario: { en: "Find or create the database and apply its schema", "zh-CN": "查找或创建数据库并写入数据库结构" }, scope: "account", level: "write" },
     { key: "r2", requirement: "required", oauthScopes: ["workers-r2.write", "workers-r2.read"], label: { en: "Workers R2 Storage", "zh-CN": "Workers R2 Storage" }, scenario: { en: "Find or create the media storage bucket", "zh-CN": "查找或创建媒体存储桶" }, scope: "account", level: "write" },
-    { key: "domains", requirement: "required", oauthScopes: ["workers-routes.read", "workers-routes.write", "zone.read"], label: { en: "Workers Routes", "zh-CN": "Workers Routes" }, scenario: { en: "Resolve the zone and attach the required instance domain", "zh-CN": "解析域名所在区域并绑定必需的实例域名" }, scope: "account", level: "write" },
+    { key: "domains", requirement: "optional", oauthScopes: ["workers-routes.read", "workers-routes.write", "zone.read"], label: { en: "Workers Routes", "zh-CN": "Workers Routes" }, scenario: { en: "Resolve and attach a custom domain if you provide one", "zh-CN": "仅在提供自定义域名时解析区域并完成绑定" }, scope: "account", level: "write" },
   ],
   resources: [
     { id: "db", kind: "d1", binding: "DB", defaultName: "${worker}-db", required: true, match: { names: ["openmew"], patterns: ["^openmew-db$"] }, label: { en: "OMEW database", "zh-CN": "OMEW 数据库" } },
     { id: "media", kind: "r2", binding: "MEDIA", defaultName: "${worker}-media", required: true, match: { names: ["omew-media"], patterns: ["^openmew-media$"] }, label: { en: "Media storage", "zh-CN": "媒体存储" } },
   ],
   worker: { defaultName: "openmew", module: "worker/index.js", assetsManifest: "assets-manifest.json", assetsDir: "assets", assetsRouting: { notFoundHandling: "single-page-application", runWorkerFirst: ["/api/*", "/federation/*", "/stronghold", "/stronghold/*", "/inbox", "/inbox/*", "/media/*"] }, compatibilityDate: "2026-08-21", compatibilityFlags: ["nodejs_compat"], durableObjects: [{ binding: "ROOM_DO", className: "RoomDO", storage: "sqlite" }, { binding: "STRONGHOLD_DO", className: "StrongholdDO", storage: "sqlite" }], vars: [{ name: "INSTANCE_DOMAIN", value: "${input:domain}" }, { name: "R2_BUCKET_NAME", value: "${resource:media}" }, { name: "CF_WORKER_NAME", value: "${worker}" }] },
-  inputs: [{ id: "domain", kind: "domain", required: true, label: { en: "Instance domain", "zh-CN": "实例域名" }, help: { en: "The HTTPS hostname where OMEW will be served.", "zh-CN": "OMEW 对外提供服务的 HTTPS 域名。" } }],
+  inputs: [{ id: "domain", kind: "domain", required: false, label: { en: "Custom domain", "zh-CN": "自定义域名" }, help: { en: "Optional. Leave empty to use the Worker's *.workers.dev hostname.", "zh-CN": "可选。留空则使用 Worker 的 *.workers.dev 域名。" } }],
   capabilities: ["d1", "r2", "secrets", "worker", "assets", "domains"],
   hostSecrets: [
     { name: "CF_ACCOUNT_ID", source: "accountId", requirement: "required", reason: { en: "Keep the instance connected to its own Cloudflare account for administration.", "zh-CN": "让实例持续连接到所属 Cloudflare 账户，用于实例管理。" } },
@@ -185,8 +185,8 @@ const manifest = {
         { key: "workers_scripts", type: "edit", requirement: "required", scenario: { en: "Deploy the Worker, bindings, assets, and Secrets, and let OMEW update its own settings.", "zh-CN": "部署 Worker、bindings、静态资源与 Secrets，并允许 OMEW 更新自身设置。" } },
         { key: "d1", type: "edit", requirement: "required", scenario: { en: "Find or create the OMEW database and apply its schema.", "zh-CN": "查找或创建 OMEW 数据库并写入数据库结构。" } },
         { key: "workers_r2", type: "edit", requirement: "required", scenario: { en: "Find or create the OMEW media bucket.", "zh-CN": "查找或创建 OMEW 媒体存储桶。" } },
-        { key: "workers_routes", type: "edit", requirement: "required", scenario: { en: "Attach the required custom domain.", "zh-CN": "绑定必需的自定义域名。" } },
-        { key: "zone", type: "read", requirement: "required", scenario: { en: "Resolve the zone that contains the custom domain.", "zh-CN": "解析自定义域名所在的区域。" } },
+        { key: "workers_routes", type: "edit", requirement: "optional", scenario: { en: "Attach a custom domain if you provide one.", "zh-CN": "仅在提供自定义域名时完成绑定。" } },
+        { key: "zone", type: "read", requirement: "optional", scenario: { en: "Resolve the zone only when you provide a custom domain.", "zh-CN": "仅在提供自定义域名时解析所属区域。" } },
       ],
     },
   ],
