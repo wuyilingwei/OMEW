@@ -53,9 +53,11 @@ try {
   assert.match(manifest.terms.texts["zh-CN"], /从源文件、构建产物、公开页面、应用图标、元数据及宣传材料中移除或替换全部受限资产/);
   assert.match(manifest.terms.texts["zh-CN"], /以 `stamp-` 开头的第三方贴纸[\s\S]*自行取得许可，或在使用及分发 OMEW 前将其删除/);
   assert.match(manifest.terms.texts["zh-CN"], /均按“现状”及“可用”状态提供[\s\S]*不附带任何明示、默示或法定担保/);
-  assert.match(manifest.terms.texts["zh-CN"], /Worker、D1 数据库、R2 存储桶、Durable Object 命名空间、自定义域名或路由/);
+  assert.match(manifest.terms.texts["zh-CN"], /Worker、D1 数据库、R2 存储桶与 Durable Object 命名空间/);
+  assert.match(manifest.terms.texts["zh-CN"], /仅当您提供自定义域名时，部署器才会读取区域并创建或管理相应域名路由/);
   assert.match(manifest.terms.texts["zh-CN"], /Worker 设置权限属于账户级权限[\s\S]*可能修改同一账户中的其他 Worker/);
   assert.match(manifest.terms.texts.en, /AGPL Section 13[\s\S]*Corresponding Source/);
+  assert.match(manifest.terms.texts.en, /Only when you provide a custom domain does it read a zone and create or manage the corresponding domain route/);
   assert.match(manifest.terms.texts.en, /account-scoped and can technically modify other Workers in the same account/);
   assert.deepEqual(manifest.authModes, ["auto"]);
   assert.deepEqual(manifest.worker.vars, [
@@ -75,8 +77,8 @@ try {
         { key: "workers_scripts", type: "edit", requirement: "required", scenario: manifest.hostSecrets[1].permissions[0].scenario },
         { key: "d1", type: "edit", requirement: "required", scenario: manifest.hostSecrets[1].permissions[1].scenario },
         { key: "workers_r2", type: "edit", requirement: "required", scenario: manifest.hostSecrets[1].permissions[2].scenario },
-        { key: "workers_routes", type: "edit", requirement: "required", scenario: manifest.hostSecrets[1].permissions[3].scenario },
-        { key: "zone", type: "read", requirement: "required", scenario: manifest.hostSecrets[1].permissions[4].scenario },
+        { key: "workers_routes", type: "edit", requirement: "optional", scenario: manifest.hostSecrets[1].permissions[3].scenario },
+        { key: "zone", type: "read", requirement: "optional", scenario: manifest.hostSecrets[1].permissions[4].scenario },
       ],
     },
   ]);
@@ -91,8 +93,16 @@ try {
     { key: "scripts", oauthScopes: ["workers-scripts.write", "workers-scripts.bind", "workers-scripts.read"], scope: "account", requirement: "required" },
     { key: "d1", oauthScopes: ["d1.write", "d1.read"], scope: "account", requirement: "required" },
     { key: "r2", oauthScopes: ["workers-r2.write", "workers-r2.read"], scope: "account", requirement: "required" },
-    { key: "domains", oauthScopes: ["workers-routes.read", "workers-routes.write", "zone.read"], scope: "account", requirement: "required" },
+    { key: "domains", oauthScopes: ["workers-routes.read", "workers-routes.write", "zone.read"], scope: "account", requirement: "optional" },
   ]);
+  assert.deepEqual(manifest.inputs.find((input) => input.id === "domain"), {
+    id: "domain",
+    kind: "domain",
+    required: false,
+    label: manifest.inputs.find((input) => input.id === "domain").label,
+    help: manifest.inputs.find((input) => input.id === "domain").help,
+  });
+  assert.match(manifest.inputs.find((input) => input.id === "domain").help["zh-CN"], /可选.*留空.*\*\.workers\.dev/);
   assert.match(archiveEntries, /^\.\/recipe\.js$/m);
   assert.match(archiveEntries, /^\.\/worker\/index\.js$/m);
   assert.match(archiveEntries, /^\.\/migrations\/index\.json$/m);

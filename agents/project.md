@@ -20,3 +20,4 @@ TypeScript、Hono/Workers、Vue 3/Vite、Wrangler、Vitest。
 - [任务 114 Overture 正式使用条款](114_[Feature]_Overture正式使用条款/)
 - [任务 115 Overture 权限声明](115_[Fix]_Overture权限声明/)
 - [任务 116 Workers.dev 实例域](116_[Fix]_WorkersDev实例域/)
+- [任务 117 可选自定义域](117_[Fix]_可选自定义域/)

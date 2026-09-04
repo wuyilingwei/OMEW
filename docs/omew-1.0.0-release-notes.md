@@ -8,7 +8,9 @@ Mew 停止运营 1400 天后，OMEW 的首个正式版本发布。
 
 OMEW 现在可通过 Overture 部署到自己的 Cloudflare 账户。安装器会创建并连接 Worker、D1、R2 与 Durable Objects，同时清楚展示所需权限。
 
-部署期 OAuth 权限按实际访问声明为 Workers Scripts Read/Write/Bind、D1 Read/Write、Workers R2 Storage Read/Write、Workers Routes Read/Write 与 Zone Read。部署并保存在实例中的 Cloudflare Account API Token 明确要求 Workers Scripts Edit、D1 Edit、Workers R2 Storage Edit、Workers Routes Edit 与 Zone Read；这些权限作用于账户或区域，并非只限单个 Worker。
+部署期必需的 OAuth 权限为 Workers Scripts Read/Write/Bind、D1 Read/Write 与 Workers R2 Storage Read/Write。部署并保存在实例中的 Cloudflare Account API Token 必须具有 Workers Scripts Edit、D1 Edit 与 Workers R2 Storage Edit；这些权限作用于账户，并非只限单个 Worker。
+
+自定义域名是可选项；留空时 OMEW 直接使用 Worker 的 `*.workers.dev` 地址。只有提供自定义域名时，Overture 才会申请 Workers Routes Read/Write 与 Zone Read，并在长期 Token 中加入可取消的 Workers Routes Edit 与 Zone Read。
 
 服务器领主可以在 OMEW 内更新实例政策。该能力使用部署者提供、保存在 Worker Secret 中的 Cloudflare Account API Token；令牌不会进入浏览器。Workers Scripts 写权限属于账户级权限，推荐为 OMEW 使用专用 Cloudflare 账户。
 
