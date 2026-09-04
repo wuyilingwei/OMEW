@@ -13,3 +13,4 @@
 - 2026-09-04：运行 `npm test`，68 个测试文件、455 个测试全部通过。
 - 2026-09-04：运行 `npm run types --workspace server`，Cloudflare Worker 类型生成通过；运行 `git diff --check`，通过。
 - 2026-09-04：将本轮生成的 `dist-overture` 和临时 `node_modules` 链接移至废纸篓，工作树仅保留预期源文件、测试和审计记录。
+- 2026-09-04：用户明确要求保持 1.0.0 并覆盖正式发布；主 agent 已快进合并并推送 `main@270c059`，开始补充 Release 声明并准备更新标签与附件。
