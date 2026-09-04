@@ -14,3 +14,7 @@
 - 2026-09-04：运行 `npm run types --workspace server`，Cloudflare Worker 类型生成通过；运行 `git diff --check`，通过。
 - 2026-09-04：将本轮生成的 `dist-overture` 和临时 `node_modules` 链接移至废纸篓，工作树仅保留预期源文件、测试和审计记录。
 - 2026-09-04：用户明确要求保持 1.0.0 并覆盖正式发布；主 agent 已快进合并并推送 `main@270c059`，开始补充 Release 声明并准备更新标签与附件。
+- 2026-09-04：发布说明加入正式条款章节并提交 `528cd73`；`npm run test:overture-package` 再次通过。
+- 2026-09-04：按用户明确授权将 `v1.0.0` 从 `121f51c` 更新为 `528cd73`，覆盖 Release 正文并启动附件工作流 `33855972991`。
+- 2026-09-04：工作流成功覆盖 `overture.json`、`overture.tar.gz` 与 SHA-256 文件；下载校验通过，清单版本和标签仍为 1.0.0。
+- 2026-09-04：在独立在线 Overture 会话中验证完整中文条款、AGPL-3.0-only 许可证标题及必须勾选同意的继续门禁，任务完成。
