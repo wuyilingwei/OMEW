@@ -17,3 +17,4 @@ TypeScript、Hono/Workers、Vue 3/Vite、Wrangler、Vitest。
 - [任务 110 审计](110_[Feature]_Overture部署支持/)
 - [任务 112 发布](112_[Release]_OMEW1.0.0发布/)
 - [任务 113 首页 Overture 部署入口](113_[Fix]_首页Overture部署入口/)
+- [任务 114 Overture 正式使用条款](114_[Feature]_Overture正式使用条款/)

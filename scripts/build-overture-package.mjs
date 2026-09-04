@@ -29,6 +29,88 @@ function run(command, args) {
   if (result.status !== 0) throw new Error(`${command} failed with exit code ${result.status}`);
 }
 
+function splitAssetLicense(assetLicense) {
+  const englishHeading = "# OMEW Asset Use Terms (English reference translation)";
+  const divider = `\n---\n\n${englishHeading}`;
+  const dividerAt = assetLicense.indexOf(divider);
+  if (dividerAt < 0) throw new Error("ASSET-LICENSE.md is missing its English reference translation divider");
+
+  return {
+    zh: assetLicense.slice(0, dividerAt).trim(),
+    en: assetLicense.slice(dividerAt + divider.length - englishHeading.length).trim(),
+  };
+}
+
+function nestMarkdown(markdown, levels = 2) {
+  return markdown.replace(/^(#{1,6})(?= )/gm, (heading) => "#".repeat(Math.min(6, heading.length + levels)));
+}
+
+function buildTerms(assetLicense) {
+  const assetTerms = splitAssetLicense(assetLicense);
+  return {
+    "zh-CN": `# OMEW Overture 部署与使用条款
+
+> 中文文本为控制文本；英文文本仅为参考翻译。如有冲突，以中文文本为准。
+
+在 Overture 中确认本条款并部署、运行、修改或分发 OMEW，即表示您同意遵守本条款、GNU Affero General Public License v3.0 以及适用于第三方材料的条款。若您不同意，请不要部署或使用 OMEW。
+
+## 1. 软件代码与开源义务
+
+OMEW 软件代码采用 **GNU Affero General Public License v3.0 only（AGPL-3.0-only）**。完整许可证正文随应用清单提供，并以仓库中的 \`LICENSE\` 为准。
+
+- 您可以在 AGPL-3.0-only 允许的范围内运行、复制、修改和分发软件代码，包括用于商业目的；美术资产不因此获得 AGPL 许可，仍受下文的独立限制。
+- 如果您修改 OMEW，并通过计算机网络让用户与修改后的版本交互，必须依 AGPL 第 13 条向这些用户显著提供通过网络免费取得您所运行版本之相应源代码的方式。
+- 复制、修改或分发时必须保留适用的版权声明、许可证声明、免责声明及 NOTICE，不得对 AGPL 授予的权利施加额外限制。其他具体义务以 AGPL-3.0-only 正文为准。
+
+## 2. 官方美术与第三方贴纸
+
+本节直接从仓库 \`ASSET-LICENSE.md\` 的中文控制文本派生；该文件是受限资产规则的单一事实来源。
+
+${nestMarkdown(assetTerms.zh)}
+
+## 3. Cloudflare 资源、费用与账户权限风险
+
+- 部署器会在您选择的 Cloudflare 账户或区域中创建或管理 Worker、D1 数据库、R2 存储桶、Durable Object 命名空间、自定义域名或路由，并上传静态资源、迁移数据库和设置密钥。这些资源可能产生 Cloudflare 费用，费用由您承担。
+- 部署需要账户级或区域级写入权限。为支持实例管理而保存的 Worker 设置权限属于账户级权限，技术上可能修改同一账户中的其他 Worker；建议使用专用 Cloudflare 账户、遵循最小权限原则，并在不再需要时撤销或轮换凭据。
+- 您应在确认前核对目标账户、区域、域名、资源名称、权限范围和计费设置，并自行负责实例的数据安全、访问控制、备份、维护和合规。
+
+## 4. 按现状提供与无担保
+
+在适用法律允许的最大范围内，OMEW 软件、部署包、部署配方和相关材料均按“现状”及“可用”状态提供，不附带任何明示、默示或法定担保，包括适销性、特定用途适用性、权利完整性、不侵权、持续可用或无错误的担保。您自行承担部署和运行风险，并负责遵守 AGPL、资产条款、第三方许可、Cloudflare 条款及所在法域的法律。
+`,
+    en: `# OMEW Overture Deployment and Use Terms (English reference translation)
+
+> The Chinese text is controlling. This English text is provided only as a reference translation. If the texts conflict, the Chinese text prevails.
+
+By accepting these terms in Overture and deploying, running, modifying, or distributing OMEW, you agree to these terms, the GNU Affero General Public License v3.0, and the terms applicable to third-party materials. Do not deploy or use OMEW if you do not agree.
+
+## 1. Software code and open-source obligations
+
+The OMEW software code is licensed under the **GNU Affero General Public License v3.0 only (AGPL-3.0-only)**. The complete license text is supplied with the application manifest, and the repository's \`LICENSE\` file controls.
+
+- You may run, copy, modify, and distribute the software code, including commercially, only as permitted by AGPL-3.0-only. Artwork receives no AGPL license and remains subject to the separate restrictions below.
+- If you modify OMEW and users interact with that modified version remotely through a computer network, AGPL Section 13 requires you to offer those users a prominent way to receive the Corresponding Source of the version you run, free of charge through the network.
+- When copying, modifying, or distributing the software, retain all applicable copyright notices, license notices, disclaimers, and NOTICE files, and do not impose further restrictions on rights granted by the AGPL. Refer to the AGPL-3.0-only text for the complete obligations.
+
+## 2. Official artwork and third-party stickers
+
+This section is derived directly from the English reference translation in the repository's \`ASSET-LICENSE.md\`. That file is the single source of truth for Restricted Asset rules.
+
+${nestMarkdown(assetTerms.en)}
+
+## 3. Cloudflare resources, charges, and account-permission risks
+
+- The deployer creates or manages a Worker, D1 database, R2 bucket, Durable Object namespaces, custom domain or routes in the Cloudflare account or zone you select, and uploads static assets, applies database migrations, and configures secrets. These resources may incur Cloudflare charges, which are your responsibility.
+- Deployment requires account-level or zone-level write permissions. The Worker-settings permission retained for instance administration is account-scoped and can technically modify other Workers in the same account. Use a dedicated Cloudflare account, follow least-privilege practices, and revoke or rotate credentials when they are no longer needed.
+- Before accepting, verify the target account, zone, domain, resource names, permission scopes, and billing settings. You are responsible for instance data security, access controls, backups, maintenance, and compliance.
+
+## 4. As-is provision and no warranty
+
+To the maximum extent permitted by applicable law, the OMEW software, deployment package, deployment recipe, and related materials are provided “as is” and “as available,” without express, implied, or statutory warranties, including warranties of merchantability, fitness for a particular purpose, title, non-infringement, continuous availability, or error-free operation. You assume all deployment and operational risks and are responsible for compliance with the AGPL, the asset terms, third-party licenses, Cloudflare terms, and applicable law.
+`,
+  };
+}
+
 await rm(output, { recursive: true, force: true });
 await mkdir(workerRoot, { recursive: true });
 await mkdir(assetsRoot, { recursive: true });
@@ -60,6 +142,7 @@ const sha256 = createHash("sha256").update(archiveBytes).digest("hex");
 const version = process.env.OMEW_VERSION || (process.env.OMEW_TAG || "v1.0.0").replace(/^v/, "");
 const tag = process.env.OMEW_TAG || `v${version}`;
 const buildTime = process.env.OMEW_BUILD_TIME || new Date().toISOString();
+const assetLicense = await readFile(join(root, "ASSET-LICENSE.md"), "utf8");
 const manifest = {
   schema: 2,
   id: "openmew",
@@ -71,8 +154,8 @@ const manifest = {
   tag,
   buildTime,
   package: { artifact: "overture.tar.gz", sha256, bytes: archiveBytes.length },
-  license: { id: "AGPL-3.0-or-later", text: await readFile(join(root, "LICENSE"), "utf8") },
-  terms: { required: true, texts: { en: "Deploying OMEW creates and manages a Worker, D1 database, R2 bucket, and Durable Object namespaces in your Cloudflare account.", "zh-CN": "部署 OMEW 会在你的 Cloudflare 账户中创建并管理 Worker、D1 数据库、R2 存储桶和 Durable Object 命名空间。" } },
+  license: { id: "AGPL-3.0-only", text: await readFile(join(root, "LICENSE"), "utf8") },
+  terms: { required: true, texts: buildTerms(assetLicense) },
   authModes: ["auto"],
   permissions: [
     { key: "scripts", requirement: "required", oauthScopes: ["workers-scripts.write"], label: { en: "Workers Scripts", "zh-CN": "Workers Scripts" }, scenario: { en: "Upload and activate OMEW", "zh-CN": "上传并启用 OMEW" }, scope: "account", level: "write" },
