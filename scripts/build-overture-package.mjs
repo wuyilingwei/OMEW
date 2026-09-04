@@ -71,7 +71,7 @@ ${nestMarkdown(assetTerms.zh)}
 ## 3. Cloudflare 资源、费用与账户权限风险
 
 - 部署器会在您选择的 Cloudflare 账户中创建或管理 Worker、D1 数据库、R2 存储桶与 Durable Object 命名空间，并上传静态资源、迁移数据库和设置密钥。仅当您提供自定义域名时，部署器才会读取区域并创建或管理相应域名路由。这些资源可能产生 Cloudflare 费用，费用由您承担。
-- 部署需要账户级或区域级写入权限。为支持实例管理而保存的 Worker 设置权限属于账户级权限，技术上可能修改同一账户中的其他 Worker；建议使用专用 Cloudflare 账户、遵循最小权限原则，并在不再需要时撤销或轮换凭据。
+- 部署需要账户级写入权限；仅在您提供自定义域名时，还需要相应区域的读取与路由写入权限。为支持实例管理而保存的 Worker 设置权限属于账户级权限，技术上可能修改同一账户中的其他 Worker；建议使用专用 Cloudflare 账户、遵循最小权限原则，并在不再需要时撤销或轮换凭据。
 - 您应在确认前核对目标账户、资源名称、权限范围和计费设置；使用自定义域名时还应核对目标区域与域名。您自行负责实例的数据安全、访问控制、备份、维护和合规。
 
 ## 4. 按现状提供与无担保
@@ -101,7 +101,7 @@ ${nestMarkdown(assetTerms.en)}
 ## 3. Cloudflare resources, charges, and account-permission risks
 
 - The deployer creates or manages a Worker, D1 database, R2 bucket, and Durable Object namespaces in the Cloudflare account you select, and uploads static assets, applies database migrations, and configures secrets. Only when you provide a custom domain does it read a zone and create or manage the corresponding domain route. These resources may incur Cloudflare charges, which are your responsibility.
-- Deployment requires account-level or zone-level write permissions. The Worker-settings permission retained for instance administration is account-scoped and can technically modify other Workers in the same account. Use a dedicated Cloudflare account, follow least-privilege practices, and revoke or rotate credentials when they are no longer needed.
+- Deployment requires account-level write permissions. Only when you provide a custom domain does it also require read and route-write permissions for the corresponding zone. The Worker-settings permission retained for instance administration is account-scoped and can technically modify other Workers in the same account. Use a dedicated Cloudflare account, follow least-privilege practices, and revoke or rotate credentials when they are no longer needed.
 - Before accepting, verify the target account, resource names, permission scopes, and billing settings; when using a custom domain, also verify the target zone and domain. You are responsible for instance data security, access controls, backups, maintenance, and compliance.
 
 ## 4. As-is provision and no warranty
@@ -178,8 +178,8 @@ const manifest = {
       requirement: "required",
       placeholder: { en: "cfat_…", "zh-CN": "cfat_…" },
       reason: {
-        en: "Overture uses this token to deploy the Worker, database, media storage, and domain, then stores it so OMEW can update its own Worker settings. These permissions are account- or zone-scoped, so a dedicated account is recommended.",
-        "zh-CN": "Overture 使用此令牌部署 Worker、数据库、媒体存储和域名，随后将其保存供 OMEW 更新自身 Worker 设置。这些权限作用于账户或区域，建议使用专用账户。",
+        en: "Overture uses this token to deploy the Worker, database, and media storage, and to attach a custom domain only when you provide one. It then stores the token so OMEW can update its own Worker settings. These permissions are account- or zone-scoped, so a dedicated account is recommended.",
+        "zh-CN": "Overture 使用此令牌部署 Worker、数据库与媒体存储，并仅在您提供自定义域名时完成绑定；随后将令牌保存供 OMEW 更新自身 Worker 设置。这些权限作用于账户或区域，建议使用专用账户。",
       },
       permissions: [
         { key: "workers_scripts", type: "edit", requirement: "required", scenario: { en: "Deploy the Worker, bindings, assets, and Secrets, and let OMEW update its own settings.", "zh-CN": "部署 Worker、bindings、静态资源与 Secrets，并允许 OMEW 更新自身设置。" } },

@@ -55,9 +55,11 @@ try {
   assert.match(manifest.terms.texts["zh-CN"], /均按“现状”及“可用”状态提供[\s\S]*不附带任何明示、默示或法定担保/);
   assert.match(manifest.terms.texts["zh-CN"], /Worker、D1 数据库、R2 存储桶与 Durable Object 命名空间/);
   assert.match(manifest.terms.texts["zh-CN"], /仅当您提供自定义域名时，部署器才会读取区域并创建或管理相应域名路由/);
+  assert.match(manifest.terms.texts["zh-CN"], /仅在您提供自定义域名时，还需要相应区域的读取与路由写入权限/);
   assert.match(manifest.terms.texts["zh-CN"], /Worker 设置权限属于账户级权限[\s\S]*可能修改同一账户中的其他 Worker/);
   assert.match(manifest.terms.texts.en, /AGPL Section 13[\s\S]*Corresponding Source/);
   assert.match(manifest.terms.texts.en, /Only when you provide a custom domain does it read a zone and create or manage the corresponding domain route/);
+  assert.match(manifest.terms.texts.en, /Only when you provide a custom domain does it also require read and route-write permissions for the corresponding zone/);
   assert.match(manifest.terms.texts.en, /account-scoped and can technically modify other Workers in the same account/);
   assert.deepEqual(manifest.authModes, ["auto"]);
   assert.deepEqual(manifest.worker.vars, [
