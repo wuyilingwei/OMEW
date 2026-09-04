@@ -6,4 +6,4 @@
 | :--: | :------: | :------: | :------: | :--: |
 | 110 | [Feature] Overture部署支持 | 发布 Overture 配置与安装数据包，使 OMEW 可被 Overture 发现、校验和引导部署 | 用户要求添加 Overture 部署支持 | ✅ 已完成（随 1.0.0 发布） |
 | 112 | [Release] OMEW 1.0.0发布 | 补齐预存密钥驱动的实例政策写入、完成发布门禁与演示素材 | 在 Mew 关闭 1400 天节点发布可快速部署的首个正式版本 | ✅ 已完成并发布 |
-| 113 | [Fix] 首页 Overture 部署入口 | 将首页与 README 的源码仓库入口改为预选 OMEW 的在线 Overture 部署器 | 让访客直接开始部署，而不是被带到 Overture 或 OMEW 的源码项目 | 🔄 进行中 |
+| 113 | [Fix] 首页 Overture 部署入口 | 将首页与 README 的源码仓库入口改为预选 OMEW 的在线 Overture 部署器 | 让访客直接开始部署，而不是被带到 Overture 或 OMEW 的源码项目 | ✅ 已完成并部署 |
