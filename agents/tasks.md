@@ -10,4 +10,4 @@
 | 114 | [Feature] Overture 正式使用条款 | 在 Overture 清单中提供完整双语部署与使用条款，并从既有美术资产条款派生限制内容 | 部署前需明确软件开源义务、美术限制、第三方贴纸风险、免责声明和 Cloudflare 权限风险 | ✅ 已完成并覆盖发布 1.0.0 |
 | 115 | [Fix] Overture 权限声明 | 按实际部署调用声明完整 OAuth scopes 与长期 API Token 最小权限 | 当前清单少报读取、绑定、存储和域名权限，导致授权范围与实际访问不一致 | ✅ 已完成并覆盖发布 1.0.0 |
 | 116 | [Fix] WorkersDev实例域 | 在未设自定义域的 Workers 部署中，从真实 workers.dev 请求安全解析实例身份，并贯通 HTTP、WebAuthn 与 Durable Object/WebSocket | 空 INSTANCE_DOMAIN 会让公开实例错误退回 local/localhost | ✅ 已完成 |
-| 117 | [Fix] 可选自定义域 | 将 Overture 的实例自定义域输入及对应权限改为可选 | OMEW 应能直接使用 workers.dev，不应强制部署者拥有或绑定自定义域 | 🔄 进行中 |
+| 117 | [Fix] 可选自定义域 | 将 Overture 的实例自定义域输入及对应权限改为可选 | OMEW 应能直接使用 workers.dev，不应强制部署者拥有或绑定自定义域 | ✅ 已完成并覆盖发布 1.0.0 |
