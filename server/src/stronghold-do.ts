@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { verifyToken } from "./auth";
 import { synthesizeEffectivePermissions, type EffectivePermissions, type ServerGroupPermInput } from "./permissions";
-import { instanceDomain, typeToKind, type Role, type RoomType, type StrongholdTokenClaims } from "./types";
+import { typeToKind, type Role, type RoomType, type StrongholdTokenClaims } from "./types";
 import { domainOfActor, localpartOfActor } from "./users";
 
 // proposal S4.1/S4.4: stronghold config + capability rules + authoritative member
@@ -121,7 +121,7 @@ export interface MemberRevokePayload {
   deny?: number;
 }
 
-// task 048 (m0-protocol §7.10a): D1 lookup of a local user's held server
+// D1 lookup of a local user's held server
 // groups, position-ordered - the input shape synthesizeEffectivePermissions
 // (permissions.ts) expects. Shared by StrongholdDO.revokeActor and api.ts's
 // effectiveRole, the only two places that fold server groups into a role/deny.
@@ -205,7 +205,7 @@ export class StrongholdDO extends DurableObject<Env> {
     // 标签功能已移除；旧据点的本地持久化数据不再保留。
     this.ctx.storage.sql.exec("DROP TABLE IF EXISTS topic;");
     this.addColumnIfMissing("room", "description", "TEXT");
-    // task 048: stronghold-local groups (task 037) moved to server-level D1
+    // Stronghold-local groups moved to server-level D1
     // tables (server_groups/user_server_groups, migration 0009) - drop the
     // per-DO tables outright, no migration of their data.
     this.ctx.storage.sql.exec(`DROP TABLE IF EXISTS groups; DROP TABLE IF EXISTS member_groups;`);
@@ -466,7 +466,7 @@ export class StrongholdDO extends DurableObject<Env> {
   }
 
   // Recompute one actor's effective role/deny (server groups included, m0-protocol
-  // §7.10a) and push it down to every room this stronghold owns. Public - task 048's
+  // §7.10a) and push it down to every room this stronghold owns. Public API for
   // server-group admin routes (api.ts, against D1) call this per affected actor
   // after a group mutation, since that mutation happens outside any single
   // StrongholdDO. null means the actor no longer resolves to any access (not a
@@ -480,7 +480,12 @@ export class StrongholdDO extends DurableObject<Env> {
       eff = { role: member.role, deny: 0 };
     } else {
       // Guests (federated actors) have no users row and thus no server groups.
-      const groups = domainOfActor(actor) === instanceDomain(this.env) ? await fetchServerGroupsForLocalpart(this.env, localpartOfActor(actor)) : [];
+      // RPC calls do not carry a Request; the owner actor permanently records
+      // this stronghold's local instance domain.
+      const config = await this.getConfig();
+      const groups = config && domainOfActor(actor) === domainOfActor(config.owner_actor)
+        ? await fetchServerGroupsForLocalpart(this.env, localpartOfActor(actor))
+        : [];
       eff = synthesizeEffectivePermissions("member", member.deny, groups);
     }
     await this.pushRevokeToRooms({ actor, scope: this.selfId, effect: "update_deny", role: eff.role, deny: eff.deny });

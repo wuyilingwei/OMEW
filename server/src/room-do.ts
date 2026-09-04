@@ -35,6 +35,7 @@ const RATE_LIMIT_REFILL_PER_SEC = 5;
 
 interface Attachment {
   actor: string;
+  origin: string;
   room: string; // room-ref, e.g. "<stronghold>/ch/<resId>"
   role: Role;
   deny: number;
@@ -315,6 +316,7 @@ export class RoomDO extends DurableObject<Env> {
     this.ctx.acceptWebSocket(server);
     const attachment: Attachment = {
       actor: claims.actor,
+      origin: instanceDomain(this.env, new URL(request.url).hostname),
       room: claims.room,
       role: claims.role,
       deny: claims.deny,
@@ -462,10 +464,9 @@ export class RoomDO extends DurableObject<Env> {
       return;
     }
 
-    // proposal S4.1: envelopes are stamped with this instance's own domain
-    // (task 033: INSTANCE_DOMAIN wrangler var, falling back to "local") until
-    // true federation signing lands in M5/M6.
-    const homeOrigin = instanceDomain(this.env);
+    // The WS handshake records the public request host because later socket
+    // frames run without a Request object.
+    const homeOrigin = attachment.origin;
 
     const existing = this.ctx.storage.sql
       .exec<{ seq: number }>(

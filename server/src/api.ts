@@ -21,6 +21,7 @@ import {
   HOME_DOMAIN,
   instanceDomain,
   typeToKind,
+  withRequestInstanceDomain,
   type Role,
   type RoomTokenClaims,
   type RoomType,
@@ -568,6 +569,7 @@ export default {
 };
 
 async function route(request: Request, env: Env, url: URL): Promise<Response> {
+  env = withRequestInstanceDomain(env, url.hostname);
   const path = url.pathname;
   const method = request.method;
 

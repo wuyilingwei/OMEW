@@ -2,17 +2,28 @@
 // worker-configuration.d.ts (run `npm run types` in server/ after touching
 // wrangler.jsonc) plus the DEV_TOKEN_SECRET augmentation in src/env.d.ts.
 
-// M1 placeholder for this instance's own domain, used everywhere an
-// `origin`/actor domain is needed. Task 033 wires up the real value via the
-// INSTANCE_DOMAIN wrangler var (see instanceDomain below); HOME_DOMAIN itself
-// stays as the fallback for deployments/tests that don't set one.
+// Placeholder for this instance's own domain when no public deployment host is
+// available, used by local development and tests.
 export const HOME_DOMAIN = "local";
 
-// This instance's own actor/origin domain: INSTANCE_DOMAIN when the deployment
-// configures one (server/wrangler.jsonc vars), otherwise HOME_DOMAIN's "local"
-// placeholder.
-export function instanceDomain(env: Env): string {
-  return env.INSTANCE_DOMAIN || HOME_DOMAIN;
+// An explicit deployment domain always wins. Without one, only a genuine
+// workers.dev request host is accepted as public instance identity; arbitrary
+// Host values must not turn local/test instances into public identities.
+export function instanceDomain(env: Env, requestHostname?: string): string {
+  if (env.INSTANCE_DOMAIN) return env.INSTANCE_DOMAIN;
+  const hostname = requestHostname?.toLowerCase();
+  return hostname && hostname.endsWith(".workers.dev") && hostname !== "workers.dev"
+    ? hostname
+    : HOME_DOMAIN;
+}
+
+// Route-level helpers share the resolved identity through the existing Env
+// parameter without mutating a deployment's bindings or global environment.
+export function withRequestInstanceDomain(env: Env, requestHostname: string): Env {
+  if (env.INSTANCE_DOMAIN) return env;
+  return Object.assign(Object.create(env), {
+    INSTANCE_DOMAIN: instanceDomain(env, requestHostname),
+  }) as Env;
 }
 
 // m0-protocol S3.4 deny bitmask.
@@ -122,7 +133,7 @@ export interface InstanceConfig {
   federation_peers: string[];
   stronghold_creation_policy: StrongholdCreationPolicy;
   stronghold_creators: string[];
-  // Task 034: unauthenticated read-only access to public strongholds (m0-protocol
+  // Unauthenticated read-only access to public strongholds (m0-protocol
   // §8.2's "public visibility MAY serve unauthenticated reads"), gated by this
   // local policy toggle on top of the protocol's MAY. Migration 0007, default on.
   allow_guest_browsing: boolean;
