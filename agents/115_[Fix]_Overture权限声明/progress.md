@@ -8,3 +8,5 @@
 - 2026-09-04：`npm run test:overture-package` 通过；固定 1.0.0 构建成功，Wrangler 4.124.0 dry-run 通过。
 - 2026-09-04：生成清单通过 Overture 当前 schema validator，完整权限对象无裁剪、无未知键。
 - 2026-09-04：`npm test` 通过，68 个测试文件、455 项测试全部成功。
+- 2026-09-04：确认远端 main 未受分支保护且规则集为空；快进合并并推送 `main@8f6d8dc`，开始按用户既定口径覆盖 1.0.0 Release。
+- 2026-09-04：发布声明补充部署期 OAuth scopes 与长期 API Token 的完整权限清单及账户/区域作用域风险。
