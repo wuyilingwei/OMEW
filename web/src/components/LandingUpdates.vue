@@ -41,14 +41,14 @@ function formatUpdateDate(value: string) {
         </li>
       </ol>
 
-      <aside class="landing-updates__source-note" aria-labelledby="source-note-title">
+      <aside class="landing-updates__deployment-note" aria-labelledby="deployment-note-title">
         <div>
-          <p class="landing-updates__source-label">OPEN SOURCE</p>
-          <h3 id="source-note-title">开放，也让边界保持清楚</h3>
-          <p>OMEW 的软件代码以 AGPL-3.0 开放；官方美术资产遵循独立的非商业使用条款。</p>
+          <p class="landing-updates__deployment-label">DEPLOY WITH OVERTURE</p>
+          <h3 id="deployment-note-title">部署属于自己的 OMEW</h3>
+          <p>无需本地工具链。Overture 已预选 OMEW，并会引导你把所需资源部署到自己的 Cloudflare 账户。软件代码使用 AGPL-3.0，官方美术资产遵循独立的非商业使用条款。</p>
         </div>
-        <a href="https://github.com/wuyilingwei/OMEW" target="_blank" rel="noopener noreferrer">
-          查看项目源码
+        <a href="https://overture.demo-w10v.workers.dev/?src=wuyilingwei%2FOMEW" target="_blank" rel="noopener noreferrer">
+          使用 Overture 部署
           <AppIcon name="chevron-right" :size="16" />
         </a>
       </aside>
@@ -187,7 +187,7 @@ function formatUpdateDate(value: string) {
   font-weight: 650;
 }
 
-.landing-updates__source-note {
+.landing-updates__deployment-note {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -199,32 +199,32 @@ function formatUpdateDate(value: string) {
   background: color-mix(in srgb, var(--card-bg) 82%, rgb(var(--colors-primary)) 18%);
 }
 
-.landing-updates__source-label,
-.landing-updates__source-note h3,
-.landing-updates__source-note p {
+.landing-updates__deployment-label,
+.landing-updates__deployment-note h3,
+.landing-updates__deployment-note p {
   margin: 0;
 }
 
-.landing-updates__source-label {
+.landing-updates__deployment-label {
   color: rgb(var(--colors-primary));
   font-size: 0.68rem;
   font-weight: 750;
   letter-spacing: 0.15em;
 }
 
-.landing-updates__source-note h3 {
+.landing-updates__deployment-note h3 {
   margin-top: 0.45rem;
   font-size: 1.05rem;
 }
 
-.landing-updates__source-note > div > p:last-child {
+.landing-updates__deployment-note > div > p:last-child {
   margin-top: 0.45rem;
   color: var(--text-secondary);
   font-size: 0.86rem;
   line-height: 1.6;
 }
 
-.landing-updates__source-note a {
+.landing-updates__deployment-note a {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
@@ -236,8 +236,8 @@ function formatUpdateDate(value: string) {
   text-decoration: none;
 }
 
-.landing-updates__source-note a:hover { text-decoration: underline; }
-.landing-updates__source-note a:focus-visible {
+.landing-updates__deployment-note a:hover { text-decoration: underline; }
+.landing-updates__deployment-note a:focus-visible {
   outline: 2px solid rgb(var(--colors-primary));
   outline-offset: 4px;
   border-radius: 3px;
@@ -245,7 +245,7 @@ function formatUpdateDate(value: string) {
 
 @media (max-width: 700px) {
   .landing-updates__heading,
-  .landing-updates__source-note {
+  .landing-updates__deployment-note {
     align-items: start;
     flex-direction: column;
   }

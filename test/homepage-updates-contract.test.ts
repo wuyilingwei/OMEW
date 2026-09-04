@@ -33,10 +33,11 @@ describe('OMEW homepage updates contract', () => {
     expect(updatesView).toContain('已上线')
   })
 
-  it('states the open-source and artwork-license boundary next to the update stream', () => {
+  it('keeps the license boundary while sending visitors to the Overture deployer', () => {
     expect(updatesView).toContain('AGPL-3.0')
     expect(updatesView).toContain('非商业使用条款')
-    expect(updatesView).toContain('https://github.com/wuyilingwei/OMEW')
+    expect(updatesView).toContain('https://overture.demo-w10v.workers.dev/?src=wuyilingwei%2FOMEW')
+    expect(updatesView).not.toContain('href="https://github.com/wuyilingwei/OMEW"')
   })
 
   it('adapts the update grid for narrow screens', () => {

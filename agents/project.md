@@ -1,5 +1,5 @@
 # OMEW 项目索引
-> 最后更新：2026-08-27
+> 最后更新：2026-09-04
 
 ## 项目目标
 OMEW 是运行在 Cloudflare Workers 上的社区/聊天应用，提供 Web 静态资源、API、D1 数据库、R2 媒体存储和 Durable Objects。
@@ -16,3 +16,4 @@ TypeScript、Hono/Workers、Vue 3/Vite、Wrangler、Vitest。
 ## 相关指令
 - [任务 110 审计](110_[Feature]_Overture部署支持/)
 - [任务 112 发布](112_[Release]_OMEW1.0.0发布/)
+- [任务 113 首页 Overture 部署入口](113_[Fix]_首页Overture部署入口/)
